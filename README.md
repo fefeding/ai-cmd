@@ -81,6 +81,19 @@ You can also start directly with Node.js:
 node server.js
 ```
 
+Or use npm scripts in the project directory:
+
+```bash
+# Start the server
+npm start
+
+# Stop the server
+npm stop
+
+# Restart the server
+npm restart
+```
+
 Default port is 9802. You can specify a custom port via `--port` or the `PORT` environment variable:
 
 ```bash

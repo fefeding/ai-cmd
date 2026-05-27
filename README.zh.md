@@ -81,6 +81,19 @@ fterm -v
 node server.js
 ```
 
+或者在项目目录下使用 npm 脚本管理：
+
+```bash
+# 启动服务
+npm start
+
+# 停止服务
+npm stop
+
+# 重启服务
+npm restart
+```
+
 默认端口 9802，可通过 `--port` 或 `PORT` 环境变量指定：
 
 ```bash

@@ -46,13 +46,7 @@
     "nw:build": "node scripts/nw-build.js",
     "nw:build:win": "node scripts/nw-build.js --platform=win",
     "nw:build:osx": "node scripts/nw-build.js --platform=osx",
-    "nw:build:linux": "node scripts/nw-build.js --platform=linux",
-    "docker:build": "docker build -t fterm .",
-    "docker:run": "docker run -d -p 9802:9802 --name fterm fterm",
-    "docker:stop": "docker stop fterm",
-    "docker:restart": "docker restart fterm",
-    "docker:logs": "docker logs -f fterm",
-    "docker:push": "docker push fterm"
+    "nw:build:linux": "node scripts/nw-build.js --platform=linux"
   },
   "dependencies": {
     "axios": "^1.16.1",
