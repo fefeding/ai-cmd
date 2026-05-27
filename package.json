@@ -1,6 +1,6 @@
 {
   "name": "@fefeding/fterm",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": false,
   "type": "commonjs",
   "description": "Web SSH 远程终端工具 - 支持 rz/sz 文件传输",

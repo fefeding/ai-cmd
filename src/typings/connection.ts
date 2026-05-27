@@ -8,7 +8,7 @@ export interface ConnectionEntity {
   host?: string;
   port?: number;
   username?: string;
-  authType?: 'password' | 'privateKey';
+  authType?: 'password' | 'privateKey' | 'auto';
   password?: string;
   privateKey?: string;
   passphrase?: string;

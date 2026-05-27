@@ -21,8 +21,8 @@ export class ConnectionEntity {
   /** 用户名 */
   username!: string;
 
-  /** 认证方式 */
-  authType: 'password' | 'privateKey' = 'password';
+  /** 认证方式：password（密码）、privateKey（私钥）、auto（自动使用本机密钥） */
+  authType: 'password' | 'privateKey' | 'auto' = 'auto';
 
   /** 密码（加密存储） */
   password?: string;

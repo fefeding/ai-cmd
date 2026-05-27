@@ -35,11 +35,16 @@
         <div class="mb-3">
           <label class="form-label fw-bold"><i class="bi bi-shield-lock me-1"></i>{{ t('connection.authType') }}</label>
           <div class="btn-group w-100" role="group">
+            <input type="radio" class="btn-check" name="authType" id="auth-auto" value="auto" v-model="form.authType">
+            <label class="btn btn-outline-primary" for="auth-auto"><i class="bi bi-magic me-1"></i>{{ t('connection.auto') }}</label>
             <input type="radio" class="btn-check" name="authType" id="auth-password" value="password" v-model="form.authType">
             <label class="btn btn-outline-primary" for="auth-password"><i class="bi bi-key me-1"></i>{{ t('connection.password') }}</label>
             <input type="radio" class="btn-check" name="authType" id="auth-key" value="privateKey" v-model="form.authType">
             <label class="btn btn-outline-primary" for="auth-key"><i class="bi bi-file-earmark-lock me-1"></i>{{ t('connection.privateKey') }}</label>
           </div>
+          <small v-if="form.authType === 'auto'" class="form-text text-muted">
+            <i class="bi bi-info-circle me-1"></i>{{ t('connection.autoHint') }}
+          </small>
         </div>
 
         <!-- 密码认证 -->
@@ -140,7 +145,7 @@ const defaultForm = () => ({
   host: '',
   port: 22,
   username: 'root',
-  authType: 'password' as 'password' | 'privateKey',
+  authType: 'auto' as 'auto' | 'password' | 'privateKey',
   password: '',
   privateKey: '',
   passphrase: '',

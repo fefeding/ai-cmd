@@ -66,6 +66,8 @@ export default {
     username: '用户名',
     usernamePlaceholder: 'SSH 用户名',
     authType: '认证方式',
+    auto: '自动（本机密钥）',
+    autoHint: '自动使用本机 SSH 密钥（~/.ssh 目录下的私钥文件）',
     password: '密码',
     privateKey: '私钥',
     passwordLabel: '密码',

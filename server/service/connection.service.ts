@@ -160,11 +160,70 @@ export class ConnectionService {
       if (connection.passphrase) {
         config.passphrase = connection.passphrase;
       }
-    } else {
+    } else if (connection.password) {
       config.password = connection.password;
+    } else {
+      // 没有配置密码和证书，尝试使用本机 SSH 密钥
+      const localKey = this.getLocalSSHKey();
+      if (localKey) {
+        config.privateKey = localKey;
+      }
     }
 
     return { ...config, ...connection.options };
+  }
+
+  /**
+   * 获取本机 SSH 密钥（自动扫描 ~/.ssh 目录下的私钥文件）
+   */
+  private getLocalSSHKey(): string | null {
+    const sshDir = path.join(os.homedir(), '.ssh');
+    
+    try {
+      if (!fs.existsSync(sshDir)) {
+        console.warn(`[SSH] SSH 目录不存在: ${sshDir}`);
+        return null;
+      }
+
+      // 读取 ~/.ssh 目录下所有文件
+      const files = fs.readdirSync(sshDir);
+      
+      // 过滤出可能的私钥文件（排除 .pub、known_hosts、config、authorized_keys 等）
+      const privateKeyFiles = files.filter(f => 
+        !f.endsWith('.pub') && 
+        !['known_hosts', 'known_hosts.old', 'config', 'authorized_keys', 'authorized_keys2'].includes(f) &&
+        !f.startsWith('.')
+      );
+
+      if (privateKeyFiles.length === 0) {
+        console.warn('[SSH] ~/.ssh 目录下未找到私钥文件');
+        return null;
+      }
+
+      // 尝试每个私钥文件
+      for (const keyFile of privateKeyFiles) {
+        const keyPath = path.join(sshDir, keyFile);
+        try {
+          const stats = fs.statSync(keyPath);
+          if (!stats.isFile()) continue;
+          
+          const key = fs.readFileSync(keyPath, 'utf8');
+          // 简单验证是否是有效的私钥文件（包含 BEGIN ... PRIVATE KEY）
+          if (key.includes('BEGIN') && key.includes('PRIVATE KEY')) {
+            console.log(`[SSH] 使用本机密钥: ${keyPath}`);
+            return this.convertToPEM(key);
+          }
+        } catch (e) {
+          console.warn(`[SSH] 读取密钥文件失败 ${keyPath}:`, (e as Error).message);
+        }
+      }
+
+      console.warn('[SSH] 未找到可用的本机 SSH 私钥');
+      return null;
+    } catch (e) {
+      console.error(`[SSH] 扫描 SSH 目录失败:`, (e as Error).message);
+      return null;
+    }
   }
 
   /**

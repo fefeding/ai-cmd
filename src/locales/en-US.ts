@@ -66,6 +66,8 @@ export default {
     username: 'Username',
     usernamePlaceholder: 'SSH username',
     authType: 'Authentication',
+    auto: 'Auto (Local Key)',
+    autoHint: 'Automatically use local SSH keys from ~/.ssh directory',
     password: 'Password',
     privateKey: 'Private Key',
     passwordLabel: 'Password',
