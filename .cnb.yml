@@ -7,12 +7,9 @@ main:
     - name: build-nw-client
       docker:
         image: node:20
-        # 缓存 pnpm store 和 nw-builder 缓存，加速后续构建
         volumes:
-          - name: pnpm-store
-            path: /root/.local/share/pnpm/store/v3
-          - name: nw-cache
-            path: /build/nw-cache
+          - pnpm-store:/root/.local/share/pnpm/store/v3:rw
+          - nw-cache:/build/nw-cache:rw
       env:
         # 可配置国内镜像加速 NW.js 下载（可选）
         # NWJS_DOWNLOAD_URL: https://npmmirror.com/mirrors/nwjs
@@ -64,10 +61,8 @@ $:
       docker:
         image: node:20
         volumes:
-          - name: pnpm-store
-            path: /root/.local/share/pnpm/store/v3
-          - name: nw-cache
-            path: /build/nw-cache
+          - pnpm-store:/root/.local/share/pnpm/store/v3:rw
+          - nw-cache:/build/nw-cache:rw
       env:
         CI: 'true'
       stages:
@@ -104,6 +99,6 @@ $:
         - name: show release summary
           script: |
             echo "✅ 发布构建完成"
-            echo "标签: ${CNB_REF_NAME}"
+            echo "标签: ${CNB_BRANCH}"
             echo "分支: ${CNB_BRANCH}"
             echo "提交: ${CNB_COMMIT}"
