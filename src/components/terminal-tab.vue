@@ -1,6 +1,31 @@
 <template>
   <div class="terminal-wrapper" ref="terminalWrapper">
     <div class="terminal-container" ref="terminalContainer"></div>
+    
+    <!-- AI 按钮 -->
+    <button 
+      v-if="status === 'connected'" 
+      class="ai-toggle-btn" 
+      :class="{ active: showAIChat }"
+      @click="toggleAIChat"
+      :title="t('ai.chat')"
+    >
+      <i class="bi bi-robot"></i>
+    </button>
+
+    <!-- AI 对话面板 -->
+    <div v-if="showAIChat" class="ai-chat-wrapper">
+      <AIChat
+        ref="aiChatRef"
+        :sessionId="sessionId || tabId"
+        :sessionName="props.connection.name"
+        :isOpen="showAIChat"
+        :getTerminalContext="getTerminalContext"
+        @close="showAIChat = false"
+        @ws-send="handleAISend"
+      />
+    </div>
+
     <div v-if="status === 'connecting'" class="terminal-status">
       <div class="spinner-border spinner-border-sm text-warning me-2"></div>
       {{ t('tab.connecting') }}
@@ -32,6 +57,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import type { ConnectionEntity, WSMessage } from '@/typings/connection';
 import { createSentry, base64ToOctets, stringToOctets, octetsToBase64, Zmodem } from '@/utils/zmodem';
+import AIChat from '@/components/ai-chat/index.vue';
 
 const { t } = useI18n();
 
@@ -50,6 +76,10 @@ const terminalWrapper = ref<HTMLElement>();
 const terminalContainer = ref<HTMLElement>();
 const status = ref<'connecting' | 'connected' | 'disconnected' | 'error' | 'reconnecting'>('connecting');
 const errorMessage = ref('');
+
+// AI 聊天相关
+const showAIChat = ref(false);
+const aiChatRef = ref<InstanceType<typeof AIChat>>();
 
 let terminal: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
@@ -609,6 +639,13 @@ function handleServerMessage(msg: WSMessage) {
     case 'error':
       setStatus('error', msg.data || '连接失败');
       break;
+
+    case 'ai-agent-event':
+      // 转发 Agent 事件到 AIChat 组件
+      if (aiChatRef.value && msg.event) {
+        aiChatRef.value.handleAgentEvent(msg.event);
+      }
+      break;
   }
 }
 
@@ -696,6 +733,45 @@ onBeforeUnmount(() => {
 });
 
 defineExpose({ focus, fit, writeToTerminal, getTerminal, getZmodemSession, getZmodemRole, getSentry, sendToServer, get sessionId() { return sessionId; } });
+
+// AI 相关方法
+function toggleAIChat() {
+  showAIChat.value = !showAIChat.value;
+  if (showAIChat.value) {
+    // 切换时重新调整终端大小
+    nextTick(() => fit());
+  }
+}
+
+function getTerminalContext(): string {
+  // 获取终端最近的输出内容
+  if (!terminal) return '';
+  const buffer = terminal.buffer.active;
+  const lines: string[] = [];
+  for (let i = Math.max(0, buffer.cursorY - 50); i <= buffer.cursorY; i++) {
+    const line = buffer.getLine(i);
+    if (line) {
+      lines.push(line.translateToString(true));
+    }
+  }
+  return lines.join('\n');
+}
+
+function handleExecuteCommand(command: string) {
+  // 将命令发送到终端
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    sendToServer({ 
+      type: 'terminal', 
+      sessionId: sessionId || undefined, 
+      data: command + '\n' 
+    });
+  }
+}
+
+// AI Agent WebSocket 发送
+function handleAISend(msg: any) {
+  sendToServer(msg);
+}
 </script>
 
 <style scoped>
@@ -724,5 +800,59 @@ defineExpose({ focus, fit, writeToTerminal, getTerminal, getZmodemSession, getZm
   background-color: rgba(0, 0, 0, 0.6);
   border-radius: 8px;
   z-index: 10;
+}
+
+/* AI 按钮 */
+.ai-toggle-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(49, 50, 68, 0.9);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  transition: all 0.2s;
+  z-index: 20;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.ai-toggle-btn:hover {
+  background: rgba(69, 71, 90, 0.95);
+  color: var(--accent);
+  transform: scale(1.05);
+}
+
+.ai-toggle-btn.active {
+  background: var(--accent);
+  color: white;
+}
+
+/* AI 对话面板包装器 */
+.ai-chat-wrapper {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 380px;
+  height: 100%;
+  z-index: 15;
+  animation: slideIn 0.2s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 </style>

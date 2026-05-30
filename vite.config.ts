@@ -13,6 +13,8 @@ import * as fs from 'fs';
 // 直接导入服务端代码（开发模式不再依赖编译产物）
 import { ConnectionService } from './server/service/connection.service';
 import { SSHService } from './server/service/ssh.service';
+import { AIService } from './server/service/ai.service';
+import { SkillService } from './server/service/skill.service';
 
 const urlPrefix = process.env.PREFIX ? `/${process.env.PREFIX}` : '';
 
@@ -20,6 +22,8 @@ const urlPrefix = process.env.PREFIX ? `/${process.env.PREFIX}` : '';
 const connectionService = new ConnectionService();
 connectionService.init();
 const sshService = new SSHService(connectionService);
+const skillService = new SkillService();
+const aiService = new AIService(sshService, skillService);
 
 const defaultInitState = {
     "config": {"prefix": urlPrefix, "apiUrl": process.env.API_URL||""},
@@ -181,10 +185,12 @@ const config = defineConfig({
                                         // 根据会话类型设置数据接收
                                         const sendOutput = (chunk: any) => {
                                             if (ws.readyState === WebSocket.OPEN) {
-                                                // 检测二进制数据（ZMODEM等协议），用base64编码传输
                                                 const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(typeof chunk === 'string' ? chunk : chunk);
                                                 const hasBinary = buf.some((b: number) => b > 127);
-                                                // 调试：检测 ZMODEM 特征序列
+                                                // 通知输出监听器（用于 Agent 捕获输出）
+                                                if (!hasBinary) {
+                                                    try { sshService.notifyOutput(sessionId!, buf.toString('utf-8')); } catch(e) {}
+                                                }
                                                 const zmSig = Buffer.from([42, 42, 24, 66]);
                                                 if (buf.length >= 4 && buf.includes(zmSig)) {
                                                     console.log('[WS-DEBUG] ZMODEM sig in SSH output! buf.length:', buf.length,
@@ -242,6 +248,28 @@ const config = defineConfig({
                                 }
                                 case 'close': {
                                     if (sid) sshService.closeSession(sid);
+                                    break;
+                                }
+                                case 'ai-agent-run': {
+                                    const { aiSessionId, message, context, skillId } = data || {};
+                                    if (!aiSessionId || !message) {
+                                        ws.send(JSON.stringify({ type: 'ai-agent-event', event: { type: 'error', error: '缺少参数' } }));
+                                        break;
+                                    }
+                                    aiService.agentRun(aiSessionId, message, context, (event: any) => {
+                                        if (ws.readyState === WebSocket.OPEN) {
+                                            ws.send(JSON.stringify({ type: 'ai-agent-event', sessionId: aiSessionId, event }));
+                                        }
+                                    }, skillId).catch((err: any) => {
+                                        if (ws.readyState === WebSocket.OPEN) {
+                                            ws.send(JSON.stringify({ type: 'ai-agent-event', sessionId: aiSessionId, event: { type: 'error', error: err.message } }));
+                                        }
+                                    });
+                                    break;
+                                }
+                                case 'ai-agent-stop': {
+                                    const { aiSessionId: stopSid } = data || {};
+                                    if (stopSid) aiService.stopAgent(stopSid);
                                     break;
                                 }
                             }
@@ -322,7 +350,7 @@ async function serverRoute(req: Connect.IncomingMessage, res: http.ServerRespons
             return true;
         }
         const body = await getRequestBody(req);
-        if (pathname.startsWith('/api/connection/') || pathname.startsWith('/api/terminal/')) {
+        if (pathname.startsWith('/api/connection/') || pathname.startsWith('/api/terminal/') || pathname.startsWith('/api/ai/')) {
             try {
                 const data = await handleRoute(pathname, body);
                 res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -408,6 +436,78 @@ async function handleRoute(pathname: string, body: any) {
     if (pathname === '/api/terminal/closeAllSessions') {
         sshService.closeAllSessions();
         return true;
+    }
+
+    // ========== AI 配置 ==========
+
+    // 获取 AI 配置
+    if (pathname === '/api/ai/getConfig') {
+        return aiService.getConfig();
+    }
+    // 更新 AI 配置
+    if (pathname === '/api/ai/updateConfig') {
+        return aiService.updateConfig(body);
+    }
+    // 测试 AI 配置
+    if (pathname === '/api/ai/testConfig') {
+        return await aiService.testConfig(body);
+    }
+    // AI 对话（非流式）
+    if (pathname === '/api/ai/chat') {
+        const { sessionId, message, context } = body;
+        if (!sessionId) throw new Error('Missing parameter: sessionId');
+        if (!message) throw new Error('Missing parameter: message');
+        return await aiService.chat(sessionId, message, context);
+    }
+    // 清空 AI 对话历史
+    if (pathname === '/api/ai/clearHistory') {
+        const { sessionId } = body;
+        if (!sessionId) throw new Error('Missing parameter: sessionId');
+        aiService.clearHistory(sessionId);
+        return true;
+    }
+    // 获取 AI 对话显示历史
+    if (pathname === '/api/ai/getDisplayHistory') {
+        const { sessionId } = body;
+        if (!sessionId) throw new Error('Missing parameter: sessionId');
+        return aiService.loadDisplayHistory(sessionId);
+    }
+    // 保存 AI 对话显示历史
+    if (pathname === '/api/ai/saveDisplayHistory') {
+        const { sessionId, messages, sessionName } = body;
+        if (!sessionId) throw new Error('Missing parameter: sessionId');
+        if (!messages) throw new Error('Missing parameter: messages');
+        aiService.saveDisplayHistory(sessionId, messages, sessionName);
+        return true;
+    }
+    // 列出所有历史对话
+    if (pathname === '/api/ai/listHistories') {
+        return aiService.listDisplayHistories();
+    }
+    // 加载指定历史对话
+    if (pathname === '/api/ai/loadHistory') {
+        const { sessionId } = body;
+        if (!sessionId) throw new Error('Missing parameter: sessionId');
+        return aiService.loadDisplayHistory(sessionId);
+    }
+    // 删除指定历史对话
+    if (pathname === '/api/ai/deleteHistory') {
+        const { sessionId } = body;
+        if (!sessionId) throw new Error('Missing parameter: sessionId');
+        aiService.deleteDisplayHistoryFile(sessionId);
+        return true;
+    }
+    // 获取 Skills 列表
+    if (pathname === '/api/ai/getSkills') {
+        return skillService.getSkills();
+    }
+    // 获取指定 Skill
+    if (pathname === '/api/ai/getSkill') {
+        const { id } = body;
+        if (!id) throw new Error('Missing parameter: id');
+        const skill = skillService.getSkill(id);
+        if (!skill) throw new Error('Skill not found: ' + id);
+        return skill;
     }
 
     throw new Error('API endpoint not found');

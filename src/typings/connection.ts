@@ -45,10 +45,11 @@ export interface TerminalTab {
  * WebSocket 消息协议
  */
 export interface WSMessage {
-  type: 'terminal' | 'resize' | 'create' | 'reconnect' | 'close' | 'status' | 'error' | 'zmodem';
+  type: 'terminal' | 'resize' | 'create' | 'reconnect' | 'close' | 'status' | 'error' | 'zmodem' | 'ai-agent-event' | 'ai-agent-run' | 'ai-agent-stop';
   sessionId?: string;
   data?: any;
-  binary?: boolean; // base64 编码的二进制数据标记
+  binary?: boolean;
+  event?: any; // AI Agent 事件
 }
 
 /**

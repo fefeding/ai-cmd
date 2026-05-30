@@ -114,6 +114,10 @@ wss.on('connection', async (ws, req) => {
       if (ws.readyState === WebSocket.OPEN) {
         const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         const hasBinary = buf.some(b => b > 127);
+        // 通知输出监听器（用于 Agent 捕获输出）
+        if (!hasBinary) {
+          try { sshService.notifyOutput(sessionId, buf.toString('utf-8')); } catch(e) {}
+        }
         if (hasBinary) {
           ws.send(JSON.stringify({ type: 'terminal', sessionId, data: buf.toString('base64'), binary: true }));
         } else {
@@ -223,6 +227,45 @@ wss.on('connection', async (ws, req) => {
           if (sid) {
             console.log(`[WS] Closing session: ${sid}`);
             sshService.closeSession(sid);
+          }
+          break;
+        }
+
+        case 'ai-agent-run': {
+          // AI Agent 运行
+          const { aiSessionId, message, context, skillId } = data || {};
+          if (!aiSessionId || !message) {
+            ws.send(JSON.stringify({ type: 'ai-agent-event', event: { type: 'error', error: '缺少参数' } }));
+            break;
+          }
+          const { aiService } = serverModule;
+          if (!aiService) {
+            ws.send(JSON.stringify({ type: 'ai-agent-event', event: { type: 'error', error: 'AI 服务不可用' } }));
+            break;
+          }
+          console.log(`[WS] AI Agent run: session=${aiSessionId}, skill=${skillId || 'none'}, message=${message.substring(0, 50)}`);
+          // 异步运行 Agent，通过回调推送事件
+          aiService.agentRun(aiSessionId, message, context, (event) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'ai-agent-event', sessionId: aiSessionId, event }));
+            }
+          }, skillId).catch((err) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'ai-agent-event', sessionId: aiSessionId, event: { type: 'error', error: err.message } }));
+            }
+          });
+          break;
+        }
+
+        case 'ai-agent-stop': {
+          // 停止 AI Agent
+          const { aiSessionId: stopSid } = data || {};
+          if (stopSid) {
+            const { aiService } = serverModule;
+            if (aiService) {
+              aiService.stopAgent(stopSid);
+              console.log(`[WS] AI Agent stop requested: ${stopSid}`);
+            }
           }
           break;
         }

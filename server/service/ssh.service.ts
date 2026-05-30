@@ -2,7 +2,10 @@ import { Client, type ClientChannel } from 'ssh2';
 import { ConnectionService } from './connection.service';
 import { ConnectionEntity } from '../model/connection.entity';
 import { spawn, type ChildProcess } from 'child_process';
+import { execSync } from 'child_process';
 import * as os from 'os';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // 尝试加载 node-pty，如果可用则使用 PTY 模式
 let nodePty: any = null;
@@ -37,6 +40,7 @@ interface SessionMetadata {
   type: 'ssh' | 'local';
   name: string;
   createdAt: Date;
+  systemContext?: string;
 }
 
 /** 会话信息（用于返回给前端） */
@@ -46,6 +50,7 @@ export interface SessionInfo {
   type: 'ssh' | 'local';
   name: string;
   createdAt: Date;
+  systemContext?: string;
 }
 
 /**
@@ -56,9 +61,15 @@ export class SSHService {
   private sessions: Map<string, TerminalSession> = new Map();
   private sessionMetadata: Map<string, SessionMetadata> = new Map();
   private connectionService: ConnectionService;
+  private outputListeners: Map<string, (data: string) => void> = new Map();
+  /** Session 元数据持久化文件路径 */
+  private sessionsFilePath: string;
 
   constructor(connectionService: ConnectionService) {
     this.connectionService = connectionService;
+    const dataDir = process.env.fterm_DATA_DIR || path.join(os.homedir(), '.fterm');
+    this.sessionsFilePath = path.join(dataDir, 'sessions.json');
+    this.loadSessionsFromDisk();
   }
 
   /**
@@ -95,7 +106,9 @@ export class SSHService {
         type: localSession.type,
         name: localSession.name,
         createdAt: localSession.createdAt,
+        systemContext: this.collectSystemInfo(),
       });
+      this.saveSessionsToDisk();
       return localSession;
     }
 
@@ -118,7 +131,9 @@ export class SSHService {
       type: session.type,
       name: session.name,
       createdAt: session.createdAt,
+      systemContext: this.collectSystemInfo(),
     });
+    this.saveSessionsToDisk();
 
     return session;
   }
@@ -309,6 +324,7 @@ export class SSHService {
         type: meta.type,
         name: meta.name,
         createdAt: meta.createdAt,
+        systemContext: meta.systemContext,
       });
     }
     return sessions;
@@ -327,6 +343,7 @@ export class SSHService {
     const meta = this.sessionMetadata.get(sessionId);
     if (meta) {
       meta.name = name;
+      this.saveSessionsToDisk();
     }
   }
 
@@ -338,6 +355,7 @@ export class SSHService {
     this.closeSession(sessionId);
     // 再删除元数据
     this.sessionMetadata.delete(sessionId);
+    this.saveSessionsToDisk();
   }
 
   /**
@@ -345,6 +363,146 @@ export class SSHService {
    */
   getSession(sessionId: string): TerminalSession | undefined {
     return this.sessions.get(sessionId);
+  }
+
+  // ========== Session 元数据持久化 ==========
+
+  /**
+   * 从磁盘加载 session 元数据
+   */
+  private loadSessionsFromDisk(): void {
+    try {
+      if (fs.existsSync(this.sessionsFilePath)) {
+        const raw = fs.readFileSync(this.sessionsFilePath, 'utf-8');
+        const list: any[] = JSON.parse(raw);
+        for (const item of list) {
+          this.sessionMetadata.set(item.sessionId, {
+            sessionId: item.sessionId,
+            connectionId: item.connectionId,
+            type: item.type,
+            name: item.name,
+            createdAt: new Date(item.createdAt),
+            systemContext: item.systemContext,
+          });
+        }
+        console.log(`[SSH] Loaded ${list.length} session(s) from disk`);
+      }
+    } catch (error) {
+      console.error('[SSH] Failed to load sessions from disk:', error);
+    }
+  }
+
+  /**
+   * 将 session 元数据写入磁盘
+   */
+  private saveSessionsToDisk(): void {
+    try {
+      const list = Array.from(this.sessionMetadata.values()).map(m => ({
+        sessionId: m.sessionId,
+        connectionId: m.connectionId,
+        type: m.type,
+        name: m.name,
+        createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : m.createdAt,
+        systemContext: m.systemContext,
+      }));
+      fs.writeFileSync(this.sessionsFilePath, JSON.stringify(list, null, 2), 'utf-8');
+    } catch (error) {
+      console.error('[SSH] Failed to save sessions to disk:', error);
+    }
+  }
+
+  // ========== 系统环境自动采集 ==========
+
+  /**
+   * 获取会话的系统上下文（确保每次都有）
+   * 如果 session 没有缓存的环境信息，自动采集并持久化
+   */
+  getSystemContext(sessionId: string): string {
+    const meta = this.sessionMetadata.get(sessionId);
+    if (meta?.systemContext) {
+      return meta.systemContext;
+    }
+    // 自动采集并保存
+    const info = this.collectSystemInfo();
+    if (meta) {
+      meta.systemContext = info;
+      this.saveSessionsToDisk();
+    }
+    return info;
+  }
+
+  /**
+   * 采集当前系统环境信息
+   */
+  private collectSystemInfo(): string {
+    const commands = [
+      'echo "__OS__: $(uname -s 2>/dev/null || echo unknown)"',
+      'echo "__KERNEL__: $(uname -r 2>/dev/null || echo unknown)"',
+      'echo "__HOSTNAME__: $(hostname 2>/dev/null || echo unknown)"',
+      'echo "__SHELL__: $SHELL"',
+      'echo "__ARCH__: $(uname -m 2>/dev/null || echo unknown)"',
+      'echo "__USER__: $(whoami 2>/dev/null || echo unknown)"',
+      'if command -v apt-get >/dev/null 2>&1; then echo "__PM__: apt (Debian/Ubuntu)"; elif command -v yum >/dev/null 2>&1; then echo "__PM__: yum (RHEL/CentOS)"; elif command -v dnf >/dev/null 2>&1; then echo "__PM__: dnf (Fedora)"; elif command -v pacman >/dev/null 2>&1; then echo "__PM__: pacman (Arch)"; elif command -v brew >/dev/null 2>&1; then echo "__PM__: brew (macOS)"; else echo "__PM__: unknown"; fi',
+      'if command -v docker >/dev/null 2>&1; then echo "__DOCKER__: $(docker --version 2>/dev/null)"; else echo "__DOCKER__: none"; fi',
+      'if command -v nginx >/dev/null 2>&1; then echo "__WEBSERVER__: nginx $(nginx -v 2>&1 | sed \'s/.*\\///\' )"; elif command -v httpd >/dev/null 2>&1; then echo "__WEBSERVER__: apache"; elif command -v caddy >/dev/null 2>&1; then echo "__WEBSERVER__: caddy"; else echo "__WEBSERVER__: none"; fi',
+      'if command -v mysql >/dev/null 2>&1; then echo "__DB__: mysql"; elif command -v psql >/dev/null 2>&1; then echo "__DB__: postgresql"; elif command -v mongosh >/dev/null 2>&1; then echo "__DB__: mongodb"; else echo "__DB__: none"; fi',
+      'if command -v ufw >/dev/null 2>&1; then echo "__FW__: ufw"; elif command -v firewall-cmd >/dev/null 2>&1; then echo "__FW__: firewalld"; elif command -v iptables >/dev/null 2>&1; then echo "__FW__: iptables"; else echo "__FW__: unknown"; fi',
+      'echo "__NODE__: $(node --version 2>/dev/null || echo none)"',
+      'echo "__PYTHON__: $(python3 --version 2>/dev/null || python --version 2>/dev/null || echo none)"',
+      'echo "__CPU__: $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo unknown) cores"',
+      'echo "__MEM__: $(free -h 2>/dev/null | awk \'/Mem:/{print $2}\' || sysctl -n hw.memsize 2>/dev/null | awk \'{printf \"%.0fGB\", $1/1024/1024/1024}\' || echo unknown)"',
+    ].join('\n');
+
+    try {
+      const result = execSync(commands, {
+        encoding: 'utf-8',
+        timeout: 5000,
+        shell: '/bin/bash',
+      });
+      return this.formatSystemInfo(result);
+    } catch (error) {
+      try {
+        const basic = execSync('uname -a && whoami && echo $SHELL', {
+          encoding: 'utf-8',
+          timeout: 3000,
+        });
+        return `系统基本信息：\n${basic}`;
+      } catch {
+        return '无法采集系统信息';
+      }
+    }
+  }
+
+  /**
+   * 格式化采集结果
+   */
+  private formatSystemInfo(raw: string): string {
+    const map: Record<string, string> = {};
+    const labelMap: Record<string, string> = {
+      '__OS__': '操作系统', '__KERNEL__': '内核版本', '__HOSTNAME__': '主机名',
+      '__SHELL__': '默认 Shell', '__ARCH__': '架构', '__USER__': '当前用户',
+      '__PM__': '包管理器', '__DOCKER__': 'Docker', '__WEBSERVER__': 'Web 服务器',
+      '__DB__': '数据库', '__FW__': '防火墙', '__NODE__': 'Node.js',
+      '__PYTHON__': 'Python', '__CPU__': 'CPU', '__MEM__': '内存',
+    };
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const match = trimmed.match(/^(__\w+__):\s*(.*)/);
+      if (match) {
+        const val = match[2].trim();
+        const label = labelMap[match[1]] || match[1];
+        if (val && val !== 'none' && val !== 'unknown') {
+          map[label] = val;
+        }
+      }
+    }
+    if (Object.keys(map).length === 0) return raw;
+    const lines = ['当前系统环境信息：'];
+    for (const [key, val] of Object.entries(map)) {
+      lines.push(`- ${key}: ${val}`);
+    }
+    return lines.join('\n');
   }
 
   /**
@@ -356,12 +514,7 @@ export class SSHService {
 
     try {
       if (session.pty) {
-        // node-pty: 支持 string 和 Buffer
-        if (Buffer.isBuffer(data)) {
-          session.pty.write(data);
-        } else {
-          session.pty.write(data);
-        }
+        session.pty.write(data);
       } else if (session.type === 'local' && session.childProcess?.stdin) {
         session.childProcess.stdin.write(data);
       } else if (session.stream) {
@@ -372,6 +525,56 @@ export class SSHService {
       console.error(`写入会话 ${sessionId} 失败:`, error);
       return false;
     }
+  }
+
+  /**
+   * 注册输出监听器（用于 Agent 捕获终端输出）
+   * 注意：此方法不拦截现有 WebSocket 转发，仅添加额外监听
+   */
+  addOutputListener(sessionId: string, listener: (data: string) => void): void {
+    this.outputListeners.set(sessionId, listener);
+  }
+
+  /**
+   * 移除输出监听器
+   */
+  removeOutputListener(sessionId: string): void {
+    this.outputListeners.delete(sessionId);
+  }
+
+  /**
+   * 通知输出监听器（由 WebSocket 处理器在收到终端输出时调用）
+   */
+  notifyOutput(sessionId: string, data: string): void {
+    const listener = this.outputListeners.get(sessionId);
+    if (listener) {
+      try {
+        listener(data);
+      } catch (e) {
+        // 忽略监听器错误
+      }
+    }
+  }
+
+  /**
+   * 捕获会话在指定时间内的输出
+   * @param sessionId 会话 ID
+   * @param timeoutMs 等待时间（毫秒），默认 2000
+   * @returns 捕获的输出文本（已去除 ANSI 转义序列）
+   */
+  captureOutput(sessionId: string, timeoutMs: number = 2000): Promise<string> {
+    return new Promise((resolve) => {
+      let output = '';
+      const listener = (data: string) => {
+        output += data;
+      };
+      this.addOutputListener(sessionId, listener);
+      setTimeout(() => {
+        this.removeOutputListener(sessionId);
+        // 去除 ANSI 转义序列
+        resolve(output.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1B\].*?\x07/g, ''));
+      }, timeoutMs);
+    });
   }
 
   /**

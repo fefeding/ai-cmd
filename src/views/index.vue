@@ -11,6 +11,7 @@
       @delete-connection="handleDelete"
       @refresh="handleRefresh"
       @toggle-sidebar="store.toggleSidebar()"
+      @open-ai-settings="openAISettings"
     />
 
     <!-- 主区域 -->
@@ -95,6 +96,9 @@
     <!-- 连接编辑器 -->
     <ConnectionEditor ref="connectionEditorRef" @saved="handleEditorSaved" />
 
+    <!-- AI 设置 -->
+    <AISettings ref="aiSettingsRef" />
+
     <!-- 文件传输对话框 -->
     <FileTransfer ref="fileTransferRef" />
 
@@ -134,6 +138,7 @@ import TerminalSidebar from '@/components/terminal-sidebar.vue';
 import TerminalTabComp from '@/components/terminal-tab.vue';
 import ConnectionEditor from '@/components/connection-editor/index.vue';
 import FileTransfer from '@/components/file-transfer.vue';
+import AISettings from '@/components/ai-settings/index.vue';
 import type { ConnectionEntity, TerminalTab as TerminalTabType } from '@/typings/connection';
 
 const { t } = useI18n();
@@ -141,6 +146,7 @@ const { t } = useI18n();
 const store = useTerminalStore();
 const connectionEditorRef = ref<InstanceType<typeof ConnectionEditor>>();
 const fileTransferRef = ref<InstanceType<typeof FileTransfer>>();
+const aiSettingsRef = ref<InstanceType<typeof AISettings>>();
 const showZmodemBtn = ref(false);
 const activeZmodemTabId = ref<string | null>(null);
 
@@ -332,6 +338,11 @@ function handleFileTransfer() {
   if (termRef) {
     fileTransferRef.value?.show(tabId, termRef);
   }
+}
+
+// 打开 AI 设置
+function openAISettings() {
+  aiSettingsRef.value?.open();
 }
 
 // 快捷键

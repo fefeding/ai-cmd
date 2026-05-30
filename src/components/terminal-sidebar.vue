@@ -74,9 +74,14 @@
     <!-- 底部信息 -->
     <div class="p-2 text-center d-flex align-items-center justify-content-between" style="font-size: 11px; color: var(--text-secondary); border-top: 1px solid var(--border-color);">
       <span>{{ connections.length }} {{ t('sidebar.connectionCount') }}</span>
-      <button class="btn-lang-switch" @click="toggleLocale" :title="currentLocale === 'zh-CN' ? 'Switch to English' : '切换到中文'">
-        {{ currentLocale === 'zh-CN' ? 'EN' : '中' }}
-      </button>
+      <div class="d-flex gap-1 align-items-center">
+        <button class="btn-ai-settings" @click="$emit('open-ai-settings')" :title="t('ai.settings')">
+          <i class="bi bi-robot"></i>
+        </button>
+        <button class="btn-lang-switch" @click="toggleLocale" :title="currentLocale === 'zh-CN' ? 'Switch to English' : '切换到中文'">
+          {{ currentLocale === 'zh-CN' ? 'EN' : '中' }}
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -110,6 +115,7 @@ defineEmits<{
   (e: 'delete-connection', conn: ConnectionEntity): void;
   (e: 'refresh'): void;
   (e: 'toggle-sidebar'): void;
+  (e: 'open-ai-settings'): void;
 }>();
 
 const searchQuery = ref('');
@@ -180,5 +186,25 @@ function showContextMenu(_event: MouseEvent, _conn: ConnectionEntity) {
 .btn-lang-switch:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.btn-ai-settings {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+}
+
+.btn-ai-settings:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background-color: rgba(137, 180, 250, 0.1);
 }
 </style>
