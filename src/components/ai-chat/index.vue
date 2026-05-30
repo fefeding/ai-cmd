@@ -32,10 +32,10 @@
         v-for="(msg, index) in messages" 
         :key="index" 
         class="ai-message"
-        :class="msg.role"
+        :class="[msg.role, { 'system-info': msg.isSystemInfo }]"
       >
         <div class="ai-message-avatar">
-          <i :class="msg.role === 'user' ? 'bi bi-person' : 'bi bi-robot'"></i>
+          <i :class="msg.isSystemInfo ? 'bi bi-info-circle' : (msg.role === 'user' ? 'bi bi-person' : 'bi bi-robot')"></i>
         </div>
         <div class="ai-message-content">
           <!-- 用户消息中显示 Skill 标签 -->
@@ -173,7 +173,7 @@
 <script lang="ts" setup>
 import { ref, watch, nextTick, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { request } from '@/utils/request';
+import * as aiService from '@/service/ai';
 
 const { t } = useI18n();
 
@@ -214,6 +214,7 @@ interface ChatMessage {
   agentSteps?: AgentStep[];
   isRunning?: boolean;
   skillName?: string;
+  isSystemInfo?: boolean;
 }
 
 const messagesContainer = ref<HTMLElement>();
@@ -258,6 +259,18 @@ function ensureAssistantMessage(): number {
 
 // 处理 Agent 事件（由父组件调用）
 function handleAgentEvent(event: any) {
+  // system_info 作为独立消息展示，不进入 assistant 消息流
+  if (event.type === 'system_info') {
+    messages.value.push({
+      role: 'assistant',
+      content: event.content || '',
+      isSystemInfo: true,
+      isRunning: false,
+    });
+    nextTick(() => scrollToBottom());
+    return;
+  }
+
   const idx = ensureAssistantMessage();
   const msg = messages.value[idx];
   if (!msg.agentSteps) msg.agentSteps = [];
@@ -325,8 +338,7 @@ function handleAgentEvent(event: any) {
 // 加载 Skills 列表
 async function loadSkills() {
   try {
-    const res = await request('/api/ai/getSkills', {});
-    const data = res?.data ?? res;
+    const data = await aiService.getSkills();
     if (Array.isArray(data)) {
       skills.value = data;
     }
@@ -432,7 +444,7 @@ function handleClear() {
   messages.value = [];
   currentAssistantIdx = -1;
   // 通知服务端清空历史
-  request('/api/ai/clearHistory', { sessionId: props.sessionId }).catch(() => {});
+  aiService.clearHistory(props.sessionId).catch(() => {});
 }
 
 // 保存对话显示历史到服务端
@@ -441,6 +453,7 @@ function saveDisplayHistory() {
     role: m.role,
     content: m.content,
     skillName: m.skillName,
+    isSystemInfo: m.isSystemInfo,
     agentSteps: m.agentSteps?.filter(s => s.type === 'tool_call').map(s => ({
       type: 'tool_call' as const,
       tool: s.tool,
@@ -449,30 +462,47 @@ function saveDisplayHistory() {
       collapsed: true,
     })),
   }));
-  request('/api/ai/saveDisplayHistory', {
-    sessionId: props.sessionId,
-    messages: toSave,
-    sessionName: props.sessionName,
-  }).catch(() => {});
+  aiService.saveDisplayHistory(props.sessionId, toSave, props.sessionName).catch(() => {});
 }
 
 // 加载对话历史
 async function loadDisplayHistory() {
   try {
-    const res = await request('/api/ai/getDisplayHistory', { sessionId: props.sessionId });
-    const data = res?.data ?? res;
+    const data = await aiService.getDisplayHistory(props.sessionId);
     if (Array.isArray(data) && data.length > 0) {
       messages.value = data.map((m: any) => ({
         role: m.role,
         content: m.content,
         skillName: m.skillName,
+        isSystemInfo: m.isSystemInfo,
         agentSteps: m.agentSteps?.map((s: any) => ({ ...s, collapsed: true })),
         isRunning: false,
       }));
       nextTick(() => scrollToBottom());
+    } else {
+      // 无历史消息时，主动获取系统环境信息并展示
+      await fetchAndShowSystemInfo();
     }
   } catch (e) {
     console.warn('Failed to load display history:', e);
+  }
+}
+
+/** 主动获取系统环境信息并展示为第一条消息 */
+async function fetchAndShowSystemInfo() {
+  try {
+    const sysContext = await aiService.getSystemContext(props.sessionId);
+    if (sysContext && typeof sysContext === 'string' && sysContext.trim()) {
+      messages.value.push({
+        role: 'assistant',
+        content: sysContext,
+        isSystemInfo: true,
+        isRunning: false,
+      });
+      nextTick(() => scrollToBottom());
+    }
+  } catch (e) {
+    console.warn('Failed to fetch system context:', e);
   }
 }
 
@@ -486,8 +516,7 @@ function toggleHistoryPanel() {
 
 async function fetchHistoryList() {
   try {
-    const res = await request('/api/ai/listHistories', {});
-    const data = res?.data ?? res;
+    const data = await aiService.listHistories();
     if (Array.isArray(data)) {
       historyList.value = data;
     }
@@ -498,13 +527,13 @@ async function fetchHistoryList() {
 
 async function loadPastHistory(targetSessionId: string) {
   try {
-    const res = await request('/api/ai/loadHistory', { sessionId: targetSessionId });
-    const data = res?.data ?? res;
+    const data = await aiService.loadHistory(targetSessionId);
     if (Array.isArray(data) && data.length > 0) {
       messages.value = data.map((m: any) => ({
         role: m.role,
         content: m.content,
         skillName: m.skillName,
+        isSystemInfo: m.isSystemInfo,
         agentSteps: m.agentSteps?.map((s: any) => ({ ...s, collapsed: true })),
         isRunning: false,
       }));
@@ -1139,5 +1168,20 @@ defineExpose({ handleAgentEvent, scrollToBottom });
 .btn-ai-action.active {
   color: #89b4fa;
   background: rgba(137, 180, 250, 0.1);
+}
+
+/* 系统信息消息 */
+.ai-message.system-info .ai-message-avatar i {
+  color: #89b4fa;
+}
+.ai-message.system-info .ai-message-content {
+  background: rgba(137, 180, 250, 0.06);
+  border: 1px solid rgba(137, 180, 250, 0.15);
+}
+.ai-message.system-info .ai-message-text {
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  color: var(--text-secondary);
 }
 </style>

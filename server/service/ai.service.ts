@@ -41,7 +41,7 @@ export interface ToolCall {
 /**
  * Agent 事件类型
  */
-export type AgentEventType = 'thinking' | 'message' | 'tool_call' | 'tool_result' | 'done' | 'error';
+export type AgentEventType = 'thinking' | 'message' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'system_info';
 
 /**
  * Agent 事件
@@ -91,6 +91,7 @@ export interface DisplayMessage {
   role: 'user' | 'assistant';
   content: string;
   skillName?: string;
+  isSystemInfo?: boolean;
   agentSteps?: DisplayAgentStep[];
 }
 
@@ -137,7 +138,7 @@ interface ISSHService {
   writeData(sessionId: string, data: string | Buffer): boolean;
   captureOutput(sessionId: string, timeoutMs?: number): Promise<string>;
   getSession(sessionId: string): any;
-  getSystemContext(sessionId: string): string;
+  getSystemContext(sessionId: string): Promise<string>;
 }
 
 // SkillService 接口
@@ -556,10 +557,10 @@ export class AIService {
    * 获取会话的系统上下文（从 sshService 的 session 元数据获取）
    * 保证每次对话都带上系统环境信息
    */
-  private getSessionContext(sessionId: string): string {
+  private async getSessionContext(sessionId: string): Promise<string> {
     if (!this.sshService) return '';
     try {
-      return this.sshService.getSystemContext(sessionId);
+      return await this.sshService.getSystemContext(sessionId);
     } catch (error) {
       console.warn('[AIService] Failed to get system context:', error);
       return '';
@@ -602,7 +603,7 @@ export class AIService {
     let systemPrompt = this.AGENT_SYSTEM_PROMPT;
 
     // 自动注入系统环境上下文（首次对话自动采集）
-    const sysContext = this.getSessionContext(sessionId);
+    const sysContext = await this.getSessionContext(sessionId);
     if (sysContext && sysContext !== '无法采集系统信息') {
       systemPrompt += `\n\n${sysContext}`;
     }

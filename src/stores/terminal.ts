@@ -3,7 +3,7 @@ import { ConnectionService } from '@/service/connection';
 import type { ConnectionEntity, TerminalTab } from '@/typings/connection';
 import { toast } from '@/utils/toast';
 import { modal } from '@/utils/modal';
-import { request } from '@/service/base';
+import * as terminalService from '@/service/terminal';
 import i18n from '@/utils/i18n';
 
 const t = (key: string) => i18n.global.t(key);
@@ -103,7 +103,7 @@ export const useTerminalStore = defineStore('terminal', {
       const tab = this.tabs.find(t => t.id === tabId);
       if (tab?.sessionId) {
         try {
-          await request('/api/terminal/deleteSession', { sessionId: tab.sessionId });
+          await terminalService.deleteSession(tab.sessionId);
         } catch (e) {
           console.warn('删除 session 失败:', e);
         }
@@ -159,7 +159,7 @@ export const useTerminalStore = defineStore('terminal', {
       for (const tab of tabsToClose) {
         if (tab.sessionId) {
           try {
-            await request('/api/terminal/deleteSession', { sessionId: tab.sessionId });
+            await terminalService.deleteSession(tab.sessionId);
           } catch (e) {
             console.warn('删除 session 失败:', e);
           }
@@ -174,7 +174,7 @@ export const useTerminalStore = defineStore('terminal', {
       for (const tab of this.tabs) {
         if (tab.sessionId) {
           try {
-            await request('/api/terminal/deleteSession', { sessionId: tab.sessionId });
+            await terminalService.deleteSession(tab.sessionId);
           } catch (e) {
             console.warn('删除 session 失败:', e);
           }
@@ -192,7 +192,7 @@ export const useTerminalStore = defineStore('terminal', {
       // 同步到 server 端
       if (tab.sessionId) {
         try {
-          await request('/api/terminal/renameSession', { sessionId: tab.sessionId, name: newName });
+          await terminalService.renameSession(tab.sessionId, newName);
         } catch (e) {
           console.warn('重命名 session 失败:', e);
         }

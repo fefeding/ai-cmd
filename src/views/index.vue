@@ -133,7 +133,7 @@
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useTerminalStore } from '@/stores/terminal';
-import { request } from '@/service/base';
+import * as terminalService from '@/service/terminal';
 import TerminalSidebar from '@/components/terminal-sidebar.vue';
 import TerminalTabComp from '@/components/terminal-tab.vue';
 import ConnectionEditor from '@/components/connection-editor/index.vue';
@@ -388,14 +388,13 @@ onBeforeUnmount(() => {
  */
 async function restoreOrCreateTabs() {
   try {
-    const sessions = await request('/api/terminal/getSessions', {});
-    const sessionList = sessions?.data || sessions || [];
+    const sessionList = await terminalService.getSessions() || [];
 
     if (sessionList.length > 0) {
       // 删除 server 端旧的 metadata，然后重建新的 tab
       for (const session of sessionList) {
         try {
-          await request('/api/terminal/deleteSession', { sessionId: session.sessionId });
+          await terminalService.deleteSession(session.sessionId);
         } catch (e) {
           console.warn('删除旧 session 失败:', e);
         }

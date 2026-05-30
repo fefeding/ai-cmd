@@ -108,7 +108,7 @@
 import { ref, reactive } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Modal from '@/components/modal/index.vue';
-import { request } from '@/service/base';
+import * as aiService from '@/service/ai';
 import { toast } from '@/utils/toast';
 
 const { t } = useI18n();
@@ -140,9 +140,9 @@ const form = reactive<AIConfigForm>(defaultForm());
 
 async function open() {
   try {
-    const config = await request('/api/ai/getConfig', {});
+    const config = await aiService.getAIConfig();
     if (config) {
-      Object.assign(form, defaultForm(), config);
+      Object.assign(form, defaultForm(), config as any);
     }
   } catch (e) {
     console.error('Failed to load AI config:', e);
@@ -166,7 +166,7 @@ async function saveSettings() {
   
   saving.value = true;
   try {
-    await request('/api/ai/updateConfig', { ...form });
+    await aiService.updateAIConfig({ ...form });
     toast.success(t('ai.saveSuccess'));
     close();
     emit('saved');
@@ -180,7 +180,7 @@ async function saveSettings() {
 async function testConnection() {
   testing.value = true;
   try {
-    const result = await request('/api/ai/testConfig', { ...form });
+    const result = await aiService.testAIConfig({ ...form });
     if (result?.success) {
       toast.success(t('ai.testSuccess'));
     } else {

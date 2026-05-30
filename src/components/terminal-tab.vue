@@ -14,7 +14,7 @@
     </button>
 
     <!-- AI 对话面板 -->
-    <div v-if="showAIChat" class="ai-chat-wrapper">
+    <div v-show="showAIChat" class="ai-chat-wrapper">
       <AIChat
         ref="aiChatRef"
         :sessionId="sessionId || tabId"
@@ -737,10 +737,6 @@ defineExpose({ focus, fit, writeToTerminal, getTerminal, getZmodemSession, getZm
 // AI 相关方法
 function toggleAIChat() {
   showAIChat.value = !showAIChat.value;
-  if (showAIChat.value) {
-    // 切换时重新调整终端大小
-    nextTick(() => fit());
-  }
 }
 
 function getTerminalContext(): string {
@@ -842,17 +838,7 @@ function handleAISend(msg: any) {
   width: 380px;
   height: 100%;
   z-index: 15;
-  animation: slideIn 0.2s ease-out;
-}
-
-@keyframes slideIn {
-  from {
-    transform: translateX(100%);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
+  will-change: transform;
+  transform: translateZ(0);
 }
 </style>

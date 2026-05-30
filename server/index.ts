@@ -127,6 +127,13 @@ export async function handleRoutes(pathname: string, body: any) {
       return true;
     }
 
+    // 获取 Session 的系统环境信息
+    if (pathname === '/api/ai/getSystemContext') {
+      const { sessionId } = body;
+      if (!sessionId) throw Error('Missing parameter: sessionId');
+      return await sshService.getSystemContext(sessionId);
+    }
+
     // 获取 AI 对话显示历史（前端恢复用）
     if (pathname === '/api/ai/getDisplayHistory') {
       const { sessionId } = body;
