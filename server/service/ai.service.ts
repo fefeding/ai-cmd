@@ -226,10 +226,13 @@ Set-Content -Path $env:TEMP\_ai_task.ps1 -Value @'
 - Windows: Shell=PowerShell，使用 PowerShell cmdlet，临时文件用 \`$env:TEMP\`
 - 写脚本时先判断平台再选择对应命令
 
-回复格式：
+回复格式（重要）：
 - 使用 Markdown 格式
-- 在每次工具调用前，简要说明你要做什么
-- 任务完成后，总结执行结果
+- 工具调用前只需一句话说明要做什么，不要解释命令细节
+- 任务完成后用简短的结论说明结果，不要重复命令输出、不要列举执行步骤、不要加多余的解释
+- 如果操作成功，直接说结果（如“已创建”“已停止”“发现3个错误”）
+- 如果操作失败，说明原因和建议的修复方式
+- 禁止废话，禁止套话，禁止总结已经显而易见的信息
 - 使用中文回复`;
 
   constructor(sshService?: ISSHService, skillService?: ISkillService) {
@@ -248,7 +251,7 @@ Set-Content -Path $env:TEMP\_ai_task.ps1 -Value @'
 
   private getDefaultConfig(): AIConfig {
     return {
-      enabled: false,
+      enabled: true,
       apiKey: '',
       baseUrl: 'https://api.openai.com/v1',
       model: 'gpt-4o-mini',
@@ -627,8 +630,8 @@ Set-Content -Path $env:TEMP\_ai_task.ps1 -Value @'
     eventCallback: AgentEventCallback,
     skillId?: string
   ): Promise<void> {
-    if (!this.config.enabled || !this.config.apiKey) {
-      eventCallback({ type: 'error', error: 'AI 功能未启用或未配置 API Key' });
+    if (!this.config.apiKey) {
+      eventCallback({ type: 'error', error: 'AI 未配置 API Key，请在设置中填写' });
       return;
     }
 
@@ -832,8 +835,8 @@ Set-Content -Path $env:TEMP\_ai_task.ps1 -Value @'
   // ========== 旧版兼容（非 Agent 模式的简单对话） ==========
 
   async chat(sessionId: string, userMessage: string, context?: string): Promise<string> {
-    if (!this.config.enabled || !this.config.apiKey) {
-      throw new Error('AI 功能未启用或未配置 API Key');
+    if (!this.config.apiKey) {
+      throw new Error('AI 未配置 API Key，请在设置中填写');
     }
 
     const history = this.getOrCreateHistory(sessionId);
@@ -888,8 +891,8 @@ Set-Content -Path $env:TEMP\_ai_task.ps1 -Value @'
     userMessage: string,
     context?: string
   ): AsyncGenerator<string, void, unknown> {
-    if (!this.config.enabled || !this.config.apiKey) {
-      throw new Error('AI 功能未启用或未配置 API Key');
+    if (!this.config.apiKey) {
+      throw new Error('AI 未配置 API Key，请在设置中填写');
     }
 
     const history = this.getOrCreateHistory(sessionId);

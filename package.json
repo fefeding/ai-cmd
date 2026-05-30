@@ -6,7 +6,7 @@
   "description": "AI-powered web SSH terminal with autonomous agent, skills, and file transfer",
   "repository": {
     "type": "git",
-    "url": "https://cnb.cool/yc_null/fshell"
+    "url": "https://github.com/fefeding/ai-cmd"
   },
   "main": "view/index.html",
   "files": [

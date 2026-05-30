@@ -8,22 +8,8 @@
     @onHidden="handleModalClose"
   >
     <form @submit.prevent="saveSettings" class="ai-settings-form">
-      <!-- 启用开关 -->
-      <div class="mb-3">
-        <div class="form-check form-switch">
-          <input class="form-check-input" type="checkbox" id="aiEnabled" v-model="form.enabled">
-          <label class="form-check-label" for="aiEnabled">
-            <i class="bi bi-robot me-1"></i>{{ t('ai.enableAI') }}
-          </label>
-        </div>
-        <small class="form-text text-muted">
-          <i class="bi bi-info-circle me-1"></i>{{ t('ai.enableHint') }}
-        </small>
-      </div>
-
       <!-- API 配置 -->
-      <template v-if="form.enabled">
-        <div class="mb-3">
+      <div class="mb-3">
           <label class="form-label fw-bold">
             <i class="bi bi-key me-1"></i>{{ t('ai.apiKey') }} <span class="text-danger">*</span>
           </label>
@@ -78,7 +64,7 @@
             <input type="number" class="form-control form-control-sm" v-model.number="form.temperature" min="0" max="2" step="0.1">
           </div>
         </div>
-      </template>
+      <!-- /API 配置 -->
 
       <!-- 操作按钮 -->
       <div class="d-flex justify-content-between">
@@ -128,7 +114,7 @@ interface AIConfigForm {
 }
 
 const defaultForm = (): AIConfigForm => ({
-  enabled: false,
+  enabled: true,
   apiKey: '',
   baseUrl: 'https://api.openai.com/v1',
   model: 'gpt-4o-mini',
@@ -159,7 +145,7 @@ function handleModalClose() {
 }
 
 async function saveSettings() {
-  if (form.enabled && !form.apiKey) {
+  if (!form.apiKey) {
     toast.warning(t('ai.apiKeyRequired'));
     return;
   }
