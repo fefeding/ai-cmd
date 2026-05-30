@@ -11,6 +11,10 @@ Web SSH 远程终端工具，支持 rz/sz 文件传输。
 - **连接管理**：可视化的连接配置管理（增删改查）
 - **桌面应用**：支持 NW.js 打包为跨平台桌面客户端
 
+## 截图
+
+![fterm 截图](./screenshot.png)
+
 ## 技术栈
 
 - **前端**：Vue 3 + TypeScript + Vite + Bootstrap 5 + xterm.js

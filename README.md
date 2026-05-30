@@ -11,6 +11,10 @@ A web-based SSH remote terminal tool with support for rz/sz file transfer.
 - **Connection Management**: Visual connection configuration management (CRUD)
 - **Desktop App**: Packaged as a cross-platform desktop client via NW.js
 
+## Screenshot
+
+![fterm Screenshot](./screenshot.png)
+
 ## Tech Stack
 
 - **Frontend**: Vue 3 + TypeScript + Vite + Bootstrap 5 + xterm.js
