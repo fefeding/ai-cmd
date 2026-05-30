@@ -36,7 +36,7 @@ export interface TerminalTab {
   connectionId: string;
   connectionName: string;
   sessionId?: string;
-  status: 'connecting' | 'connected' | 'disconnected' | 'error';
+  status: 'connecting' | 'connected' | 'disconnected' | 'error' | 'reconnecting';
   cols: number;
   rows: number;
 }
@@ -45,7 +45,7 @@ export interface TerminalTab {
  * WebSocket 消息协议
  */
 export interface WSMessage {
-  type: 'terminal' | 'resize' | 'create' | 'close' | 'status' | 'error' | 'zmodem';
+  type: 'terminal' | 'resize' | 'create' | 'reconnect' | 'close' | 'status' | 'error' | 'zmodem';
   sessionId?: string;
   data?: any;
   binary?: boolean; // base64 编码的二进制数据标记

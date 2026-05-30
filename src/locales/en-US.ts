@@ -54,6 +54,8 @@ export default {
     disconnected: 'Disconnected',
     connectionFailed: 'Connection failed',
     wsFailed: 'WebSocket connection failed',
+    reconnect: 'Reconnect',
+    reconnecting: 'Reconnecting...',
   },
   connection: {
     addTitle: 'New Connection',

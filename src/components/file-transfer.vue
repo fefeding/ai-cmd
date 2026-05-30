@@ -248,7 +248,6 @@ function show(tabId: string, termRef: any, info?: any) {
 }
 
 function handleClose() {
-  console.log('[FileTransfer] handleClose called, transferring:', transferring.value, 'activeTermRef:', !!activeTermRef, 'zmodemSession:', !!zmodemSession);
   // 移除焦点避免 Bootstrap aria-hidden 警告
   (document.activeElement as HTMLElement)?.blur?.();
 
@@ -260,9 +259,7 @@ function handleClose() {
       // 保存引用，因为 setTimeout 回调执行时 activeTermRef 已被清空
       const termRef = activeTermRef;
       const sid = termRef.sessionId;
-      console.log('[FileTransfer] Sending abort to sessionId:', sid);
       const sendAbort = (data: string) => {
-        console.log('[FileTransfer] sendAbort:', JSON.stringify(data).substring(0, 30));
         termRef.sendToServer({ type: 'terminal', sessionId: sid || undefined, data });
       };
       // 发送 ZMODEM abort 序列（5 个 CAN 字符 = \x18）

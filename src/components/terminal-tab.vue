@@ -12,6 +12,13 @@
     <div v-if="status === 'disconnected'" class="terminal-status text-secondary">
       <i class="bi bi-wifi-off me-2"></i>
       {{ t('tab.disconnected') }}
+      <button class="btn btn-sm btn-outline-light ms-3" @click="reconnect">
+        <i class="bi bi-arrow-clockwise me-1"></i>{{ t('tab.reconnect') }}
+      </button>
+    </div>
+    <div v-if="status === 'reconnecting'" class="terminal-status text-warning">
+      <div class="spinner-border spinner-border-sm text-warning me-2"></div>
+      {{ t('tab.reconnecting') }}
     </div>
   </div>
 </template>
@@ -35,13 +42,13 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'status-change', status: 'connecting' | 'connected' | 'disconnected' | 'error', sessionId?: string): void;
+  (e: 'status-change', status: 'connecting' | 'connected' | 'disconnected' | 'error' | 'reconnecting', sessionId?: string): void;
   (e: 'zmodem-detected', detection: any): void;
 }>();
 
 const terminalWrapper = ref<HTMLElement>();
 const terminalContainer = ref<HTMLElement>();
-const status = ref<'connecting' | 'connected' | 'disconnected' | 'error'>('connecting');
+const status = ref<'connecting' | 'connected' | 'disconnected' | 'error' | 'reconnecting'>('connecting');
 const errorMessage = ref('');
 
 let terminal: Terminal | null = null;
@@ -308,10 +315,59 @@ function connectWebSocket() {
 
   ws.onclose = (event) => {
     console.log(`[TerminalTab] WebSocket closed, code: ${event.code}, reason: ${event.reason}`);
-    if (status.value !== 'disconnected') {
+    if (status.value !== 'disconnected' && status.value !== 'reconnecting') {
       setStatus('disconnected');
     }
+    // WebSocket 断开后自动尝试重连
+    scheduleReconnect();
   };
+}
+
+// 重连相关
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_BASE_DELAY = 2000; // 基础延迟 2 秒
+
+function scheduleReconnect() {
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    console.log('[TerminalTab] Max reconnect attempts reached');
+    return;
+  }
+  const delay = RECONNECT_BASE_DELAY * Math.pow(1.5, reconnectAttempts);
+  console.log(`[TerminalTab] Scheduling reconnect in ${delay}ms (attempt ${reconnectAttempts + 1})`);
+  reconnectTimer = setTimeout(() => {
+    reconnect();
+  }, delay);
+}
+
+function reconnect() {
+  // 清除之前的重连定时器
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  console.log('[TerminalTab] Reconnecting...');
+  setStatus('reconnecting');
+  reconnectAttempts++;
+
+  if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+    // WebSocket 已断开，重新建立连接
+    connectWebSocket();
+  } else {
+    // WebSocket 还活着，只是 SSH 断开了，发送重连请求
+    sendToServer({
+      type: 'reconnect',
+      sessionId: sessionId || undefined,
+      data: {
+        connectionId: props.connection.id,
+        cols: terminal?.cols || 80,
+        rows: terminal?.rows || 24,
+        name: props.connection.name,
+      }
+    });
+  }
 }
 
 /** Hex header length (without CR+LF): type(2) + flags(8) + crc(4) = 14 hex chars + 5 prefix = 19, or 18 without CR */
@@ -541,6 +597,7 @@ function handleServerMessage(msg: WSMessage) {
         sessionId = msg.sessionId;
       }
       if (msg.data === 'connected') {
+        reconnectAttempts = 0; // 重置重连计数
         setStatus('connected', msg.sessionId);
       }
       break;
@@ -632,6 +689,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
   resizeObserver?.disconnect();
   ws?.close();
   terminal?.dispose();

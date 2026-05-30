@@ -93,6 +93,57 @@ wss.on('connection', async (ws, req) => {
   let sessionId = null;
   console.log(`[WS] Client connected from ${req.socket.remoteAddress}`);
 
+  // 提取会话创建逻辑，供 create 和 reconnect 复用
+  async function createSSHSession(sid, data) {
+    const serverModule = require('./dist/server/index.js');
+    const { sshService } = serverModule;
+    const { connectionId, cols, rows, name } = data || {};
+    if (!connectionId) {
+      ws.send(JSON.stringify({ type: 'error', data: '缺少 connectionId' }));
+      return;
+    }
+
+    sessionId = sid || `ssh-${Date.now()}-${Math.random().toString(36).substr(2, 8)}`;
+    console.log(`[WS] Creating SSH session: ${sessionId}, connectionId: ${connectionId}`);
+
+    const session = await sshService.createSession(sessionId, connectionId, cols || 80, rows || 24, name);
+    console.log(`[WS] SSH session created: ${sessionId}`);
+
+    // 根据会话类型绑定输出和关闭事件
+    const sendOutput = (chunk) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        const hasBinary = buf.some(b => b > 127);
+        if (hasBinary) {
+          ws.send(JSON.stringify({ type: 'terminal', sessionId, data: buf.toString('base64'), binary: true }));
+        } else {
+          ws.send(JSON.stringify({ type: 'terminal', sessionId, data: buf.toString('utf-8') }));
+        }
+      }
+    };
+    const sendClose = (source) => () => {
+      console.log(`[WS] ${source} closed: ${sessionId}`);
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'close', sessionId }));
+      }
+    };
+
+    if (session.pty) {
+      session.pty.onData(sendOutput);
+      session.pty.onExit(sendClose('Local PTY'));
+    } else if (session.childProcess) {
+      session.childProcess.stdout.on('data', sendOutput);
+      session.childProcess.stderr.on('data', sendOutput);
+      session.childProcess.on('close', sendClose('Local shell'));
+    } else if (session.stream) {
+      session.stream.on('data', sendOutput);
+      session.stream.on('close', sendClose('SSH stream'));
+    }
+
+    ws.send(JSON.stringify({ type: 'status', sessionId, data: 'connected' }));
+    console.log(`[WS] Session ${sessionId} connected, status sent`);
+  }
+
   ws.on('message', async (raw) => {
     console.log(`[WS] Received raw message: ${raw.toString().substring(0, 200)}`);
     let msg;
@@ -120,59 +171,28 @@ wss.on('connection', async (ws, req) => {
       switch (type) {
         case 'create': {
           // 创建新的 SSH 会话
-          const { connectionId, cols, rows, name } = data || {};
-          if (!connectionId) {
-            ws.send(JSON.stringify({ type: 'error', data: '缺少 connectionId' }));
-            return;
-          }
-
-          sessionId = sid || `ssh-${Date.now()}-${Math.random().toString(36).substr(2, 8)}`;
-          console.log(`[WS] Creating SSH session: ${sessionId}, connectionId: ${connectionId}`);
-
           try {
-            const session = await sshService.createSession(sessionId, connectionId, cols || 80, rows || 24, name);
-            console.log(`[WS] SSH session created: ${sessionId}`);
-
-            // 根据会话类型绑定输出和关闭事件
-            const sendOutput = (chunk) => {
-              if (ws.readyState === WebSocket.OPEN) {
-                // 检查是否包含非ASCII字节（ZMODEM等二进制数据）
-                const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-                const hasBinary = buf.some(b => b > 127);
-                if (hasBinary) {
-                  ws.send(JSON.stringify({ type: 'terminal', sessionId, data: buf.toString('base64'), binary: true }));
-                } else {
-                  ws.send(JSON.stringify({ type: 'terminal', sessionId, data: buf.toString('utf-8') }));
-                }
-              }
-            };
-            const sendClose = (source) => () => {
-              console.log(`[WS] ${source} closed: ${sessionId}`);
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'close', sessionId }));
-              }
-            };
-
-            if (session.pty) {
-              // node-pty 模式
-              session.pty.onData(sendOutput);
-              session.pty.onExit(sendClose('Local PTY'));
-            } else if (session.childProcess) {
-              // child_process 降级模式
-              session.childProcess.stdout.on('data', sendOutput);
-              session.childProcess.stderr.on('data', sendOutput);
-              session.childProcess.on('close', sendClose('Local shell'));
-            } else if (session.stream) {
-              // SSH 模式
-              session.stream.on('data', sendOutput);
-              session.stream.on('close', sendClose('SSH stream'));
-            }
-
-            ws.send(JSON.stringify({ type: 'status', sessionId, data: 'connected' }));
-            console.log(`[WS] Session ${sessionId} connected, status sent`);
+            await createSSHSession(sid, data);
           } catch (err) {
             console.error(`[WS] SSH session creation failed: ${err.message}`);
             ws.send(JSON.stringify({ type: 'error', sessionId, data: err.message || 'SSH 连接失败' }));
+          }
+          break;
+        }
+
+        case 'reconnect': {
+          // 重连：关闭旧会话并重新创建
+          console.log(`[WS] Reconnecting session: ${sid}`);
+          try {
+            const serverModule = require('./dist/server/index.js');
+            // 先关闭旧会话
+            if (sid) {
+              serverModule.sshService.closeSession(sid);
+            }
+            await createSSHSession(sid, data);
+          } catch (err) {
+            console.error(`[WS] SSH session reconnect failed: ${err.message}`);
+            ws.send(JSON.stringify({ type: 'error', sessionId, data: err.message || '重连失败' }));
           }
           break;
         }

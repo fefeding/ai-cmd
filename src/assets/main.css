@@ -163,6 +163,7 @@ body {
 .status-dot.connected { background-color: var(--success); }
 .status-dot.connecting { background-color: var(--warning); animation: pulse 1s infinite; }
 .status-dot.disconnected { background-color: var(--text-secondary); }
+.status-dot.reconnecting { background-color: var(--warning); animation: pulse 1s infinite; }
 .status-dot.error { background-color: var(--danger); }
 
 @keyframes pulse {
