@@ -195,8 +195,30 @@ All data is stored locally on the server:
 | AI Config | `~/.aicmd/ai-config.json` |
 | Chat History | `~/.aicmd/ai-history/` |
 | User Skills | `~/.aicmd/skills/*.md` |
+| Trash Bin | `~/.aicmd/.trash/` |
 
 Use `AICMD_DATA_DIR` environment variable to override the data directory.
+
+## Safety Mechanisms
+
+The AI agent includes built-in command-level safety protections to reduce the risk of destructive operations:
+
+### Delete Protection (Trash Bin)
+- All `rm` commands (Linux/macOS) are automatically rewritten to `mv` into `~/.aicmd/.trash/` instead of permanent deletion.
+- Windows `Remove-Item`/`del`/`rd` commands are similarly rewritten to `Move-Item` into `%USERPROFILE%\.aicmd\.trash\`.
+- Trashed files are timestamped (e.g. `_del_1716000000_filename`) to avoid naming conflicts.
+- To recover a file, simply browse the trash directory and move it back.
+
+### Dangerous Operation Blocking
+The following irreversible, destructive operations are blocked entirely:
+
+| Platform | Blocked Operations |
+|----------|-------------------|
+| Linux/macOS | `rm -rf /`, `mkfs.*` (disk formatting), `dd of=/dev/sd*` (disk overwrite), fork bombs |
+| Windows | `format C:`, `Clear-Disk`, `Remove-Item C:\`, `rd /s C:\` |
+
+### Platform Awareness
+The safety layer automatically detects the target session's OS (via systemContext) and applies the appropriate Unix or Windows rules — no manual configuration required.
 
 ## Cross-Platform Support
 

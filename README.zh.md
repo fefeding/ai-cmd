@@ -195,8 +195,30 @@ tags: [deploy, ops]
 | AI 配置 | `~/.aicmd/ai-config.json` |
 | 对话历史 | `~/.aicmd/ai-history/` |
 | 用户 Skills | `~/.aicmd/skills/*.md` |
+| 回收站 | `~/.aicmd/.trash/` |
 
 可通过 `AICMD_DATA_DIR` 环境变量自定义数据目录。
+
+## 安全机制
+
+AI Agent 内置了命令级安全防护，降低误操作风险：
+
+### 删除保护（回收站）
+- 所有 `rm` 命令（Linux/macOS）自动改写为 `mv` 到 `~/.aicmd/.trash/`，而非永久删除
+- Windows 的 `Remove-Item`/`del`/`rd` 同样改写为 `Move-Item` 到 `%USERPROFILE%\.aicmd\.trash\`
+- 回收站文件带时间戳命名（如 `_del_1716000000_filename`），不会冲突
+- 需要恢复时，直接到回收站目录找回即可
+
+### 危险操作阻止
+以下不可恢复的破坏性操作会被直接阻止执行：
+
+| 平台 | 被阻止的操作 |
+|------|-------------|
+| Linux/macOS | `rm -rf /`、`mkfs.*` 格式化磁盘、`dd of=/dev/sd*` 覆写磁盘、Fork bomb |
+| Windows | `format C:`、`Clear-Disk`、`Remove-Item C:\`、`rd /s C:\` |
+
+### 平台感知
+安全防护自动检测目标会话的操作系统（通过 systemContext），分别应用 Unix 或 Windows 规则，无需手动配置。
 
 ## 跨平台支持
 
