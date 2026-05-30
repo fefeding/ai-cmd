@@ -5,7 +5,7 @@
     :closeButton="{ text: t('common.close'), show: true }"
     :confirmButton="{ text: '', show: false }"
     :style="{ maxWidth: '500px', width: '100%' }"
-    @onClose="handleClose"
+    @onHidden="handleClose"
   >
     <div class="file-transfer-body">
       <!-- 操作选择（自动模式时隐藏） -->
@@ -248,6 +248,7 @@ function show(tabId: string, termRef: any, info?: any) {
 }
 
 function handleClose() {
+  console.log('[FileTransfer] handleClose called, transferring:', transferring.value, 'activeTermRef:', !!activeTermRef, 'zmodemSession:', !!zmodemSession);
   // 移除焦点避免 Bootstrap aria-hidden 警告
   (document.activeElement as HTMLElement)?.blur?.();
 
@@ -255,14 +256,24 @@ function handleClose() {
     cancelTransfer();
   } else {
     // 即使没有传输中，也需要终止远程 rz/sz 进程
+    if (activeTermRef) {
+      // 保存引用，因为 setTimeout 回调执行时 activeTermRef 已被清空
+      const termRef = activeTermRef;
+      const sid = termRef.sessionId;
+      console.log('[FileTransfer] Sending abort to sessionId:', sid);
+      const sendAbort = (data: string) => {
+        console.log('[FileTransfer] sendAbort:', JSON.stringify(data).substring(0, 30));
+        termRef.sendToServer({ type: 'terminal', sessionId: sid || undefined, data });
+      };
+      // 发送 ZMODEM abort 序列（5 个 CAN 字符 = \x18）
+      sendAbort('\x18\x18\x18\x18\x18');
+      // 再发送 Ctrl+C 确保进程退出
+      setTimeout(() => sendAbort('\x03'), 100);
+      setTimeout(() => sendAbort('\x03'), 300);
+    }
     if (zmodemSession) {
       try { zmodemSession.abort?.(); } catch (e) { /* ignore */ }
       zmodemSession = null;
-    }
-    if (activeTermRef) {
-      // 双 Ctrl+C 确保终止远程进程
-      sendToTerm('\x03');
-      setTimeout(() => sendToTerm('\x03'), 300);
     }
   }
   activeTermRef = null;
@@ -504,17 +515,24 @@ function startManualDownload() {
 }
 
 function cancelTransfer() {
+  // 发送 ZMODEM abort 序列（5 个 CAN 字符 = \x18）终止远程 rz/sz 进程
+  if (activeTermRef) {
+    // 保存引用，因为 setTimeout 回调执行时 activeTermRef 可能已被清空
+    const termRef = activeTermRef;
+    const sid = termRef.sessionId;
+    const sendAbort = (data: string) => {
+      termRef.sendToServer({ type: 'terminal', sessionId: sid || undefined, data });
+    };
+    sendAbort('\x18\x18\x18\x18\x18');
+    setTimeout(() => sendAbort('\x03'), 100);
+    setTimeout(() => sendAbort('\x03'), 300);
+  }
   if (zmodemSession) {
     try {
       zmodemSession.abort?.();
     } catch (e) {
       // ignore
     }
-  }
-  // 发送 Ctrl+C 终止远程 rz/sz 进程
-  if (activeTermRef) {
-    sendToTerm('\x03');
-    setTimeout(() => sendToTerm('\x03'), 300);
   }
   transferring.value = false;
   if (currentProgress.value) {
