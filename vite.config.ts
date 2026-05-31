@@ -21,15 +21,28 @@ import { BatchService } from './server/service/batch.service';
 
 const urlPrefix = process.env.PREFIX ? `/${process.env.PREFIX}` : '';
 
-// 创建共享服务实例（开发模式）
-const connectionService = new ConnectionService();
-connectionService.init();
-const sshService = new SSHService(connectionService);
-const skillService = new SkillService();
-const auditService = new AuditService();
-const monitorService = new MonitorService(connectionService);
-const batchService = new BatchService(sshService, connectionService);
-const aiService = new AIService(sshService, skillService, auditService);
+// 共享服务实例（延迟初始化）
+let connectionService: ConnectionService | null = null;
+let sshService: SSHService | null = null;
+let skillService: SkillService | null = null;
+let auditService: AuditService | null = null;
+let monitorService: MonitorService | null = null;
+let batchService: BatchService | null = null;
+let aiService: AIService | null = null;
+
+// 初始化服务实例（仅在开发服务器启动时调用）
+function initServices() {
+  if (connectionService) return; // 已经初始化过了
+  
+  connectionService = new ConnectionService();
+  connectionService.init();
+  sshService = new SSHService(connectionService);
+  skillService = new SkillService();
+  auditService = new AuditService();
+  monitorService = new MonitorService(connectionService);
+  batchService = new BatchService(sshService, connectionService);
+  aiService = new AIService(sshService, skillService, auditService);
+}
 
 const defaultInitState = {
     "config": {"prefix": urlPrefix, "apiUrl": process.env.API_URL||""},
@@ -130,6 +143,8 @@ const config = defineConfig({
         {
             name: 'server-api',
             configureServer(server) {
+                // 只在开发服务器启动时初始化服务
+                initServices();
                 server.middlewares.use((req: Connect.IncomingMessage, res: http.ServerResponse, next: Connect.NextFunction) => {
                     if (req.url?.startsWith('/api/')) {
                         if (!serverRoute(req, res, next)) {
@@ -145,6 +160,8 @@ const config = defineConfig({
         {
             name: 'server-ws',
             async configureServer(server) {
+                // 只在开发服务器启动时初始化服务
+                initServices();
                 try {
                     console.log('[WS] SSH service initialized from source');
 
@@ -345,6 +362,10 @@ function getViewInputs(dir: string): { [key: string]: string } {
 }
 
 async function serverRoute(req: Connect.IncomingMessage, res: http.ServerResponse, next: Connect.NextFunction) {
+  // 确保服务已初始化
+  if (!connectionService || !sshService || !aiService || !skillService || !auditService || !monitorService || !batchService) {
+    return next();
+  }
     try {
         if (!req.url?.startsWith('/api/')) return next();
         const parsedUrl = url.parse(req.url, true);
@@ -386,61 +407,63 @@ async function serverRoute(req: Connect.IncomingMessage, res: http.ServerRespons
     }
 }
 
-/**
- * 开发模式下的 API 路由处理（直接使用共享服务实例）
- */
 async function handleRoute(pathname: string, body: any) {
-    // ========== 连接管理 ==========
+  // 确保服务已初始化
+  if (!connectionService || !sshService || !aiService || !skillService || !auditService || !monitorService || !batchService) {
+    throw new Error('Services not initialized');
+  }
+
+  // ========== 连接管理 ==========
     if (pathname === '/api/connection/getConnections') {
-        return await connectionService.getAllConnections();
+        return await connectionService!.getAllConnections();
     }
     if (pathname === '/api/connection/getConnection') {
         const { id } = body;
         if (!id) throw new Error('Missing parameter: id');
-        return await connectionService.getConnectionById(id);
+        return await connectionService!.getConnectionById(id);
     }
     if (pathname === '/api/connection/addConnection') {
-        return await connectionService.addConnection(body);
+        return await connectionService!.addConnection(body);
     }
     if (pathname === '/api/connection/updateConnection') {
         const { id, ...updates } = body;
         if (!id) throw new Error('Missing parameter: id');
-        return await connectionService.updateConnection(id, updates);
+        return await connectionService!.updateConnection(id, updates);
     }
     if (pathname === '/api/connection/deleteConnection') {
         const { id } = body;
         if (!id) throw new Error('Missing parameter: id');
-        await connectionService.deleteConnection(id);
+        await connectionService!.deleteConnection(id);
         return true;
     }
     if (pathname === '/api/connection/testConnection') {
-        return await connectionService.testConnection(body);
+        return await connectionService!.testConnection(body);
     }
 
     // ========== 终端管理 ==========
     if (pathname === '/api/terminal/getSessions') {
-        return sshService.getSessions();
+        return sshService!.getSessions();
     }
     if (pathname === '/api/terminal/renameSession') {
         const { sessionId, name } = body;
         if (!sessionId) throw new Error('Missing parameter: sessionId');
-        sshService.renameSession(sessionId, name);
+        sshService!.renameSession(sessionId, name);
         return true;
     }
     if (pathname === '/api/terminal/deleteSession') {
         const { sessionId } = body;
         if (!sessionId) throw new Error('Missing parameter: sessionId');
-        sshService.deleteSession(sessionId);
+        sshService!.deleteSession(sessionId);
         return true;
     }
     if (pathname === '/api/terminal/closeSession') {
         const { sessionId } = body;
         if (!sessionId) throw new Error('Missing parameter: sessionId');
-        sshService.closeSession(sessionId);
+        sshService!.closeSession(sessionId);
         return true;
     }
     if (pathname === '/api/terminal/closeAllSessions') {
-        sshService.closeAllSessions();
+        sshService!.closeAllSessions();
         return true;
     }
 
@@ -448,124 +471,124 @@ async function handleRoute(pathname: string, body: any) {
 
     // 获取 AI 配置
     if (pathname === '/api/ai/getConfig') {
-        return aiService.getConfig();
+        return aiService!.getConfig();
     }
     // 更新 AI 配置
     if (pathname === '/api/ai/updateConfig') {
-        return aiService.updateConfig(body);
+        return aiService!.updateConfig(body);
     }
     // 测试 AI 配置
     if (pathname === '/api/ai/testConfig') {
-        return await aiService.testConfig(body);
+        return await aiService!.testConfig(body);
     }
     // AI 对话（非流式）
     if (pathname === '/api/ai/chat') {
         const { sessionId, message, context } = body;
         if (!sessionId) throw new Error('Missing parameter: sessionId');
         if (!message) throw new Error('Missing parameter: message');
-        return await aiService.chat(sessionId, message, context);
+        return await aiService!.chat(sessionId, message, context);
     }
     // 清空 AI 对话历史
     if (pathname === '/api/ai/clearHistory') {
         const { sessionId } = body;
         if (!sessionId) throw new Error('Missing parameter: sessionId');
-        aiService.clearHistory(sessionId);
+        aiService!.clearHistory(sessionId);
         return true;
     }
     // 获取 Session 的系统环境信息
     if (pathname === '/api/ai/getSystemContext') {
         const { sessionId } = body;
         if (!sessionId) throw new Error('Missing parameter: sessionId');
-        return await sshService.getSystemContext(sessionId);
+        return await sshService!.getSystemContext(sessionId);
     }
     // 获取 AI 对话显示历史
     if (pathname === '/api/ai/getDisplayHistory') {
         const { sessionId } = body;
         if (!sessionId) throw new Error('Missing parameter: sessionId');
-        return aiService.loadDisplayHistory(sessionId);
+        return aiService!.loadDisplayHistory(sessionId);
     }
     // 保存 AI 对话显示历史
     if (pathname === '/api/ai/saveDisplayHistory') {
         const { sessionId, messages, sessionName } = body;
         if (!sessionId) throw new Error('Missing parameter: sessionId');
         if (!messages) throw new Error('Missing parameter: messages');
-        aiService.saveDisplayHistory(sessionId, messages, sessionName);
+        aiService!.saveDisplayHistory(sessionId, messages, sessionName);
         return true;
     }
     // 列出所有历史对话
     if (pathname === '/api/ai/listHistories') {
-        return aiService.listDisplayHistories();
+        return aiService!.listDisplayHistories();
     }
     // 加载指定历史对话
     if (pathname === '/api/ai/loadHistory') {
         const { sessionId } = body;
         if (!sessionId) throw new Error('Missing parameter: sessionId');
-        return aiService.loadDisplayHistory(sessionId);
+        return aiService!.loadDisplayHistory(sessionId);
     }
     // 删除指定历史对话
     if (pathname === '/api/ai/deleteHistory') {
         const { sessionId } = body;
         if (!sessionId) throw new Error('Missing parameter: sessionId');
-        aiService.deleteDisplayHistoryFile(sessionId);
+        aiService!.deleteDisplayHistoryFile(sessionId);
         return true;
     }
     // 获取 Skills 列表
     if (pathname === '/api/ai/getSkills') {
-        return skillService.getSkills();
+        return skillService!.getSkills();
     }
     // 获取指定 Skill
     if (pathname === '/api/ai/getSkill') {
         const { id } = body;
         if (!id) throw new Error('Missing parameter: id');
-        const skill = skillService.getSkill(id);
+        const skill = skillService!.getSkill(id);
         if (!skill) throw new Error('Skill not found: ' + id);
         return skill;
     }
 
     // ========== 审计日志 ==========
     if (pathname === '/api/audit/list') {
-        return auditService.getLogs(body);
+        return auditService!.getLogs(body);
     }
     if (pathname === '/api/audit/stats') {
-        return auditService.getStats(body?.date);
+        return auditService!.getStats(body?.date);
     }
     if (pathname === '/api/audit/export') {
         const { startDate, endDate, format } = body;
         if (!startDate || !endDate) throw new Error('Missing parameters: startDate, endDate');
-        return auditService.exportLogs(startDate, endDate, format || 'json');
+        return auditService!.exportLogs(startDate, endDate, format || 'json');
     }
     if (pathname === '/api/audit/dates') {
-        return auditService.getAvailableDates();
+        return auditService!.getAvailableDates();
     }
 
     // ========== 日志监控 ==========
     if (pathname === '/api/monitor/start') {
         const { sessionId, connectionId, logPath, pattern } = body;
         if (!sessionId || !logPath) throw new Error('Missing parameters: sessionId, logPath');
-        return await monitorService.startMonitor(sessionId, connectionId || '', logPath, pattern);
+        return await monitorService!.startMonitor(sessionId, connectionId || '', logPath, pattern);
     }
     if (pathname === '/api/monitor/stop') {
         const { monitorId } = body;
         if (!monitorId) throw new Error('Missing parameter: monitorId');
-        return monitorService.stopMonitor(monitorId);
+        return monitorService!.stopMonitor(monitorId);
     }
     if (pathname === '/api/monitor/list') {
-        return monitorService.getActiveMonitors(body?.sessionId);
+        return monitorService!.getActiveMonitors(body?.sessionId);
     }
     if (pathname === '/api/monitor/alerts') {
         const { monitorId, limit } = body;
         if (!monitorId) throw new Error('Missing parameter: monitorId');
-        return monitorService.getAlerts(monitorId, limit);
+        return monitorService!.getAlerts(monitorId, limit);
     }
     if (pathname === '/api/monitor/lines') {
         const { monitorId, limit } = body;
         if (!monitorId) throw new Error('Missing parameter: monitorId');
-        return monitorService.getRecentLines(monitorId, limit);
+        return monitorService!.getRecentLines(monitorId, limit);
     }
     if (pathname === '/api/monitor/analyze') {
         const { monitorId } = body;
         if (!monitorId) throw new Error('Missing parameter: monitorId');
-        return monitorService.getBatchForAnalysis(monitorId);
+        return monitorService!.getBatchForAnalysis(monitorId);
     }
 
     // ========== 批量操作 ==========
@@ -575,15 +598,15 @@ async function handleRoute(pathname: string, body: any) {
             throw new Error('Missing parameter: sessionIds (non-empty array)');
         }
         if (!command) throw new Error('Missing parameter: command');
-        return await batchService.executeBatch(sessionIds, command, timeout);
+        return await batchService!.executeBatch(sessionIds, command, timeout);
     }
     if (pathname === '/api/batch/result') {
         const { taskId } = body;
         if (!taskId) throw new Error('Missing parameter: taskId');
-        return batchService.getTask(taskId);
+        return batchService!.getTask(taskId);
     }
     if (pathname === '/api/batch/tasks') {
-        return batchService.getTasks();
+        return batchService!.getTasks();
     }
 
     throw new Error('API endpoint not found');
