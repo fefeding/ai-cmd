@@ -1,5 +1,7 @@
 # AICmd
 
+**[中文文档](./README.zh.md)**
+
 An AI-powered web SSH terminal that combines a full-featured terminal emulator with an autonomous AI agent. The AI understands your system environment, executes commands, analyzes logs, manages services — all through natural language conversation.
 
 ## Features
@@ -17,6 +19,28 @@ An AI-powered web SSH terminal that combines a full-featured terminal emulator w
   - Docker Management — container lifecycle operations
 - **Custom Skills**: Create your own skills as markdown files in `~/.aicmd/skills/`. Skills define domain-specific SOPs, project-specific knowledge, or any workflow the LLM doesn't already know.
 - **Slash Commands**: Trigger skills with `/skill-name` in the chat input.
+
+### Command Audit & Replay
+- **Full Audit Trail**: Every command executed by the AI agent is automatically recorded with timestamp, session, command, output, duration, and status (success/error/blocked/rewritten).
+- **Timeline View**: Browse audit logs by date with keyword search and status filtering.
+- **Statistics Dashboard**: Overview of total commands, success/error/blocked counts.
+- **Export**: Export audit logs as JSON or CSV for compliance and incident review.
+- **Real-time Updates**: New audit entries appear instantly in the Audit panel via WebSocket.
+- **Auto Cleanup**: Logs older than 30 days are automatically purged.
+
+### Real-time Log Monitoring + AI Anomaly Detection
+- **One-Click Tail**: Monitor any log file (`tail -f`) on remote SSH servers or local machine.
+- **Pattern Detection**: Automatically detects ERROR, FATAL, CRITICAL, Exception, Traceback, and other anomaly patterns.
+- **Alert System**: Categorized alerts (critical/error/warning) with timestamps and highlighted log lines.
+- **AI Analysis**: Send recent log lines to the AI agent for intelligent anomaly analysis and recommendations.
+- **Color-Coded Output**: Error lines in red, warnings in yellow, debug in dimmed — easy to scan.
+
+### Batch Operations (Multi-Server)
+- **Parallel Execution**: Select multiple active SSH sessions and execute the same command on all of them simultaneously.
+- **Aggregated Results**: View per-server results with success/failure status, output, and execution time.
+- **Server Selector**: Multi-select UI with Select All / Clear options, showing session names and connection types.
+- **Expandable Details**: Click any result to see full command output, with copy-to-clipboard support.
+- **Task History**: Recent batch tasks are stored for review.
 
 ### Terminal
 - **SSH Remote Terminal**: Full SSH client based on xterm.js + ssh2 with 256-color support.
@@ -138,6 +162,22 @@ You: /log-analyze /var/log/nginx/error.log
 AI: [creates a Python analysis script, shows error distribution and patterns]
 ```
 
+### AI Analysis
+```
+You: [Switch to Monitor tab, enter /var/log/nginx/error.log, click Start]
+AI: [Real-time log streaming with anomaly detection]
+    [Alert: CRITICAL - OutOfMemoryError detected at 14:23:05]
+    [Click AI Analyze → AI summarizes error patterns and suggests fixes]
+```
+
+### Batch Operations
+```
+[Click the server rack icon in sidebar → Select 5 servers]
+Command: systemctl status nginx
+→ All 5 servers respond simultaneously with status output
+→ Failed servers are highlighted in red with error details
+```
+
 ### Custom Skills
 
 Create `~/.aicmd/skills/my-deploy.md`:
@@ -169,12 +209,15 @@ Then trigger with `/deploy-my-app` in the chat.
 ├── scripts/          # Build scripts (NW.js)
 ├── server/           # Server source (TypeScript)
 │   ├── model/        # Entity definitions
-│   ├── service/      # Business logic (AI, SSH, Skills)
+│   ├── service/      # Business logic (AI, SSH, Skills, Audit, Monitor, Batch)
 │   └── index.ts      # Server entry
 ├── src/              # Frontend source (Vue 3)
 │   ├── components/   # Vue components
-│   │   ├── ai-chat/  # AI chat panel
+│   │   ├── ai-chat/  # AI chat panel (Chat / Audit / Monitor tabs)
 │   │   ├── ai-settings/ # AI config modal
+│   │   ├── audit-panel/ # Command audit timeline
+│   │   ├── log-monitor/ # Real-time log monitoring
+│   │   ├── batch-panel/ # Multi-server batch operations
 │   │   └── ...       # Terminal, sidebar, etc.
 │   ├── locales/      # i18n translations
 │   ├── service/      # Frontend API services
@@ -194,6 +237,7 @@ All data is stored locally on the server:
 | Sessions | `~/.aicmd/sessions.json` |
 | AI Config | `~/.aicmd/ai-config.json` |
 | Chat History | `~/.aicmd/ai-history/` |
+| Audit Logs | `~/.aicmd/audit/YYYY-MM-DD.jsonl` |
 | User Skills | `~/.aicmd/skills/*.md` |
 | Trash Bin | `~/.aicmd/.trash/` |
 
