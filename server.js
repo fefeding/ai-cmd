@@ -306,10 +306,19 @@ for (let i = 0; i < process.argv.length; i++) {
   }
 }
 
+// PID 文件路径
+const pidDir = process.env.AICMD_DATA_DIR || path.join(require('os').homedir(), '.aicmd');
+try { fs.mkdirSync(pidDir, { recursive: true }); } catch {}
+const pidFilePath = path.join(pidDir, 'aicmd.server.pid');
+
+// 进程退出时清理 PID 文件
+function cleanupPid() {
+  try { if (fs.existsSync(pidFilePath)) fs.unlinkSync(pidFilePath); } catch {}
+}
+
 // 启动服务器
 const PORT = portFromArgs || process.env.PORT || 9802;
 server.listen(PORT, () => {
-  const pidFilePath = path.join(__dirname, 'aicmd.server.pid');
   fs.writeFileSync(pidFilePath, process.pid.toString());
   console.log(`PID ${process.pid} written to ${pidFilePath}`);
   console.log(`aicmd Server is running on port ${PORT}`);
@@ -317,14 +326,18 @@ server.listen(PORT, () => {
 });
 
 // 进程退出处理
-process.on('exit', () => { logStream.end(); });
+process.on('exit', () => { cleanupPid(); logStream.end(); });
+process.on('SIGTERM', () => { cleanupPid(); process.exit(0); });
+process.on('SIGINT', () => { cleanupPid(); process.exit(0); });
 process.on('uncaughtException', (err) => {
   console.error('Uncaught exception:', err);
+  cleanupPid();
   logStream.end();
   process.exit(1);
 });
 process.on('unhandledRejection', (err) => {
   console.error('Unhandled rejection:', err);
+  cleanupPid();
   logStream.end();
   process.exit(1);
 });
