@@ -1,7 +1,7 @@
 import * as requestHelper from '@/utils/request';
 import type { AxiosRequestConfig } from 'axios';
 import config from '../base/config';
-import { isNWjs } from '@/base/detect';
+import { isNWjs, isElectron } from '@/base/detect';
 
 export function getRequestUrl(api: string) {
     if (/^(http(s)?:)?\/\//.test(api)) return api;
@@ -10,7 +10,7 @@ export function getRequestUrl(api: string) {
 }
 
 export async function requestServer(url: string, data?: any, option?: AxiosRequestConfig) {
-    if (isNWjs) {
+    if (isNWjs || isElectron) {
         try {
             const apiPath = url.replace(/^(http(s)?:)?\/\//, '').replace(/.*?\/api\//, '/api/');
             let server;

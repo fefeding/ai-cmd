@@ -13,11 +13,14 @@ dist-ssr
 coverage
 *.local
 
-# NW.js
+# NW.js (legacy)
 nw-build/
 nw-build-*/
 nw-cache/
 release/
+
+# Electron
+release-electron/
 
 # Editor directories and files
 .vscode/*
@@ -29,10 +32,11 @@ release/
 *.sln
 *.sw?
 server.pid
+aicmd.server.pid
 dist/
 data/*.json
 data/exports/
-fterm.server.pid
 
 # Build artifacts
 dist/
+release/

@@ -8,30 +8,19 @@
     "type": "git",
     "url": "https://github.com/fefeding/ai-cmd"
   },
-  "main": "view/index.html",
+  "main": "electron/main.js",
   "files": [
     "bin/",
     "public/",
     "view/",
     "dist/",
+    "electron/",
     "data/skills",
     "patches",
     "server.js",
     "package.json",
     "README.md"
   ],
-  "icon": "public/favicon.ico",
-  "window": {
-    "title": "AICmd - AI Terminal",
-    "width": 1200,
-    "height": 800,
-    "min_width": 800,
-    "min_height": 600,
-    "resizable": true,
-    "show_in_taskbar": true,
-    "frame": true,
-    "icon": "public/favicon.ico"
-  },
   "scripts": {
     "start": "pm2 start server.js --name aicmd-server --disable-logs --",
     "restart": "pm2 restart aicmd-server --disable-logs --",
@@ -43,11 +32,11 @@
     "build-server": "tsc -p tsconfig.server.json",
     "type-check": "vue-tsc --noEmit --composite false",
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix --ignore-path .gitignore",
-    "nw:dev": "node scripts/nw-dev.js",
-    "nw:build": "node scripts/nw-build.js",
-    "nw:build:win": "node scripts/nw-build.js --platform=win",
-    "nw:build:osx": "node scripts/nw-build.js --platform=osx",
-    "nw:build:linux": "node scripts/nw-build.js --platform=linux"
+    "electron:dev": "node scripts/electron-dev.js",
+    "electron:build": "node scripts/electron-build.js",
+    "electron:build:win": "node scripts/electron-build.js --platform=win",
+    "electron:build:mac": "node scripts/electron-build.js --platform=mac",
+    "electron:build:linux": "node scripts/electron-build.js --platform=linux"
   },
   "dependencies": {
     "axios": "^1.16.1",
@@ -88,8 +77,8 @@
     "jimp": "^1.6.1",
     "js-cookie": "^3.0.7",
     "jsdom": "^26.1.0",
-    "nw": "^0.107.0",
-    "nw-builder": "^4.17.11",
+    "electron": "^35.5.1",
+    "electron-builder": "^26.0.12",
     "pinia": "^3.0.4",
     "pinia-plugin-persistedstate": "^4.7.1",
     "postcss": "^8.5.15",
@@ -111,7 +100,8 @@
     "onlyBuiltDependencies": [
       "cpu-features",
       "ssh2",
-      "node-pty"
+      "node-pty",
+      "electron"
     ],
     "patchedDependencies": {
       "zmodem.js": "patches/zmodem.js.patch"

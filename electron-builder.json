@@ -1,0 +1,65 @@
+{
+  "appId": "com.aicmd.app",
+  "productName": "AICmd",
+  "copyright": "Copyright © 2025",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "electron/**/*",
+    "dist/**/*",
+    "data/skills/*",
+    "public/*",
+    "server.js",
+    "bootstrap.js",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "patches",
+      "to": "patches",
+      "filter": ["**/*"]
+    }
+  ],
+  "mac": {
+    "category": "public.app-category.productivity",
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["x64", "arm64"]
+      }
+    ],
+    "icon": "public/favicon.ico",
+    "hardenedRuntime": false
+  },
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "public/favicon.ico"
+  },
+  "linux": {
+    "target": [
+      {
+        "target": "AppImage",
+        "arch": ["x64"]
+      }
+    ],
+    "category": "Utility",
+    "icon": "public/favicon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true
+  },
+  "asar": true,
+  "asarUnpack": [
+    "**/*.node",
+    "**/node_modules/node-pty/**/*",
+    "**/node_modules/ssh2/**/*",
+    "**/node_modules/cpu-features/**/*"
+  ]
+}

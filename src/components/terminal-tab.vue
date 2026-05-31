@@ -87,6 +87,7 @@ const aiChatRef = ref<InstanceType<typeof AIChat>>();
 let terminal: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
 let ws: WebSocket | null = null;
+let ipcCleanup: (() => void) | null = null;
 let sessionId: string | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let sentry: any = null;
@@ -131,6 +132,8 @@ function initTerminal() {
     scrollback: 5000,
     lineHeight: 1.2,
     letterSpacing: 0.5,
+    // @ts-ignore
+    wordWrap: true,
     allowProposedApi: true,
   });
 
@@ -308,13 +311,66 @@ function initSentry() {
   console.log('[ZMODEM] Sentry initialized:', !!sentry);
 }
 
-// WebSocket 连接
-function connectWebSocket() {
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${location.host}/ws/terminal`;
-  console.log(`[TerminalTab] Connecting to WebSocket: ${wsUrl}`);
+// 检测是否在 Electron 中（桌面客户端统一用 IPC，Web 端用 WebSocket）
+function isElectronIPC(): boolean {
+  return !!(window as any).electronAPI?.isElectron;
+}
 
-  ws = new WebSocket(wsUrl);
+/**
+ * IPC 适配器 - 在 Electron 中模拟 WebSocket 接口
+ * 通过 preload 暴露的 terminalIPC 与主进程通信
+ */
+function createIPCAdapter(): WebSocket {
+  const ipc = (window as any).electronAPI.terminalIPC;
+  const adapter: any = {
+    readyState: 1, // OPEN
+    send(msg: string) {
+      ipc.send(JSON.parse(msg));
+    },
+    close() {
+      adapter.readyState = 3; // CLOSED
+      if (adapter.onclose) adapter.onclose({ code: 1000, reason: 'IPC closed' });
+    },
+    onopen: null as any,
+    onmessage: null as any,
+    onerror: null as any,
+    onclose: null as any,
+  };
+
+  // 监听主进程消息
+  const removeListener = ipc.onMessage((msg: any) => {
+    if (adapter.onmessage) {
+      adapter.onmessage({ data: JSON.stringify(msg) });
+    }
+  });
+
+  // 立即触发 onopen（IPC 无需等待连接）
+  setTimeout(() => {
+    if (adapter.onopen) adapter.onopen({});
+  }, 0);
+
+  // 保存清理函数
+  ipcCleanup = () => {
+    removeListener();
+    adapter.readyState = 3;
+  };
+
+  return adapter as WebSocket;
+}
+
+// WebSocket / IPC 连接
+function connectWebSocket() {
+  if (isElectronIPC()) {
+    // Electron（开发/生产均走 IPC）
+    console.log('[TerminalTab] Using Electron IPC');
+    ws = createIPCAdapter();
+  } else {
+    // Web 端：使用 WebSocket
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${location.host}/ws/terminal`;
+    console.log(`[TerminalTab] Connecting to WebSocket: ${wsUrl}`);
+    ws = new WebSocket(wsUrl);
+  }
 
   ws.onopen = () => {
     console.log(`[TerminalTab] WebSocket connected, sending create`);
@@ -739,6 +795,7 @@ onBeforeUnmount(() => {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   resizeObserver?.disconnect();
   ws?.close();
+  ipcCleanup?.();
   terminal?.dispose();
 });
 

@@ -53,7 +53,7 @@
 ### 通用
 - **连接管理**：可视化 SSH 连接配置（增删改查），支持密钥和密码认证。
 - **国际化**：中文 / 英文 UI，运行时语言切换。
-- **桌面应用**：通过 NW.js 提供跨平台桌面客户端。
+- **桌面应用**：通过 Electron 提供跨平台桌面客户端。
 - **聊天历史**：持久化 AI 对话历史，支持跨会话浏览和恢复。
 
 ## 截图
@@ -68,7 +68,7 @@
 | 后端 | Node.js + Express + WebSocket (ws) |
 | SSH/PTY | ssh2 + node-pty |
 | AI | OpenAI 兼容 API（支持任意兼容端点） |
-| 构建 | Vite + TypeScript + nw-builder |
+| 构建 | Vite + TypeScript + electron-builder |
 
 ## 快速开始
 
@@ -129,14 +129,14 @@ pnpm build-server   # 仅服务端
 node server.js --port 3000
 ```
 
-### 桌面应用（NW.js）
+### 桌面应用（Electron）
 
 ```bash
-pnpm nw:dev          # 开发模式
-pnpm nw:build        # 当前平台
-pnpm nw:build:win    # Windows
-pnpm nw:build:osx    # macOS
-pnpm nw:build:linux  # Linux
+pnpm electron:dev          # 开发模式
+pnpm electron:build        # 当前平台
+pnpm electron:build:win    # Windows
+pnpm electron:build:mac    # macOS
+pnpm electron:build:linux  # Linux
 ```
 
 ## AI 使用示例
@@ -205,8 +205,9 @@ tags: [deploy, ops]
 ├── bin/              # CLI 入口（aicmd 命令）
 ├── data/skills/      # 内置 AI 技能
 ├── dist/             # 构建输出
+├── electron/         # Electron 主进程 & 预加载脚本
 ├── public/           # 静态资源
-├── scripts/          # 构建脚本（NW.js）
+├── scripts/          # 构建脚本（Electron）
 ├── server/           # 服务端源码（TypeScript）
 │   ├── model/        # 实体定义
 │   ├── service/      # 业务逻辑（AI、SSH、Skills、Audit、Monitor、Batch）

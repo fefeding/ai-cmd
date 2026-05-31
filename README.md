@@ -53,7 +53,7 @@ An AI-powered web SSH terminal that combines a full-featured terminal emulator w
 ### General
 - **Connection Management**: Visual SSH connection configuration (CRUD) with key-based and password auth.
 - **i18n**: Chinese / English UI with runtime language switching.
-- **Desktop App**: Cross-platform desktop client via NW.js.
+- **Desktop App**: Cross-platform desktop client via Electron.
 - **Chat History**: Persistent AI conversation history with browsing and restoration across sessions.
 
 ## Screenshot
@@ -68,7 +68,7 @@ An AI-powered web SSH terminal that combines a full-featured terminal emulator w
 | Backend | Node.js + Express + WebSocket (ws) |
 | SSH/PTY | ssh2 + node-pty |
 | AI | OpenAI-compatible API (supports any compatible endpoint) |
-| Build | Vite + TypeScript + nw-builder |
+| Build | Vite + TypeScript + electron-builder |
 
 ## Quick Start
 
@@ -129,14 +129,14 @@ pnpm build-server   # Server only
 node server.js --port 3000
 ```
 
-### Desktop App (NW.js)
+### Desktop App (Electron)
 
 ```bash
-pnpm nw:dev          # Dev mode
-pnpm nw:build        # Current platform
-pnpm nw:build:win    # Windows
-pnpm nw:build:osx    # macOS
-pnpm nw:build:linux  # Linux
+pnpm electron:dev          # Dev mode
+pnpm electron:build        # Current platform
+pnpm electron:build:win    # Windows
+pnpm electron:build:mac    # macOS
+pnpm electron:build:linux  # Linux
 ```
 
 ## AI Usage Examples
@@ -205,8 +205,9 @@ Then trigger with `/deploy-my-app` in the chat.
 ├── bin/              # CLI entry (aicmd command)
 ├── data/skills/      # Built-in AI skills
 ├── dist/             # Build output
+├── electron/         # Electron main process & preload
 ├── public/           # Static assets
-├── scripts/          # Build scripts (NW.js)
+├── scripts/          # Build scripts (Electron)
 ├── server/           # Server source (TypeScript)
 │   ├── model/        # Entity definitions
 │   ├── service/      # Business logic (AI, SSH, Skills, Audit, Monitor, Batch)

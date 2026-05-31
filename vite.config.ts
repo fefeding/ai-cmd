@@ -356,7 +356,7 @@ async function serverRoute(req: Connect.IncomingMessage, res: http.ServerRespons
             return true;
         }
         const body = await getRequestBody(req);
-        if (pathname.startsWith('/api/connection/') || pathname.startsWith('/api/terminal/') || pathname.startsWith('/api/ai/')) {
+        if (pathname.startsWith('/api/connection/') || pathname.startsWith('/api/terminal/') || pathname.startsWith('/api/ai/') || pathname.startsWith('/api/audit/') || pathname.startsWith('/api/monitor/') || pathname.startsWith('/api/batch/')) {
             try {
                 const data = await handleRoute(pathname, body);
                 res.writeHead(200, { 'Content-Type': 'application/json' });

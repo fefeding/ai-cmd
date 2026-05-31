@@ -4,16 +4,13 @@
 # main 分支: 推送时构建
 main:
   push:
-    - name: build-nw-client
+    - name: build-electron-client
       docker:
         image: node:20
         volumes:
           - pnpm-store:/root/.local/share/pnpm/store/v3:rw
-          - nw-cache:/build/nw-cache:rw
       env:
-        # 可配置国内镜像加速 NW.js 下载（可选）
-        # NWJS_DOWNLOAD_URL: https://npmmirror.com/mirrors/nwjs
-        # NWJS_MANIFEST_URL: https://npmmirror.com/mirrors/nwjs/versions.json
+        ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
         CI: 'true'
       stages:
         - name: install pnpm
@@ -30,17 +27,17 @@ main:
             cp package.json dist/package.json
             cd dist && npm install --omit=dev --no-audit --no-fund
 
-        - name: build nw linux client
-          script: pnpm run nw:build -- --platform=linux
+        - name: build electron linux client
+          script: pnpm run electron:build -- --platform=linux
 
         - name: package artifacts
           script: |
             mkdir -p artifacts
-            if [ -d "release/fterm-linux" ]; then
-              tar -czf artifacts/fterm-linux.tar.gz -C release/fterm-linux .
+            if [ -d "release/linux-unpacked" ]; then
+              tar -czf artifacts/aicmd-linux.tar.gz -C release/linux-unpacked .
             fi
             echo "=== 构建产物 ==="
-            find release -type f \( -name "*.zip" -o -name "*.tar.gz" \) 2>/dev/null | head -20 || true
+            find release -type f \( -name "*.zip" -o -name "*.tar.gz" -o -name "*.AppImage" -o -name "*.dmg" \) 2>/dev/null | head -20 || true
             ls -la release/ 2>/dev/null || true
             echo "=== artifacts ==="
             ls -la artifacts/ 2>/dev/null || true
@@ -57,13 +54,13 @@ main:
 # tag 推送时构建（用于发布版本）
 $:
   tag_push:
-    - name: build-nw-release
+    - name: build-electron-release
       docker:
         image: node:20
         volumes:
           - pnpm-store:/root/.local/share/pnpm/store/v3:rw
-          - nw-cache:/build/nw-cache:rw
       env:
+        ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
         CI: 'true'
       stages:
         - name: install pnpm
@@ -80,17 +77,17 @@ $:
             cp package.json dist/package.json
             cd dist && npm install --omit=dev --no-audit --no-fund
 
-        - name: build nw linux client
-          script: pnpm run nw:build -- --platform=linux
+        - name: build electron linux client
+          script: pnpm run electron:build -- --platform=linux
 
         - name: package artifacts
           script: |
             mkdir -p artifacts
-            if [ -d "release/fterm-linux" ]; then
-              tar -czf artifacts/fterm-linux.tar.gz -C release/fterm-linux .
+            if [ -d "release/linux-unpacked" ]; then
+              tar -czf artifacts/aicmd-linux.tar.gz -C release/linux-unpacked .
             fi
             echo "=== 构建产物 ==="
-            find release -type f \( -name "*.zip" -o -name "*.tar.gz" \) 2>/dev/null | head -20 || true
+            find release -type f \( -name "*.zip" -o -name "*.tar.gz" -o -name "*.AppImage" -o -name "*.dmg" \) 2>/dev/null | head -20 || true
             ls -la release/ 2>/dev/null || true
             echo "=== artifacts ==="
             ls -la artifacts/ 2>/dev/null || true
