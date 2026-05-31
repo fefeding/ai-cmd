@@ -12,6 +12,7 @@
       @refresh="handleRefresh"
       @toggle-sidebar="store.toggleSidebar()"
       @open-ai-settings="openAISettings"
+      @open-batch="openBatchPanel"
     />
 
     <!-- 主区域 -->
@@ -100,6 +101,21 @@
     <!-- AI 设置 -->
     <AISettings ref="aiSettingsRef" />
 
+    <!-- 批量操作面板 -->
+    <div v-if="showBatchPanel" class="batch-modal-overlay" @click.self="showBatchPanel = false">
+      <div class="batch-modal">
+        <div class="batch-modal-header">
+          <h4><i class="bi bi-hdd-rack"></i> {{ t('batch.title') }}</h4>
+          <button class="btn-close-modal" @click="showBatchPanel = false">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </div>
+        <div class="batch-modal-body">
+          <BatchPanel ref="batchPanelRef" />
+        </div>
+      </div>
+    </div>
+
     <!-- 文件传输对话框 -->
     <FileTransfer ref="fileTransferRef" />
 
@@ -140,6 +156,7 @@ import TerminalTabComp from '@/components/terminal-tab.vue';
 import ConnectionEditor from '@/components/connection-editor/index.vue';
 import FileTransfer from '@/components/file-transfer.vue';
 import AISettings from '@/components/ai-settings/index.vue';
+import BatchPanel from '@/components/batch-panel/index.vue';
 import type { ConnectionEntity, TerminalTab as TerminalTabType } from '@/typings/connection';
 
 const { t } = useI18n();
@@ -148,6 +165,8 @@ const store = useTerminalStore();
 const connectionEditorRef = ref<InstanceType<typeof ConnectionEditor>>();
 const fileTransferRef = ref<InstanceType<typeof FileTransfer>>();
 const aiSettingsRef = ref<InstanceType<typeof AISettings>>();
+const batchPanelRef = ref<InstanceType<typeof BatchPanel>>();
+const showBatchPanel = ref(false);
 const showZmodemBtn = ref(false);
 const activeZmodemTabId = ref<string | null>(null);
 
@@ -344,6 +363,11 @@ function handleFileTransfer() {
 // 打开 AI 设置
 function openAISettings() {
   aiSettingsRef.value?.open();
+}
+
+// 打开批量操作面板
+function openBatchPanel() {
+  showBatchPanel.value = true;
 }
 
 // 快捷键
@@ -602,5 +626,63 @@ async function restoreOrCreateTabs() {
   background-color: rgba(166, 227, 161, 0.1);
   border-color: #a6e3a1;
   color: #a6e3a1;
+}
+
+/* 批量操作模态框 */
+.batch-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.batch-modal {
+  width: 700px;
+  max-width: 90vw;
+  height: 600px;
+  max-height: 80vh;
+  background: var(--bg-dark, #1e1e2e);
+  border: 1px solid var(--border-color, rgba(255,255,255,0.1));
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.batch-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color, rgba(255,255,255,0.1));
+}
+.batch-modal-header h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary, #cdd6f4);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.batch-modal-header h4 i { color: #89b4fa; }
+.btn-close-modal {
+  background: none;
+  border: none;
+  color: var(--text-secondary, #a6adc8);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+}
+.btn-close-modal:hover { background: rgba(255,255,255,0.1); color: var(--text-primary, #cdd6f4); }
+.batch-modal-body {
+  flex: 1;
+  overflow: hidden;
 }
 </style>

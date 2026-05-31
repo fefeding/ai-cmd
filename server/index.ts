@@ -2,12 +2,18 @@ import { ConnectionService } from './service/connection.service';
 import { SSHService } from './service/ssh.service';
 import { AIService } from './service/ai.service';
 import { SkillService } from './service/skill.service';
+import { AuditService } from './service/audit.service';
+import { MonitorService } from './service/monitor.service';
+import { BatchService } from './service/batch.service';
 
 // 初始化服务实例
 const connectionService = new ConnectionService();
 const sshService = new SSHService(connectionService);
 const skillService = new SkillService();
-const aiService = new AIService(sshService, skillService);
+const auditService = new AuditService();
+const monitorService = new MonitorService(connectionService);
+const batchService = new BatchService(sshService, connectionService);
+const aiService = new AIService(sshService, skillService, auditService);
 
 // 初始化
 connectionService.init();
@@ -184,6 +190,96 @@ export async function handleRoutes(pathname: string, body: any) {
       return skill;
     }
 
+    // ========== 审计日志 ==========
+
+    // 查询审计日志
+    if (pathname === '/api/audit/list') {
+      return auditService.getLogs(body);
+    }
+
+    // 获取审计统计
+    if (pathname === '/api/audit/stats') {
+      return auditService.getStats(body?.date);
+    }
+
+    // 导出审计日志
+    if (pathname === '/api/audit/export') {
+      const { startDate, endDate, format } = body;
+      if (!startDate || !endDate) throw Error('Missing parameters: startDate, endDate');
+      return auditService.exportLogs(startDate, endDate, format || 'json');
+    }
+
+    // 获取可用审计日期列表
+    if (pathname === '/api/audit/dates') {
+      return auditService.getAvailableDates();
+    }
+
+    // ========== 日志监控 ==========
+
+    // 启动日志监控
+    if (pathname === '/api/monitor/start') {
+      const { sessionId, connectionId, logPath, pattern } = body;
+      if (!sessionId || !logPath) throw Error('Missing parameters: sessionId, logPath');
+      return await monitorService.startMonitor(sessionId, connectionId || '', logPath, pattern);
+    }
+
+    // 停止日志监控
+    if (pathname === '/api/monitor/stop') {
+      const { monitorId } = body;
+      if (!monitorId) throw Error('Missing parameter: monitorId');
+      return monitorService.stopMonitor(monitorId);
+    }
+
+    // 获取活跃监控列表
+    if (pathname === '/api/monitor/list') {
+      return monitorService.getActiveMonitors(body?.sessionId);
+    }
+
+    // 获取监控告警
+    if (pathname === '/api/monitor/alerts') {
+      const { monitorId, limit } = body;
+      if (!monitorId) throw Error('Missing parameter: monitorId');
+      return monitorService.getAlerts(monitorId, limit);
+    }
+
+    // 获取监控最近行
+    if (pathname === '/api/monitor/lines') {
+      const { monitorId, limit } = body;
+      if (!monitorId) throw Error('Missing parameter: monitorId');
+      return monitorService.getRecentLines(monitorId, limit);
+    }
+
+    // 获取监控批量行（供 AI 分析）
+    if (pathname === '/api/monitor/analyze') {
+      const { monitorId } = body;
+      if (!monitorId) throw Error('Missing parameter: monitorId');
+      return monitorService.getBatchForAnalysis(monitorId);
+    }
+
+    // ========== 批量操作 ==========
+
+    // 执行批量命令
+    if (pathname === '/api/batch/execute') {
+      const { sessionIds, command, timeout } = body;
+      if (!sessionIds || !Array.isArray(sessionIds) || sessionIds.length === 0) {
+        throw Error('Missing parameter: sessionIds (non-empty array)');
+      }
+      if (!command) throw Error('Missing parameter: command');
+      return await batchService.executeBatch(sessionIds, command, timeout);
+    }
+
+    // 获取批量任务结果
+    if (pathname === '/api/batch/result') {
+      const { taskId } = body;
+      if (!taskId) throw Error('Missing parameter: taskId');
+      return batchService.getTask(taskId);
+    }
+
+    // 获取所有批量任务
+    if (pathname === '/api/batch/tasks') {
+      return batchService.getTasks();
+    }
+
     throw Error('API endpoint not found');
   } catch (error: any) {
     if (error?.detail) error.message += ' ' + error.detail;
@@ -192,4 +288,4 @@ export async function handleRoutes(pathname: string, body: any) {
 }
 
 // 导出服务实例供 WebSocket 使用
-export { connectionService, sshService, aiService, skillService };
+export { connectionService, sshService, aiService, skillService, auditService, monitorService, batchService };

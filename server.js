@@ -93,6 +93,24 @@ app.use((req, res) => {
 const wss = new WebSocket.Server({ server, path: '/ws/terminal' });
 console.log(`[WS] WebSocket server created on path /ws/terminal`);
 
+// 跟踪 sessionId -> WebSocket 映射（用于推送监控事件）
+const wsBySessionId = new Map();
+
+// 注册日志监控事件回调（全局注册，通过 sessionId 查找对应的 WebSocket）
+try {
+  const serverModule = require('./dist/server/index.js');
+  if (serverModule.monitorService) {
+    serverModule.monitorService.onEvent((sid, event) => {
+      const targetWs = wsBySessionId.get(sid);
+      if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+        targetWs.send(JSON.stringify({ type: 'monitor-event', sessionId: sid, event }));
+      }
+    });
+  }
+} catch (e) {
+  console.error('[WS] Failed to register monitor event callback:', e.message);
+}
+
 wss.on('connection', async (ws, req) => {
   let sessionId = null;
   console.log(`[WS] Client connected from ${req.socket.remoteAddress}`);
@@ -149,6 +167,8 @@ wss.on('connection', async (ws, req) => {
     }
 
     ws.send(JSON.stringify({ type: 'status', sessionId, data: 'connected' }));
+    // 注册 sessionId -> ws 映射
+    wsBySessionId.set(sessionId, ws);
     console.log(`[WS] Session ${sessionId} connected, status sent`);
   }
 
@@ -285,10 +305,15 @@ wss.on('connection', async (ws, req) => {
 
   ws.on('close', () => {
     console.log(`[WS] Client disconnected, sessionId: ${sessionId}`);
-    // WebSocket 断开时关闭关联的 SSH 会话
+    // 移除 sessionId -> ws 映射
     if (sessionId) {
+      wsBySessionId.delete(sessionId);
       try {
         const serverModule = require('./dist/server/index.js');
+        // 停止该会话的监控
+        if (serverModule.monitorService) {
+          serverModule.monitorService.stopSessionMonitors(sessionId);
+        }
         serverModule.sshService.closeSession(sessionId);
       } catch (e) {
         // ignore

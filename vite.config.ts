@@ -15,6 +15,9 @@ import { ConnectionService } from './server/service/connection.service';
 import { SSHService } from './server/service/ssh.service';
 import { AIService } from './server/service/ai.service';
 import { SkillService } from './server/service/skill.service';
+import { AuditService } from './server/service/audit.service';
+import { MonitorService } from './server/service/monitor.service';
+import { BatchService } from './server/service/batch.service';
 
 const urlPrefix = process.env.PREFIX ? `/${process.env.PREFIX}` : '';
 
@@ -23,7 +26,10 @@ const connectionService = new ConnectionService();
 connectionService.init();
 const sshService = new SSHService(connectionService);
 const skillService = new SkillService();
-const aiService = new AIService(sshService, skillService);
+const auditService = new AuditService();
+const monitorService = new MonitorService(connectionService);
+const batchService = new BatchService(sshService, connectionService);
+const aiService = new AIService(sshService, skillService, auditService);
 
 const defaultInitState = {
     "config": {"prefix": urlPrefix, "apiUrl": process.env.API_URL||""},
@@ -514,6 +520,70 @@ async function handleRoute(pathname: string, body: any) {
         const skill = skillService.getSkill(id);
         if (!skill) throw new Error('Skill not found: ' + id);
         return skill;
+    }
+
+    // ========== 审计日志 ==========
+    if (pathname === '/api/audit/list') {
+        return auditService.getLogs(body);
+    }
+    if (pathname === '/api/audit/stats') {
+        return auditService.getStats(body?.date);
+    }
+    if (pathname === '/api/audit/export') {
+        const { startDate, endDate, format } = body;
+        if (!startDate || !endDate) throw new Error('Missing parameters: startDate, endDate');
+        return auditService.exportLogs(startDate, endDate, format || 'json');
+    }
+    if (pathname === '/api/audit/dates') {
+        return auditService.getAvailableDates();
+    }
+
+    // ========== 日志监控 ==========
+    if (pathname === '/api/monitor/start') {
+        const { sessionId, connectionId, logPath, pattern } = body;
+        if (!sessionId || !logPath) throw new Error('Missing parameters: sessionId, logPath');
+        return await monitorService.startMonitor(sessionId, connectionId || '', logPath, pattern);
+    }
+    if (pathname === '/api/monitor/stop') {
+        const { monitorId } = body;
+        if (!monitorId) throw new Error('Missing parameter: monitorId');
+        return monitorService.stopMonitor(monitorId);
+    }
+    if (pathname === '/api/monitor/list') {
+        return monitorService.getActiveMonitors(body?.sessionId);
+    }
+    if (pathname === '/api/monitor/alerts') {
+        const { monitorId, limit } = body;
+        if (!monitorId) throw new Error('Missing parameter: monitorId');
+        return monitorService.getAlerts(monitorId, limit);
+    }
+    if (pathname === '/api/monitor/lines') {
+        const { monitorId, limit } = body;
+        if (!monitorId) throw new Error('Missing parameter: monitorId');
+        return monitorService.getRecentLines(monitorId, limit);
+    }
+    if (pathname === '/api/monitor/analyze') {
+        const { monitorId } = body;
+        if (!monitorId) throw new Error('Missing parameter: monitorId');
+        return monitorService.getBatchForAnalysis(monitorId);
+    }
+
+    // ========== 批量操作 ==========
+    if (pathname === '/api/batch/execute') {
+        const { sessionIds, command, timeout } = body;
+        if (!sessionIds || !Array.isArray(sessionIds) || sessionIds.length === 0) {
+            throw new Error('Missing parameter: sessionIds (non-empty array)');
+        }
+        if (!command) throw new Error('Missing parameter: command');
+        return await batchService.executeBatch(sessionIds, command, timeout);
+    }
+    if (pathname === '/api/batch/result') {
+        const { taskId } = body;
+        if (!taskId) throw new Error('Missing parameter: taskId');
+        return batchService.getTask(taskId);
+    }
+    if (pathname === '/api/batch/tasks') {
+        return batchService.getTasks();
     }
 
     throw new Error('API endpoint not found');

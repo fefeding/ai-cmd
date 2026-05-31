@@ -2,31 +2,43 @@
   <div class="ai-chat-panel" :class="{ collapsed: !isOpen }">
     <!-- 头部 -->
     <div class="ai-chat-header">
-      <div class="d-flex align-items-center">
-        <i class="bi bi-robot me-2"></i>
-        <span class="fw-bold">{{ t('ai.chat') }}</span>
+      <div class="d-flex align-items-center gap-2">
+        <!-- Tab 切换 -->
+        <div class="ai-tab-bar">
+          <button class="ai-tab" :class="{ active: activeTab === 'chat' }" @click="activeTab = 'chat'">
+            <i class="bi bi-robot"></i> {{ t('ai.chat') }}
+          </button>
+          <button class="ai-tab" :class="{ active: activeTab === 'audit' }" @click="activeTab = 'audit'">
+            <i class="bi bi-shield-check"></i> {{ t('audit.title') }}
+          </button>
+          <button class="ai-tab" :class="{ active: activeTab === 'monitor' }" @click="activeTab = 'monitor'">
+            <i class="bi bi-activity"></i> {{ t('monitor.title') }}
+          </button>
+        </div>
       </div>
       <div class="d-flex gap-1">
-        <button class="btn-ai-action" @click="handleOpenSettings" :title="t('ai.settings')">
-          <i class="bi bi-gear"></i>
-        </button>
-        <button class="btn-ai-action" @click="toggleHistoryPanel" :title="t('ai.history')" :class="{ active: showHistoryPanel }">
-          <i class="bi bi-clock-history"></i>
-        </button>
-        <button v-if="isAgentRunning" class="btn-ai-action btn-stop" @click="handleStop" :title="t('ai.stopAgent')">
-          <i class="bi bi-stop-circle"></i>
-        </button>
-        <button class="btn-ai-action" @click="handleClear" :title="t('ai.clearHistory')">
-          <i class="bi bi-trash"></i>
-        </button>
+        <template v-if="activeTab === 'chat'">
+          <button class="btn-ai-action" @click="handleOpenSettings" :title="t('ai.settings')">
+            <i class="bi bi-gear"></i>
+          </button>
+          <button class="btn-ai-action" @click="toggleHistoryPanel" :title="t('ai.history')" :class="{ active: showHistoryPanel }">
+            <i class="bi bi-clock-history"></i>
+          </button>
+          <button v-if="isAgentRunning" class="btn-ai-action btn-stop" @click="handleStop" :title="t('ai.stopAgent')">
+            <i class="bi bi-stop-circle"></i>
+          </button>
+          <button class="btn-ai-action" @click="handleClear" :title="t('ai.clearHistory')">
+            <i class="bi bi-trash"></i>
+          </button>
+        </template>
         <button class="btn-ai-action" @click="handleClose" :title="t('common.close')">
           <i class="bi bi-x-lg"></i>
         </button>
       </div>
     </div>
 
-    <!-- 消息列表 -->
-    <div class="ai-chat-messages" ref="messagesContainer">
+    <!-- 消息列表 (Chat 模式) -->
+    <div v-show="activeTab === 'chat'" class="ai-chat-messages" ref="messagesContainer">
       <div v-if="messages.length === 0" class="ai-chat-empty">
         <i class="bi bi-robot" style="font-size: 32px; opacity: 0.5;"></i>
         <p>{{ t('ai.agentHint') }}</p>
@@ -136,8 +148,18 @@
       </div>
     </div>
 
+    <!-- 审计面板 (Audit 模式) -->
+    <div v-show="activeTab === 'audit'" class="ai-audit-wrapper">
+      <AuditPanel ref="auditPanelRef" />
+    </div>
+
+    <!-- 日志监控面板 (Monitor 模式) -->
+    <div v-show="activeTab === 'monitor'" class="ai-audit-wrapper">
+      <LogMonitor ref="logMonitorRef" :sessionId="props.sessionId" :connectionId="props.connectionId" @ws-send="(msg: any) => emit('ws-send', msg)" />
+    </div>
+
     <!-- 已选 Skill 标签 -->
-    <div v-if="selectedSkill" class="selected-skill-bar">
+    <div v-if="selectedSkill && activeTab === 'chat'" class="selected-skill-bar">
       <div class="selected-skill-tag">
         <i class="bi bi-lightning-charge-fill"></i>
         <span>{{ selectedSkill.name }}</span>
@@ -148,7 +170,7 @@
     </div>
 
     <!-- 输入区域 -->
-    <div class="ai-chat-input">
+    <div v-show="activeTab === 'chat'" class="ai-chat-input">
       <button class="btn-skill-toggle" @click="toggleSkillsPanel" :title="t('ai.skills')" :class="{ active: showSkillsPanel }">
         <i class="bi bi-lightning-charge"></i>
       </button>
@@ -177,12 +199,15 @@
 import { ref, watch, nextTick, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import * as aiService from '@/service/ai';
+import AuditPanel from '@/components/audit-panel/index.vue';
+import LogMonitor from '@/components/log-monitor/index.vue';
 
 const { t } = useI18n();
 
 const props = defineProps<{
   sessionId: string;
   sessionName?: string;
+  connectionId?: string;
   isOpen: boolean;
   getTerminalContext?: () => string;
 }>();
@@ -221,8 +246,11 @@ interface ChatMessage {
   isSystemInfo?: boolean;
 }
 
+const activeTab = ref<'chat' | 'audit' | 'monitor'>('chat');
 const messagesContainer = ref<HTMLElement>();
 const inputRef = ref<HTMLTextAreaElement>();
+const auditPanelRef = ref<InstanceType<typeof AuditPanel>>();
+const logMonitorRef = ref<InstanceType<typeof LogMonitor>>();
 const inputText = ref('');
 const isAgentRunning = ref(false);
 const messages = ref<ChatMessage[]>([]);
@@ -325,6 +353,13 @@ function handleAgentEvent(event: any) {
       currentAssistantIdx = -1;
       saveDisplayHistory();
       break;
+
+    case 'audit_entry':
+      // 转发审计条目到审计面板
+      if (event.auditEntry && auditPanelRef.value) {
+        auditPanelRef.value.addRealtimeEntry(event.auditEntry);
+      }
+      return; // 不影响聊天消息流
 
     case 'error':
       msg.isRunning = false;
@@ -666,6 +701,13 @@ function scrollToBottom() {
   });
 }
 
+/** 处理监控事件（由父组件调用） */
+function handleMonitorEvent(event: any) {
+  if (logMonitorRef.value) {
+    logMonitorRef.value.handleMonitorEvent(event);
+  }
+}
+
 watch(() => props.isOpen, (val) => {
   if (val) {
     nextTick(() => {
@@ -688,7 +730,7 @@ onMounted(() => {
   loadDisplayHistory();
 });
 
-defineExpose({ handleAgentEvent, scrollToBottom });
+defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
 </script>
 
 <style scoped>
@@ -1176,6 +1218,43 @@ defineExpose({ handleAgentEvent, scrollToBottom });
 .btn-ai-action.active {
   color: #89b4fa;
   background: rgba(137, 180, 250, 0.1);
+}
+
+/* Tab 切换栏 */
+.ai-tab-bar {
+  display: flex;
+  gap: 2px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  padding: 2px;
+}
+.ai-tab {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.ai-tab:hover { color: var(--text-primary); }
+.ai-tab.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+.ai-tab i { font-size: 12px; }
+
+/* 审计面板包装器 */
+.ai-audit-wrapper {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 系统信息消息 */

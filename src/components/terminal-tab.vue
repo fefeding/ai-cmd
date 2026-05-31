@@ -19,6 +19,7 @@
         ref="aiChatRef"
         :sessionId="sessionId || tabId"
         :sessionName="props.connection.name"
+        :connectionId="props.connection.id"
         :isOpen="showAIChat"
         :getTerminalContext="getTerminalContext"
         @close="showAIChat = false"
@@ -646,6 +647,13 @@ function handleServerMessage(msg: WSMessage) {
       // 转发 Agent 事件到 AIChat 组件
       if (aiChatRef.value && msg.event) {
         aiChatRef.value.handleAgentEvent(msg.event);
+      }
+      break;
+
+    case 'monitor-event':
+      // 转发监控事件到 AIChat 组件
+      if (aiChatRef.value && msg.event) {
+        aiChatRef.value.handleMonitorEvent(msg.event);
       }
       break;
   }

@@ -78,6 +78,9 @@
         <button class="btn-ai-settings" @click="$emit('open-ai-settings')" :title="t('ai.settings')">
           <i class="bi bi-robot"></i>
         </button>
+        <button class="btn-ai-settings" @click="$emit('open-batch')" :title="t('batch.title')">
+          <i class="bi bi-hdd-rack"></i>
+        </button>
         <button class="btn-lang-switch" @click="toggleLocale" :title="currentLocale === 'zh-CN' ? 'Switch to English' : '切换到中文'">
           {{ currentLocale === 'zh-CN' ? 'EN' : '中' }}
         </button>
@@ -116,6 +119,7 @@ defineEmits<{
   (e: 'refresh'): void;
   (e: 'toggle-sidebar'): void;
   (e: 'open-ai-settings'): void;
+  (e: 'open-batch'): void;
 }>();
 
 const searchQuery = ref('');

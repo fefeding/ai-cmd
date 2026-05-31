@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import axios from 'axios';
 import { getDataDir, getDataPath, ensureDataDir } from '../utils/data-dir';
+import { AuditService, type AuditEntry } from './audit.service';
 
 /**
  * AI 配置接口
@@ -42,7 +43,7 @@ export interface ToolCall {
 /**
  * Agent 事件类型
  */
-export type AgentEventType = 'thinking' | 'message' | 'tool_call' | 'tool_result' | 'done' | 'error' | 'system_info';
+export type AgentEventType = 'thinking' | 'message' | 'tool_call' | 'tool_result' | 'audit_entry' | 'done' | 'error' | 'system_info';
 
 /**
  * Agent 事件
@@ -54,6 +55,7 @@ export interface AgentEvent {
   args?: any;
   result?: string;
   error?: string;
+  auditEntry?: any;
 }
 
 /** Agent 事件回调 */
@@ -160,6 +162,7 @@ export class AIService {
   private toolRegistry: Map<string, RegisteredTool> = new Map();
   private sshService?: ISSHService;
   private skillService?: ISkillService;
+  private auditService?: AuditService;
   private readonly MAX_HISTORY_AGE = 24 * 60 * 60 * 1000;
   private readonly MAX_MESSAGES = 50;
   private readonly MAX_AGENT_ITERATIONS = 15;
@@ -236,13 +239,14 @@ Set-Content -Path $env:TEMP\_ai_task.ps1 -Value @'
 - 禁止废话，禁止套话，禁止总结已经显而易见的信息
 - 使用中文回复`;
 
-  constructor(sshService?: ISSHService, skillService?: ISkillService) {
+  constructor(sshService?: ISSHService, skillService?: ISkillService, auditService?: AuditService) {
     this.configDir = getDataDir();
     this.configPath = getDataPath('ai-config.json');
     this.historyDir = getDataPath('ai-history');
     this.config = this.getDefaultConfig();
     this.sshService = sshService;
     this.skillService = skillService;
+    this.auditService = auditService;
     this.loadConfig();
     // 确保历史目录存在
     try { if (!fs.existsSync(this.historyDir)) fs.mkdirSync(this.historyDir, { recursive: true }); } catch (_) { /* ignore */ }
@@ -864,17 +868,46 @@ Set-Content -Path $env:TEMP\_ai_task.ps1 -Value @'
           // 推送工具调用事件
           eventCallback({ type: 'tool_call', tool: toolName, args: toolArgs });
 
+          // 审计：记录工具调用开始时间
+          const toolStartTime = Date.now();
+
           // 执行工具
           const tool = this.toolRegistry.get(toolName);
           let result: string;
+          let toolStatus: AuditEntry['status'] = 'success';
           if (!tool) {
             result = `错误: 未知工具 "${toolName}"`;
+            toolStatus = 'error';
           } else {
             try {
               result = await tool.executor(toolArgs, sessionId);
+              if (result.startsWith('错误:') || result.startsWith('工具执行失败:')) {
+                toolStatus = 'error';
+              }
             } catch (error: any) {
               result = `工具执行失败: ${error.message}`;
+              toolStatus = 'error';
             }
+          }
+
+          // 审计：记录工具执行结果
+          if (this.auditService) {
+            const command = toolName === 'execute_command' ? (toolArgs.command || '') : JSON.stringify(toolArgs);
+            try {
+              const auditEntry = this.auditService.log({
+                sessionId,
+                sessionName: this.sshService?.getSession(sessionId)?.name,
+                connectionId: this.sshService?.getSession(sessionId)?.connectionId,
+                userMessage,
+                tool: toolName,
+                command,
+                result: result.substring(0, 5000), // 截断过长输出
+                duration: Date.now() - toolStartTime,
+                status: toolStatus,
+              });
+              // 推送审计事件给前端
+              eventCallback({ type: 'audit_entry', auditEntry });
+            } catch { /* 审计失败不影响主流程 */ }
           }
 
           // 推送工具结果事件
