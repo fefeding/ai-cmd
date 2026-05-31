@@ -8,11 +8,53 @@ const os = require('os');
 
 const projectRoot = path.resolve(__dirname, '..');
 
-function getPidFilePath() {
+/**
+ * 递归修复目录及所有文件权限：目录 755，文件 644
+ */
+function fixPermissions(dir) {
+  try {
+    fs.chmodSync(dir, 0o755);
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      try {
+        if (entry.isDirectory()) {
+          fixPermissions(fullPath);
+        } else {
+          fs.chmodSync(fullPath, 0o644);
+        }
+      } catch { /* 单个文件失败不影响其他 */ }
+    }
+  } catch { /* ignore */ }
+}
+
+function ensureDataDir() {
   const dataDir = process.env.AICMD_DATA_DIR || path.join(os.homedir(), '.aicmd');
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+  try {
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    } else {
+      // 确保整个数据目录可写，递归修复权限
+      try {
+        fs.accessSync(dataDir, fs.constants.W_OK);
+      } catch {
+        fixPermissions(dataDir);
+        // 再次检查
+        try { fs.accessSync(dataDir, fs.constants.W_OK); } catch {
+          throw new Error(`Permission denied even after chmod: ${dataDir}`);
+        }
+      }
+    }
+  } catch (e) {
+    console.error(`Cannot access data directory ${dataDir}: ${e.message}`);
+    console.error('Try: sudo chown -R $(whoami) ' + dataDir);
+    process.exit(1);
   }
+  return dataDir;
+}
+
+function getPidFilePath() {
+  const dataDir = ensureDataDir();
   return path.join(dataDir, 'aicmd.server.pid');
 }
 
@@ -26,7 +68,19 @@ function readPid() {
 
 function writePid(pid) {
   const pidFilePath = getPidFilePath();
-  fs.writeFileSync(pidFilePath, pid.toString());
+  try {
+    fs.writeFileSync(pidFilePath, pid.toString());
+  } catch (e) {
+    // 尝试修复权限后重试
+    try { fs.chmodSync(pidFilePath, 0o644); } catch { /* ignore */ }
+    try {
+      fs.writeFileSync(pidFilePath, pid.toString());
+    } catch (e2) {
+      console.error(`Cannot write PID file ${pidFilePath}: ${e2.message}`);
+      console.error('Try: sudo chown -R $(whoami) ' + path.dirname(pidFilePath));
+      process.exit(1);
+    }
+  }
 }
 
 function deletePid() {
@@ -114,6 +168,7 @@ async function startProject() {
 
   console.log('Server started with PID:', child.pid);
   console.log(`aicmd is running at http://localhost:${port}`);
+  openBrowser(`http://localhost:${port}`);
 }
 
 function stopProject() {
@@ -143,6 +198,14 @@ function restartProject() {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
   }
   startProject();
+}
+
+function openBrowser(url) {
+  const platform = process.platform;
+  const cmd = platform === 'darwin' ? 'open' : platform === 'win32' ? 'start' : 'xdg-open';
+  const args = platform === 'win32' ? ['', url] : [url];
+  const proc = spawn(cmd, args, { detached: true, stdio: 'ignore', shell: platform === 'win32' });
+  proc.unref();
 }
 
 function showVersion() {
