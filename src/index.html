@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <base href="{{viteTarget}}" />
+    <script type="text/template" id="__INITIAL_STATE__">
+        {{ data | dump | safe }}
+    </script>
+    <script type="text/template" id="__DEFAULTINITIAL_STATE__">
+      {{ __DEFAULTINITIAL_STATE__ }}
+    </script>
+    <script>
+      function __get_templateJson(id) {
+        try { 
+            var tag = document.getElementById(id);
+            var obj = JSON.parse(tag.innerHTML);
+            return obj;
+        }
+        catch (e) {    
+          return null;
+        }
+      }
+      var __INITIAL_STATE__ = __get_templateJson('__INITIAL_STATE__');
+      if(!__INITIAL_STATE__) __INITIAL_STATE__ = __get_templateJson('__DEFAULTINITIAL_STATE__');        
+    </script>
+    <link rel="icon" href="{{prefix}}/public/favicon.ico" />    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AICmd - AI Terminal</title>
+    <meta name="description" content="{{description}}">
+    <script>
+      window.addEventListener('vite:preloadError', function (event) {
+        console.error(event);
+      });
+    </script> 
+  </head>
+  <body>
+    <div id="app" class="min-vh-100"></div>
+    <script type="module" lang="ts" src="{{prefix}}/src/platform/index.ts">
+    </script>
+  </body>
+</html>

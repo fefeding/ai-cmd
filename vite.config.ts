@@ -57,7 +57,7 @@ const nunjucksPlugin = ViteNunjucksPlugin({
     }
 });
 
-const viewDir = path.resolve(__dirname, './view');
+const viewDir = path.resolve(__dirname, './src');
 
 const config = defineConfig({
     publicDir: false,
@@ -96,13 +96,14 @@ const config = defineConfig({
             name: 'fix-html-paths',
             writeBundle: async () => {
                 const publicDir = path.resolve(__dirname, './dist/public');
-                const htmlPath = path.join(publicDir, 'view/index.html');
+                // HTML 输出路径随源目录变化：src/index.html -> dist/public/src/index.html
+                const htmlPath = path.join(publicDir, 'src/index.html');
                 if (fs.existsSync(htmlPath)) {
                     let html = fs.readFileSync(htmlPath, 'utf-8');
                     html = html.replace(/\.\.\/([a-zA-Z0-9_-]+\.(js|css|woff|woff2|png|jpg|jpeg|gif|svg|ico))/g, '/public/$1');
                     fs.writeFileSync(htmlPath, html);
                 }
-                const viewHtmlPath = path.join(publicDir, 'view/index.html');
+                const viewHtmlPath = path.join(publicDir, 'src/index.html');
                 const destViewDir = path.resolve(__dirname, './dist/view');
                 const destViewHtmlPath = path.join(destViewDir, 'index.html');
                 if (fs.existsSync(viewHtmlPath)) {
@@ -110,6 +111,11 @@ const config = defineConfig({
                     let html = fs.readFileSync(viewHtmlPath, 'utf-8');
                     fs.writeFileSync(destViewHtmlPath, html);
                     fs.unlinkSync(viewHtmlPath);
+                    // 清理空的 src 目录
+                    const srcDir = path.join(publicDir, 'src');
+                    if (fs.existsSync(srcDir) && fs.readdirSync(srcDir).length === 0) {
+                        fs.rmdirSync(srcDir);
+                    }
                 }
             }
         },

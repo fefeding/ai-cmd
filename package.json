@@ -12,7 +12,6 @@
   "files": [
     "bin/",
     "public/",
-    "view/",
     "dist/",
     "electron/",
     "data/skills",

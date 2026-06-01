@@ -493,6 +493,16 @@ export class SSHService {
 
     // For jump host sessions, always actively collect (cached data may be from jump host, not target)
     if (isJumpHost) {
+      // Wait for startup script SSH hop to complete before collecting.
+      // The startup script is sent at 800ms after shell ready; the SSH hop itself takes 2-5s.
+      // Without this delay, the echo command may run on the jump host before the hop completes.
+      const sessionAge = Date.now() - meta!.createdAt.getTime();
+      const JUMP_HOST_SETTLE_DELAY = 8000; // 8 seconds total after session creation
+      if (sessionAge < JUMP_HOST_SETTLE_DELAY) {
+        const waitMs = JUMP_HOST_SETTLE_DELAY - sessionAge;
+        console.log(`[SSH] Jump host session ${sessionId}: waiting ${waitMs}ms for SSH hop to complete before collecting system info`);
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+      }
       console.log(`[SSH] Jump host session ${sessionId}: actively collecting target server info`);
       const info = await this.activeCollectRemoteSystemInfo(sessionId);
       if (info && meta) {
@@ -574,15 +584,21 @@ export class SSHService {
     const cmd = `echo "${marker}:$(uname -s 2>/dev/null || echo unknown):$(uname -r 2>/dev/null || echo unknown):$(hostname 2>/dev/null || echo unknown):$(whoami 2>/dev/null || echo unknown):$SHELL:$(uname -m 2>/dev/null || echo unknown)"`;
     try {
       // Start capture, then send the command
-      const outputPromise = this.captureOutput(sessionId, 2000);
+      // Use longer timeout (5s) to account for slow SSH connections and MOTD output
+      const outputPromise = this.captureOutput(sessionId, 5000);
       this.writeData(sessionId, cmd + '\n');
       const output = await outputPromise;
+      // Clean ANSI escape codes for more reliable marker matching
+      const cleaned = output.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1B\].*?\x07/g, '').replace(/\r/g, '');
       // Extract our marker line
-      for (const line of output.split('\n')) {
+      for (const line of cleaned.split('\n')) {
         const trimmed = line.trim();
-        if (trimmed.startsWith(marker + ':')) {
-          const parts = trimmed.split(':');
-          if (parts.length >= 6) {
+        // Handle possible command echo: skip lines that still contain the raw command prefix
+        if (trimmed.includes(marker + ':') && !trimmed.startsWith('echo')) {
+          const markerIdx = trimmed.indexOf(marker + ':');
+          const markerLine = trimmed.substring(markerIdx);
+          const parts = markerLine.split(':');
+          if (parts.length >= 7) {
             const info: Record<string, string> = {
               'OS': parts[1],
               'Kernel': parts[2],
@@ -601,8 +617,7 @@ export class SSHService {
           }
         }
       }
-      // Fallback: try to parse as MOTD
-      if (output.trim()) return this.parseMOTD(output);
+      console.warn(`[SSH] Marker not found in output for ${sessionId}, marker=${marker}`);
       return '';
     } catch (e) {
       console.warn(`[SSH] Failed to actively collect system info for ${sessionId}:`, e);
