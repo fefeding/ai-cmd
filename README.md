@@ -9,6 +9,7 @@ An AI-powered web SSH terminal that combines a full-featured terminal emulator w
 ### AI Agent
 - **Autonomous Operation**: AI agent directly executes commands in the terminal via tool calling (OpenAI function calling protocol). It observes output, makes decisions, and iterates until the task is done.
 - **System Awareness**: Automatically detects OS, CPU, memory, disk, installed services, and available languages on first connection. The AI always knows what system it's working with.
+- **Language Adaptation**: AI automatically responds in the same language as the user's message. Falls back to the UI locale when the message language is ambiguous.
 - **Script Generation**: For complex multi-step tasks, the agent generates and executes scripts (Bash/Python/PowerShell) instead of running commands one by one.
 - **Cross-Platform Intelligence**: Adapts commands based on target OS — uses `systemctl` on Linux, `launchctl` on macOS, `Get-Service` on Windows.
 
@@ -42,6 +43,13 @@ An AI-powered web SSH terminal that combines a full-featured terminal emulator w
 - **Expandable Details**: Click any result to see full command output, with copy-to-clipboard support.
 - **Task History**: Recent batch tasks are stored for review.
 
+### Jump Host & SSH Agent Forwarding
+- **Startup Script**: Configure a per-connection script that runs automatically after SSH login — ideal for jump host scenarios (e.g., `ssh target-server` to hop to the final destination).
+- **SSH Agent Forwarding**: Forward your local SSH agent to the remote server, enabling key-based authentication for subsequent SSH hops without storing keys on intermediate servers.
+- **Auto-Detection**: Automatically detects the local SSH agent socket (`SSH_AUTH_SOCK` on Linux/macOS, OpenSSH agent pipe on Windows).
+- **Smart System Info**: For jump host sessions, system information is actively collected from the target server (not the jump host) when the AI needs it.
+- See [Jump Host Guide](./docs/jump-host.md) for detailed setup instructions.
+
 ### Terminal
 - **SSH Remote Terminal**: Full SSH client based on xterm.js + ssh2 with 256-color support.
 - **Local Shell**: Native local shell via node-pty (Bash/Zsh on macOS/Linux, PowerShell on Windows).
@@ -49,12 +57,14 @@ An AI-powered web SSH terminal that combines a full-featured terminal emulator w
 - **Multi-Session**: Tab-based multi-session management with persistent state across restarts.
 - **Auto-Reconnect**: One-click reconnection for dropped SSH sessions.
 - **Session Persistence**: All sessions and chat history are persisted on the server side.
+- **Adaptive Layout**: Terminal automatically resizes when the AI chat panel is toggled, maintaining proper column count.
 
 ### General
-- **Connection Management**: Visual SSH connection configuration (CRUD) with key-based and password auth.
+- **Connection Management**: Visual SSH connection configuration (CRUD) with key-based, password, and auto auth. Supports startup scripts and agent forwarding for jump host workflows.
 - **i18n**: Chinese / English UI with runtime language switching.
-- **Desktop App**: Cross-platform desktop client via Electron.
+- **Desktop App**: Cross-platform desktop client via Electron (Windows, macOS, Linux).
 - **Chat History**: Persistent AI conversation history with browsing and restoration across sessions.
+- **CI/CD**: Automated multi-platform builds via GitHub Actions — push a version tag to generate installers for all platforms.
 
 ## Screenshot
 
@@ -131,13 +141,27 @@ node server.js --port 3000
 
 ### Desktop App (Electron)
 
+Pre-built installers are available from [GitHub Releases](https://github.com/fefeding/ai-cmd/releases), or build from source:
+
 ```bash
 pnpm electron:dev          # Dev mode
 pnpm electron:build        # Current platform
-pnpm electron:build:win    # Windows
-pnpm electron:build:mac    # macOS
-pnpm electron:build:linux  # Linux
+pnpm electron:build:win    # Windows (NSIS installer)
+pnpm electron:build:mac    # macOS (DMG, x64 + arm64)
+pnpm electron:build:linux  # Linux (AppImage)
 ```
+
+### Automated Builds (CI/CD)
+
+Push a version tag to trigger multi-platform builds:
+
+```bash
+git tag v0.1.6
+git push origin v0.1.6
+# GitHub Actions builds for Windows, macOS, Linux and creates a Release
+```
+
+Or trigger manually from the **Actions** tab with platform selection.
 
 ## AI Usage Examples
 
@@ -198,13 +222,22 @@ Steps to deploy:
 
 Then trigger with `/deploy-my-app` in the chat.
 
+## Documentation
+
+- [Architecture Design](./docs/ARCHITECTURE.md) — Core architecture, Agent loop, skills system, MCP integration
+- [Jump Host Guide](./docs/jump-host.md) — SSH jump host and agent forwarding configuration
+- [Deployment Guide](./docs/deployment.md) — Docker, npm, Electron, and CI/CD deployment
+- [Custom Skills Guide](./docs/skills-guide.md) — How to create and author custom AI skills
+
 ## Project Structure
 
 ```
 .
+├── .github/workflows/ # GitHub Actions CI/CD
 ├── bin/              # CLI entry (aicmd command)
 ├── data/skills/      # Built-in AI skills
 ├── dist/             # Build output
+├── docs/             # Documentation
 ├── electron/         # Electron main process & preload
 ├── public/           # Static assets
 ├── scripts/          # Build scripts (Electron)
@@ -214,11 +247,11 @@ Then trigger with `/deploy-my-app` in the chat.
 │   └── index.ts      # Server entry
 ├── src/              # Frontend source (Vue 3)
 │   ├── components/   # Vue components
-│   │   ├── ai-chat/  # AI chat panel (Chat / Audit / Monitor tabs)
+│   │   ├── ai-chat/  # AI chat panel (Chat / Audit tabs)
 │   │   ├── ai-settings/ # AI config modal
 │   │   ├── audit-panel/ # Command audit timeline
-│   │   ├── log-monitor/ # Real-time log monitoring
 │   │   ├── batch-panel/ # Multi-server batch operations
+│   │   ├── connection-editor/ # Connection config (jump host, agent forwarding)
 │   │   └── ...       # Terminal, sidebar, etc.
 │   ├── locales/      # i18n translations
 │   ├── service/      # Frontend API services

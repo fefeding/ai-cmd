@@ -9,6 +9,7 @@
 ### AI Agent
 - **自主操作**：AI Agent 通过工具调用（OpenAI function calling 协议）直接在终端中执行命令。它观察输出、做出决策并迭代直到任务完成。
 - **系统感知**：首次连接时自动检测操作系统、CPU、内存、磁盘、已安装服务和可用语言。AI 始终了解它在什么系统上工作。
+- **语言自适应**：AI 自动匹配用户消息的语言进行回复。当消息语言不明确时，回退到前端 UI 设置的语言。
 - **脚本生成**：对于复杂的多步任务，Agent 会生成并执行脚本（Bash/Python/PowerShell），而不是逐条运行命令。
 - **跨平台智能**：根据目标操作系统自适应命令 — Linux 用 `systemctl`，macOS 用 `launchctl`，Windows 用 `Get-Service`。
 
@@ -42,6 +43,13 @@
 - **可展开详情**：点击任意结果查看完整命令输出，支持一键复制。
 - **任务历史**：最近的批量任务会被保存以供回顾。
 
+### 跳板机与 SSH Agent 转发
+- **启动脚本**：为每个连接配置登录后自动执行的脚本 — 适用于跳板机场景（如 `ssh target-server` 跳转到目标机器）。
+- **SSH Agent 转发**：将本机 SSH Agent 转发到远程服务器，使后续 SSH 跳转可使用本机密钥认证，无需在中间服务器存放密钥。
+- **自动检测**：自动检测本机 SSH Agent 套接字（Linux/macOS 的 `SSH_AUTH_SOCK`，Windows 的 OpenSSH Agent 管道）。
+- **智能系统信息**：跳板机会话中，AI 需要系统信息时主动从目标服务器采集（而非跳板机）。
+- 详见 [跳板机配置指南](./docs/jump-host.md)。
+
 ### 终端
 - **SSH 远程终端**：基于 xterm.js + ssh2 的完整 SSH 客户端，支持 256 色。
 - **本地 Shell**：通过 node-pty 提供原生本地 Shell（macOS/Linux 上为 Bash/Zsh，Windows 上为 PowerShell）。
@@ -49,12 +57,14 @@
 - **多会话**：基于标签页的多会话管理，重启后状态持久化。
 - **自动重连**：一键重连断开的 SSH 会话。
 - **会话持久化**：所有会话和聊天历史均在服务端持久化。
+- **自适应布局**：开关 AI 聊天面板时终端自动调整尺寸，保持正确的列数。
 
 ### 通用
-- **连接管理**：可视化 SSH 连接配置（增删改查），支持密钥和密码认证。
+- **连接管理**：可视化 SSH 连接配置（增删改查），支持密钥、密码和自动认证。支持启动脚本和 Agent 转发用于跳板机工作流。
 - **国际化**：中文 / 英文 UI，运行时语言切换。
-- **桌面应用**：通过 Electron 提供跨平台桌面客户端。
+- **桌面应用**：通过 Electron 提供跨平台桌面客户端（Windows、macOS、Linux）。
 - **聊天历史**：持久化 AI 对话历史，支持跨会话浏览和恢复。
+- **CI/CD**：通过 GitHub Actions 自动化多平台构建 — 推送版本标签即可生成全平台安装包。
 
 ## 截图
 
@@ -131,13 +141,27 @@ node server.js --port 3000
 
 ### 桌面应用（Electron）
 
+预构建安装包可从 [GitHub Releases](https://github.com/fefeding/ai-cmd/releases) 下载，或从源码构建：
+
 ```bash
 pnpm electron:dev          # 开发模式
 pnpm electron:build        # 当前平台
-pnpm electron:build:win    # Windows
-pnpm electron:build:mac    # macOS
-pnpm electron:build:linux  # Linux
+pnpm electron:build:win    # Windows（NSIS 安装包）
+pnpm electron:build:mac    # macOS（DMG，x64 + arm64）
+pnpm electron:build:linux  # Linux（AppImage）
 ```
+
+### 自动化构建（CI/CD）
+
+推送版本标签触发多平台自动构建：
+
+```bash
+git tag v0.1.6
+git push origin v0.1.6
+# GitHub Actions 自动构建 Windows、macOS、Linux 并创建 Release
+```
+
+也可在 **Actions** 页面手动触发并选择平台。
 
 ## AI 使用示例
 
@@ -198,13 +222,22 @@ tags: [deploy, ops]
 
 然后在聊天中使用 `/deploy-my-app` 触发。
 
+## 文档
+
+- [架构设计](./docs/ARCHITECTURE.md) — 核心架构、Agent 循环、技能系统、MCP 集成
+- [跳板机指南](./docs/jump-host.md) — SSH 跳板机和 Agent 转发配置
+- [部署指南](./docs/deployment.md) — Docker、npm、Electron、CI/CD 部署方式
+- [自定义技能指南](./docs/skills-guide.md) — 如何创建和编写自定义 AI 技能
+
 ## 项目结构
 
 ```
 .
+├── .github/workflows/ # GitHub Actions CI/CD
 ├── bin/              # CLI 入口（aicmd 命令）
 ├── data/skills/      # 内置 AI 技能
 ├── dist/             # 构建输出
+├── docs/             # 文档
 ├── electron/         # Electron 主进程 & 预加载脚本
 ├── public/           # 静态资源
 ├── scripts/          # 构建脚本（Electron）
@@ -214,11 +247,11 @@ tags: [deploy, ops]
 │   └── index.ts      # 服务端入口
 ├── src/              # 前端源码（Vue 3）
 │   ├── components/   # Vue 组件
-│   │   ├── ai-chat/  # AI 聊天面板（Chat / Audit / Monitor 标签）
+│   │   ├── ai-chat/  # AI 聊天面板（Chat / Audit 标签）
 │   │   ├── ai-settings/ # AI 配置弹窗
 │   │   ├── audit-panel/ # 命令审计时间线
-│   │   ├── log-monitor/ # 实时日志监控
 │   │   ├── batch-panel/ # 多服务器批量操作
+│   │   ├── connection-editor/ # 连接配置（跳板机、Agent 转发）
 │   │   └── ...       # 终端、侧边栏等
 │   ├── locales/      # i18n 翻译
 │   ├── service/      # 前端 API 服务
