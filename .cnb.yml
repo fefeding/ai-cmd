@@ -1,20 +1,28 @@
 # CNB 云构建配置
 # 文档: https://docs.cnb.cool/zh/build/grammar.html
 
-# main 分支: 推送时构建
+# ============================================================
+# main 分支: 推送时构建验证（不发布 Release）
+# ============================================================
 main:
   push:
-    - name: build-electron-client
+    - name: build-verify
       docker:
-        image: node:20
+        image: node:22
         volumes:
           - pnpm-store:/root/.local/share/pnpm/store/v3:rw
       env:
         ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
         CI: 'true'
       stages:
         - name: install pnpm
-          script: npm i -g pnpm
+          script: npm i -g pnpm@10
+
+        - name: install build dependencies
+          script: |
+            apt-get update
+            apt-get install -y rpm fakeroot
 
         - name: install dependencies
           script: pnpm install --no-frozen-lockfile
@@ -29,46 +37,56 @@ main:
 
         - name: build electron linux client
           script: pnpm run electron:build -- --platform=linux
-
-        - name: package artifacts
-          script: |
-            mkdir -p artifacts
-            if [ -d "release/linux-unpacked" ]; then
-              tar -czf artifacts/aicmd-linux.tar.gz -C release/linux-unpacked .
-            fi
-            echo "=== 构建产物 ==="
-            find release -type f \( -name "*.zip" -o -name "*.tar.gz" -o -name "*.AppImage" -o -name "*.dmg" \) 2>/dev/null | head -20 || true
-            ls -la release/ 2>/dev/null || true
-            echo "=== artifacts ==="
-            ls -la artifacts/ 2>/dev/null || true
 
       endStages:
         - name: show build summary
           script: |
-            echo "✅ 构建完成"
+            echo "✅ 构建验证完成"
             echo "分支: ${CNB_BRANCH}"
             echo "提交: ${CNB_COMMIT}"
-            echo "构建产物目录: release/"
-            find release -maxdepth 2 -type d 2>/dev/null || true
+            find release -type f \( -name "*.AppImage" -o -name "*.deb" -o -name "*.yml" \) 2>/dev/null || true
 
-# tag 推送时构建（用于发布版本）
+# ============================================================
+# tag 推送时构建并发布 Release（与 GitHub Actions 一致）
+# ============================================================
 $:
   tag_push:
     - name: build-electron-release
       docker:
-        image: node:20
+        image: node:22
         volumes:
           - pnpm-store:/root/.local/share/pnpm/store/v3:rw
       env:
         ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
         CI: 'true'
       stages:
-        - name: install pnpm
-          script: npm i -g pnpm
+        # 1. 创建 Release（必须在构建之前，attachments 才能上传）
+        - name: create release
+          type: git:release
+          options:
+            title: AICmd ${CNB_BRANCH}
+            description: |
+              AICmd ${CNB_BRANCH} Release
 
+              ## Downloads
+              - **Linux**: `.AppImage` (免安装)
+              - **Windows/macOS**: 请前往 [GitHub Releases](https://github.com/fefeding/ai-cmd/releases) 下载
+
+        # 2. 安装构建环境
+        - name: install pnpm
+          script: npm i -g pnpm@10
+
+        - name: install build dependencies
+          script: |
+            apt-get update
+            apt-get install -y rpm fakeroot
+
+        # 3. 安装项目依赖
         - name: install dependencies
           script: pnpm install --no-frozen-lockfile
 
+        # 4. 构建前端 + 服务端
         - name: build application
           script: pnpm run build
 
@@ -77,25 +95,25 @@ $:
             cp package.json dist/package.json
             cd dist && npm install --omit=dev --no-audit --no-fund
 
+        # 5. 构建 Electron Linux 客户端
         - name: build electron linux client
           script: pnpm run electron:build -- --platform=linux
 
-        - name: package artifacts
-          script: |
-            mkdir -p artifacts
-            if [ -d "release/linux-unpacked" ]; then
-              tar -czf artifacts/aicmd-linux.tar.gz -C release/linux-unpacked .
-            fi
-            echo "=== 构建产物 ==="
-            find release -type f \( -name "*.zip" -o -name "*.tar.gz" -o -name "*.AppImage" -o -name "*.dmg" \) 2>/dev/null | head -20 || true
-            ls -la release/ 2>/dev/null || true
-            echo "=== artifacts ==="
-            ls -la artifacts/ 2>/dev/null || true
+        # 6. 上传构建产物到 Release
+        - name: upload artifacts to release
+          image: cnbcool/attachments:latest
+          settings:
+            attachments:
+              - "release/*.AppImage"
+              - "release/*.deb"
+              - "release/*.blockmap"
+              - "release/latest*.yml"
 
       endStages:
         - name: show release summary
           script: |
             echo "✅ 发布构建完成"
             echo "标签: ${CNB_BRANCH}"
-            echo "分支: ${CNB_BRANCH}"
             echo "提交: ${CNB_COMMIT}"
+            echo "=== 已上传的产物 ==="
+            find release -type f \( -name "*.AppImage" -o -name "*.deb" -o -name "*.yml" -o -name "*.blockmap" \) 2>/dev/null || true
