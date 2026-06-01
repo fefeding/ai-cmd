@@ -8,6 +8,7 @@
 
 const { app, BrowserWindow, shell, ipcMain, protocol, net, Menu } = require('electron');
 const path = require('path');
+const { initAutoUpdater } = require('./updater');
 
 // ========== 注册自定义协议（必须在 app.whenReady 之前） ==========
 // 解决 file:// 协议下绝对路径（/public/xxx.js）无法加载的问题
@@ -330,6 +331,12 @@ function setupMenu() {
         { label: 'Report Issue', click: () => shell.openExternal('https://github.com/fefeding/ai-cmd/issues') },
         { type: 'separator' },
         { label: 'About', click: () => shell.openExternal('https://aigcwhere.com/opensource/aicmd') },
+        { type: 'separator' },
+        { label: 'Check for Updates...', click: () => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('menu:action', 'check-update');
+          }
+        }},
       ],
     },
   ];
@@ -393,6 +400,9 @@ app.whenReady().then(() => {
   }
 
   createWindow(target);
+
+  // 初始化自动更新（生产模式启用，开发模式自动禁用）
+  initAutoUpdater({ isDev });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

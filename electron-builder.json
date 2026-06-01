@@ -5,6 +5,12 @@
   "directories": {
     "output": "release"
   },
+  "publish": {
+    "provider": "github",
+    "owner": "fefeding",
+    "repo": "ai-cmd",
+    "releaseType": "release"
+  },
   "files": [
     "electron/**/*",
     "dist/**/*",

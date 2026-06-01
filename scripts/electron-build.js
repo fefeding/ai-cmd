@@ -88,6 +88,7 @@ async function build() {
         npmRebuild: !!process.env.CI,
       },
       projectDir: projectRoot,
+      publish: 'never',
     });
 
     console.log('\n🎉 Build complete! Check the release/ directory.');
