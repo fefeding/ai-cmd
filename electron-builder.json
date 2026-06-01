@@ -29,7 +29,7 @@
         "arch": ["x64", "arm64"]
       }
     ],
-    "icon": "public/favicon.ico",
+    "icon": "public/favicon.icns",
     "hardenedRuntime": false
   },
   "win": {
@@ -49,7 +49,7 @@
       }
     ],
     "category": "Utility",
-    "icon": "public/favicon.ico"
+    "icon": "public/favicon.png"
   },
   "nsis": {
     "oneClick": false,

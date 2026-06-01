@@ -258,7 +258,7 @@ function createWindow(loadTarget) {
     minHeight: 600,
     show: false,
     title: 'AICmd - AI Terminal',
-    icon: path.join(__dirname, '..', 'public', 'favicon.ico'),
+    icon: path.join(__dirname, '..', 'public', process.platform === 'darwin' ? 'favicon.icns' : process.platform === 'win32' ? 'favicon.ico' : 'favicon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: true,
