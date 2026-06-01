@@ -11,9 +11,11 @@
           <button class="ai-tab" :class="{ active: activeTab === 'audit' }" @click="activeTab = 'audit'">
             <i class="bi bi-shield-check"></i> {{ t('audit.title') }}
           </button>
+          <!-- Monitor tab temporarily hidden
           <button class="ai-tab" :class="{ active: activeTab === 'monitor' }" @click="activeTab = 'monitor'">
             <i class="bi bi-activity"></i> {{ t('monitor.title') }}
           </button>
+          -->
         </div>
       </div>
       <div class="d-flex gap-1">

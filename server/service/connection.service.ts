@@ -249,24 +249,25 @@ export class ConnectionService {
   /**
    * Detect SSH agent socket for agent forwarding
    * - Linux/macOS: SSH_AUTH_SOCK environment variable
-   * - Windows: OpenSSH agent pipe or Pageant
+   * - Windows: OpenSSH agent pipe
    */
   private getSSHAgentSocket(): string | null {
     // Standard Unix SSH agent
     if (process.env.SSH_AUTH_SOCK) {
+      console.log(`[SSH] Agent socket found: ${process.env.SSH_AUTH_SOCK}`);
       return process.env.SSH_AUTH_SOCK;
     }
-    // Windows OpenSSH agent
+    // Windows OpenSSH agent - return pipe path directly, let ssh2 handle connection
     if (process.platform === 'win32') {
       const pipe = '\\\\.\\pipe\\openssh-ssh-agent';
-      try {
-        const fs = require('fs');
-        fs.statSync(pipe);
-        return pipe;
-      } catch {
-        // Pipe not available
-      }
+      console.log(`[SSH] Windows: using OpenSSH agent pipe: ${pipe}`);
+      console.log(`[SSH] If agent is not running, execute in PowerShell (Admin):`);
+      console.log(`[SSH]   Start-Service ssh-agent; Set-Service ssh-agent -StartupType Automatic`);
+      console.log(`[SSH]   ssh-add ~\\.ssh\\id_rsa`);
+      return pipe;
     }
+    console.warn('[SSH] No SSH agent detected. Agent forwarding will not work.');
+    console.warn('[SSH] Linux/macOS: eval $(ssh-agent) && ssh-add ~/.ssh/id_rsa');
     return null;
   }
 

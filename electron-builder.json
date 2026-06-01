@@ -59,7 +59,7 @@
   "asarUnpack": [
     "**/*.node",
     "**/node_modules/node-pty/**/*",
-    "**/node_modules/ssh2/**/*",
-    "**/node_modules/cpu-features/**/*"
-  ]
+    "**/node_modules/ssh2/**/*"
+  ],
+  "npmRebuild": false
 }

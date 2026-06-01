@@ -98,7 +98,6 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "cpu-features",
       "ssh2",
       "node-pty",
       "electron"

@@ -139,11 +139,11 @@ export class SSHService {
 
     // SSH 会话：后台自动捕获 MOTD 作为系统信息
     if (session.type === 'ssh') {
-      // If startup script is configured (e.g. jump host), delay MOTD capture to let it finish first
-      if (connection.startupScript?.trim()) {
-        setTimeout(() => this.startMOTDCapture(sessionId), 3000);
-      } else {
+      // Skip MOTD capture for startup script sessions (jump host) - system info collected on demand
+      if (!connection.startupScript?.trim()) {
         this.startMOTDCapture(sessionId);
+      } else {
+        console.log(`[SSH] Skipping MOTD capture for jump host session ${sessionId}, will collect on demand`);
       }
     }
 
@@ -477,9 +477,32 @@ export class SSHService {
   /**
    * 获取会话的系统上下文（确保每次都有）
    * 如果 session 没有缓存的环境信息，自动采集并持久化
+   * 对于 startupScript（跳板机）会话，始终主动采集以确保获取目标服务器信息
    */
   async getSystemContext(sessionId: string): Promise<string> {
     const meta = this.sessionMetadata.get(sessionId);
+
+    // Check if this is a jump host session (has startupScript)
+    let isJumpHost = false;
+    if (meta?.connectionId) {
+      try {
+        const conn = await this.connectionService.getConnectionById(meta.connectionId);
+        isJumpHost = !!conn?.startupScript?.trim();
+      } catch { /* ignore */ }
+    }
+
+    // For jump host sessions, always actively collect (cached data may be from jump host, not target)
+    if (isJumpHost) {
+      console.log(`[SSH] Jump host session ${sessionId}: actively collecting target server info`);
+      const info = await this.activeCollectRemoteSystemInfo(sessionId);
+      if (info && meta) {
+        meta.systemContext = info;
+        this.saveSessionsToDisk();
+      }
+      return info;
+    }
+
+    // Normal sessions: use cache if available
     if (meta?.systemContext) {
       return meta.systemContext;
     }
@@ -499,8 +522,8 @@ export class SSHService {
     // local 会话或未捕获的 SSH 会话
     let info: string;
     if (meta?.type === 'ssh') {
-      // SSH 但没有 pending，可能是重启后的旧 session，尝试重新捕获
-      info = await this.captureMOTD(sessionId);
+      // SSH 但没有 pending，主动运行命令采集系统信息
+      info = await this.activeCollectRemoteSystemInfo(sessionId);
     } else {
       info = this.collectLocalSystemInfo();
     }
@@ -538,6 +561,51 @@ export class SSHService {
       }
       return '';
     } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Active system info collection for SSH sessions (e.g. jump host)
+   * Sends a compact command to the remote terminal and captures the output
+   */
+  private async activeCollectRemoteSystemInfo(sessionId: string): Promise<string> {
+    const marker = '__AICMD_SYS__';
+    const cmd = `echo "${marker}:$(uname -s 2>/dev/null || echo unknown):$(uname -r 2>/dev/null || echo unknown):$(hostname 2>/dev/null || echo unknown):$(whoami 2>/dev/null || echo unknown):$SHELL:$(uname -m 2>/dev/null || echo unknown)"`;
+    try {
+      // Start capture, then send the command
+      const outputPromise = this.captureOutput(sessionId, 2000);
+      this.writeData(sessionId, cmd + '\n');
+      const output = await outputPromise;
+      // Extract our marker line
+      for (const line of output.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith(marker + ':')) {
+          const parts = trimmed.split(':');
+          if (parts.length >= 6) {
+            const info: Record<string, string> = {
+              'OS': parts[1],
+              'Kernel': parts[2],
+              'Hostname': parts[3],
+              'User': parts[4],
+              'Shell': parts[5],
+              'Arch': parts[6] || '',
+            };
+            const lines = ['System environment info:'];
+            for (const [key, val] of Object.entries(info)) {
+              if (val && val !== 'unknown') lines.push(`- ${key}: ${val}`);
+            }
+            const result = lines.join('\n');
+            console.log(`[SSH] Active system info collected for ${sessionId}:`, result);
+            return result;
+          }
+        }
+      }
+      // Fallback: try to parse as MOTD
+      if (output.trim()) return this.parseMOTD(output);
+      return '';
+    } catch (e) {
+      console.warn(`[SSH] Failed to actively collect system info for ${sessionId}:`, e);
       return '';
     }
   }
