@@ -329,15 +329,7 @@ function setupMenu() {
         { label: 'Documentation', click: () => shell.openExternal('https://github.com/fefeding/ai-cmd') },
         { label: 'Report Issue', click: () => shell.openExternal('https://github.com/fefeding/ai-cmd/issues') },
         { type: 'separator' },
-        { label: 'About', click: () => {
-          const { dialog } = require('electron');
-          dialog.showMessageBox(mainWindow, {
-            type: 'info',
-            title: 'AICmd',
-            message: 'AICmd - AI Terminal',
-            detail: `Version: ${app.getVersion()}\nAn AI-powered SSH terminal with autonomous agent.`,
-          });
-        }},
+        { label: 'About', click: () => shell.openExternal('https://aigcwhere.com/opensource/aicmd') },
       ],
     },
   ];
@@ -347,7 +339,7 @@ function setupMenu() {
     template.unshift({
       label: app.name,
       submenu: [
-        { role: 'about' },
+        { label: 'About AICmd', click: () => shell.openExternal('https://aigcwhere.com/opensource/aicmd') },
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
