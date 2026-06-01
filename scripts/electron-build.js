@@ -45,22 +45,16 @@ async function build() {
     // 2. Pre-rebuild only node-pty for Electron (cpu-features is optional and may fail without VS Build Tools)
     console.log('\n2. Rebuilding node-pty for Electron...');
     try {
-      // Use node to find and run @electron/rebuild
-      const { execSync: exec } = require('child_process');
-      // Try npx first, fallback to direct path
-      try {
-        exec('npx --yes @electron/rebuild -m . -w node-pty', { stdio: 'inherit', cwd: projectRoot });
-      } catch {
-        // Try pnpm exec
-        try {
-          exec('pnpm exec electron-rebuild -m . -w node-pty', { stdio: 'inherit', cwd: projectRoot });
-        } catch {
-          console.warn('Warning: @electron/rebuild not available. node-pty may need manual rebuild for Electron.');
-          console.warn('Install build tools and run: npx @electron/rebuild -m . -w node-pty');
-        }
+      // In CI, use npmRebuild=true (build tools available). Locally, do targeted rebuild.
+      if (process.env.CI) {
+        console.log('CI environment detected, node-pty will be rebuilt by electron-builder');
+      } else {
+        // Try npx with auto-install, fallback gracefully
+        execSync('npx --yes @electron/rebuild@3 -m . -w node-pty', { stdio: 'inherit', cwd: projectRoot });
       }
     } catch (e) {
       console.warn('Warning: node-pty rebuild failed, continuing anyway...');
+      console.warn('For proper native module support, install build tools and run: npx @electron/rebuild -m . -w node-pty');
     }
 
     // 3. 使用 electron-builder 打包
@@ -92,7 +86,11 @@ async function build() {
 
     await builder.build({
       targets,
-      config: resolve(projectRoot, 'electron-builder.json'),
+      config: {
+        ...require(resolve(projectRoot, 'electron-builder.json')),
+        // In CI, enable native module rebuild (build tools available)
+        npmRebuild: !!process.env.CI,
+      },
       projectDir: projectRoot,
     });
 
