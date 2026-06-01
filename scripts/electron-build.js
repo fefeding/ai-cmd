@@ -44,19 +44,13 @@ async function build() {
     console.log('1. Building Vue app + server...');
     execSync('npm run build', { stdio: 'inherit', cwd: projectRoot });
 
-    // 2. Pre-rebuild only node-pty for Electron (cpu-features is optional and may fail without VS Build Tools)
-    console.log('\n2. Rebuilding node-pty for Electron...');
-    try {
-      // In CI, use npmRebuild=true (build tools available). Locally, do targeted rebuild.
-      if (process.env.CI) {
-        console.log('CI environment detected, node-pty will be rebuilt by electron-builder');
-      } else {
-        // Try npx with auto-install, fallback gracefully
-        execSync('npx --yes @electron/rebuild@3 -m . -w node-pty', { stdio: 'inherit', cwd: projectRoot });
-      }
-    } catch (e) {
-      console.warn('Warning: node-pty rebuild failed, continuing anyway...');
-      console.warn('For proper native module support, install build tools and run: npx @electron/rebuild -m . -w node-pty');
+    // 2. Rebuild native modules for Electron (CI only)
+    console.log('\n2. Rebuilding native modules for Electron...');
+    if (process.env.CI) {
+      console.log('CI environment detected, native modules will be rebuilt by electron-builder');
+    } else {
+      console.log('Local build: skipping native module rebuild (npmRebuild=false)');
+      console.log('Pre-built modules from pnpm install will be used directly.');
     }
 
     // 3. 使用 electron-builder 打包

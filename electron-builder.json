@@ -14,13 +14,7 @@
     "bootstrap.js",
     "package.json"
   ],
-  "extraResources": [
-    {
-      "from": "patches",
-      "to": "patches",
-      "filter": ["**/*"]
-    }
-  ],
+
   "mac": {
     "category": "public.app-category.productivity",
     "target": [
