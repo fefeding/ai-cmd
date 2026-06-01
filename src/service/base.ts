@@ -10,7 +10,10 @@ export function getRequestUrl(api: string) {
 }
 
 export async function requestServer(url: string, data?: any, option?: AxiosRequestConfig) {
-    if (isNWjs || isElectron) {
+    // Electron 生产模式：直接 require 服务端模块（避免 HTTP 开销）
+    // Electron 开发模式 / Web 模式：走 HTTP 请求到开发服务器
+    const isElectronProduction = isElectron && window.electronAPI?.isPackaged;
+    if (isNWjs || isElectronProduction) {
         try {
             const apiPath = url.replace(/^(http(s)?:)?\/\//, '').replace(/.*?\/api\//, '/api/');
             let server;

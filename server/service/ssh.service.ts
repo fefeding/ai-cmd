@@ -139,7 +139,12 @@ export class SSHService {
 
     // SSH 会话：后台自动捕获 MOTD 作为系统信息
     if (session.type === 'ssh') {
-      this.startMOTDCapture(sessionId);
+      // If startup script is configured (e.g. jump host), delay MOTD capture to let it finish first
+      if (connection.startupScript?.trim()) {
+        setTimeout(() => this.startMOTDCapture(sessionId), 3000);
+      } else {
+        this.startMOTDCapture(sessionId);
+      }
     }
 
     return session;
@@ -162,6 +167,12 @@ export class SSHService {
         if (nodePty) {
           try {
             const isWindows = process.platform === 'win32';
+            
+            // Windows: 设置 UTF-8 代码页环境变量，避免中文乱码
+            if (isWindows) {
+              cleanEnv.CHCP = '65001';
+            }
+            
             const ptyProcess = nodePty.spawn(shell, 
               isWindows && shell.includes('powershell') ? ['-NoLogo'] : [],
               {
@@ -183,6 +194,18 @@ export class SSHService {
             };
 
             this.sessions.set(sessionId, session);
+
+            // Windows: 启动时执行 chcp 65001 设置 UTF-8 编码
+            if (isWindows) {
+              setTimeout(() => {
+                ptyProcess.write('chcp 65001\r\n');
+                // PowerShell: 额外设置输出编码
+                if (shell.includes('powershell')) {
+                  ptyProcess.write('[Console]::OutputEncoding = [Text.Encoding]::UTF8\r\n');
+                }
+                ptyProcess.write('cls\r\n');
+              }, 100);
+            }
 
             ptyProcess.onExit(() => {
               this.sessions.delete(sessionId);
@@ -246,11 +269,17 @@ export class SSHService {
       client.on('ready', () => {
         clearTimeout(timeout);
 
-        client.shell({
+        const shellOpts: any = {
           term: 'xterm-256color',
           cols,
           rows,
-        }, (err: Error | undefined, stream: ClientChannel) => {
+        };
+        // Enable SSH agent forwarding in the shell session
+        if (connection.forwardAgent) {
+          shellOpts.agentForward = true;
+        }
+
+        client.shell(shellOpts, (err: Error | undefined, stream: ClientChannel) => {
           if (err) {
             client.end();
             reject(err);
@@ -272,6 +301,18 @@ export class SSHService {
           stream.on('close', () => {
             this.sessions.delete(sessionId);
           });
+
+          // Execute startup script if configured (e.g. jump host SSH hop)
+          if (connection.startupScript && connection.startupScript.trim()) {
+            const script = connection.startupScript.trim();
+            console.log(`[SSH] Executing startup script for session ${sessionId}: ${script.substring(0, 80)}`);
+            // Delay slightly to let the remote shell fully initialize
+            setTimeout(() => {
+              if (this.sessions.has(sessionId)) {
+                stream.write(script + '\n');
+              }
+            }, 800);
+          }
 
           resolve(session);
         });
@@ -642,6 +683,7 @@ export class SSHService {
    */
   private collectWindowsSystemInfo(): string {
     const psScript = `
+[Console]::OutputEncoding = [Text.Encoding]::UTF8;
 $os = (Get-CimInstance Win32_OperatingSystem).Caption
 $kernel = [System.Environment]::OSVersion.Version.ToString()
 $hostname = $env:COMPUTERNAME
@@ -669,13 +711,13 @@ Write-Output "__DOCKER__: $dockerVer"
 
     try {
       const result = execSync(
-        `powershell.exe -NoProfile -NonInteractive -Command "${psScript.replace(/"/g, '\\"').replace(/\n/g, '; ')}"`,
+        `chcp 65001 >nul & powershell.exe -NoProfile -NonInteractive -Command "${psScript.replace(/"/g, '\\"').replace(/\n/g, '; ')}"`,
         { encoding: 'utf-8', timeout: 10000 }
       );
       return this.formatSystemInfo(result);
     } catch {
       try {
-        const basic = execSync('systeminfo | findstr /B /C:"OS Name" /C:"OS Version" /C:"System Type"', {
+        const basic = execSync('chcp 65001 >nul & systeminfo | findstr /B /C:"OS Name" /C:"OS Version" /C:"System Type"', {
           encoding: 'utf-8', timeout: 15000,
         });
         return `Basic system info:\n${basic}`;

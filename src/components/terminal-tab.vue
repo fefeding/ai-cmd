@@ -7,6 +7,7 @@
       v-if="status === 'connected'" 
       class="ai-toggle-btn" 
       :class="{ active: showAIChat }"
+      :style="showAIChat ? { right: (aiChatWidth + 12) + 'px' } : {}"
       @click="toggleAIChat"
       :title="t('ai.chat')"
     >
@@ -14,7 +15,8 @@
     </button>
 
     <!-- AI 对话面板 -->
-    <div v-show="showAIChat" class="ai-chat-wrapper">
+    <div v-show="showAIChat" class="ai-chat-wrapper" :style="{ width: aiChatWidth + 'px' }" ref="aiChatWrapperRef">
+      <div class="ai-resize-handle" @mousedown="startResize"></div>
       <AIChat
         ref="aiChatRef"
         :sessionId="sessionId || tabId"
@@ -311,9 +313,9 @@ function initSentry() {
   console.log('[ZMODEM] Sentry initialized:', !!sentry);
 }
 
-// 检测是否在 Electron 中（桌面客户端统一用 IPC，Web 端用 WebSocket）
+// 检测是否在 Electron 生产模式中（桌面客户端生产模式用 IPC，开发模式/Web 端用 WebSocket）
 function isElectronIPC(): boolean {
-  return !!(window as any).electronAPI?.isElectron;
+  return !!((window as any).electronAPI?.isElectron && (window as any).electronAPI?.isPackaged);
 }
 
 /**
@@ -779,12 +781,12 @@ watch(() => props.active, (val) => {
 onMounted(() => {
   initTerminal();
 
-  // ResizeObserver 监听容器大小变化
-  if (terminalWrapper.value) {
+  // ResizeObserver 监听容器大小变化（监听 terminal-container，因为 flex 布局下它会随 AI 面板开合而变化）
+  if (terminalContainer.value) {
     resizeObserver = new ResizeObserver(() => {
       if (props.active) fit();
     });
-    resizeObserver.observe(terminalWrapper.value);
+    resizeObserver.observe(terminalContainer.value);
   }
 
   // 建立 WebSocket 连接
@@ -802,6 +804,37 @@ onBeforeUnmount(() => {
 defineExpose({ focus, fit, writeToTerminal, getTerminal, getZmodemSession, getZmodemRole, getSentry, sendToServer, get sessionId() { return sessionId; } });
 
 // AI 相关方法
+const aiChatWrapperRef = ref<HTMLElement>();
+const aiChatWidth = ref(380);
+const AI_CHAT_MIN_WIDTH = 280;
+const AI_CHAT_MAX_WIDTH_RATIO = 0.6; // 最大宽度为容器的 60%
+
+function startResize(e: MouseEvent) {
+  e.preventDefault();
+  const startX = e.clientX;
+  const startWidth = aiChatWidth.value;
+  const containerWidth = terminalWrapper.value?.clientWidth || 800;
+  const maxWidth = containerWidth * AI_CHAT_MAX_WIDTH_RATIO;
+
+  const onMouseMove = (ev: MouseEvent) => {
+    const delta = startX - ev.clientX; // 向左拖 = 宽度增加
+    const newWidth = Math.min(Math.max(startWidth + delta, AI_CHAT_MIN_WIDTH), maxWidth);
+    aiChatWidth.value = newWidth;
+  };
+
+  const onMouseUp = () => {
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  };
+
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+}
+
 function toggleAIChat() {
   showAIChat.value = !showAIChat.value;
 }
@@ -843,12 +876,15 @@ function handleAISend(msg: any) {
   height: 100%;
   position: relative;
   overflow: hidden;
+  display: flex;
 }
 
 .terminal-container {
-  width: 100%;
+  flex: 1;
   height: 100%;
   padding: 4px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .terminal-status {
@@ -881,7 +917,7 @@ function handleAISend(msg: any) {
   align-items: center;
   justify-content: center;
   font-size: 18px;
-  transition: all 0.2s;
+  transition: all 0.2s, right 0.15s ease;
   z-index: 20;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
@@ -899,13 +935,31 @@ function handleAISend(msg: any) {
 
 /* AI 对话面板包装器 */
 .ai-chat-wrapper {
-  position: absolute;
-  top: 0;
-  right: 0;
+  position: relative;
   width: 380px;
+  min-width: 280px;
   height: 100%;
+  flex-shrink: 0;
   z-index: 15;
   will-change: transform;
   transform: translateZ(0);
+}
+
+/* AI 拖拽调整宽度的手柄 */
+.ai-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 20;
+  background: transparent;
+  transition: background 0.2s;
+}
+.ai-resize-handle:hover,
+.ai-resize-handle:active {
+  background: var(--accent, #89b4fa);
+  opacity: 0.6;
 }
 </style>

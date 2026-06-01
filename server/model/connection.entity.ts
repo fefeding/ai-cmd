@@ -36,6 +36,12 @@ export class ConnectionEntity {
   /** 本地 shell 路径（仅 type='local' 时使用） */
   shell?: string;
 
+  /** 连接后自动执行的脚本（如跳板机跳转命令） */
+  startupScript?: string;
+
+  /** 是否启用 SSH Agent 转发（用于跳板机密钥认证） */
+  forwardAgent?: boolean;
+
   /** 终端配置 */
   terminal: {
     cols: number;

@@ -102,6 +102,11 @@ export default {
     nameRequired: 'Please enter a connection name',
     hostUsernameRequired: 'Please enter host address and username',
     hostUsernameTestRequired: 'Please enter host and username first',
+    startupScript: 'Startup Script',
+    startupScriptPlaceholder: 'Jump host example: ssh 192.168.1.100\nOther example: cd /data && source env.sh',
+    startupScriptHint: 'Command to execute after SSH connection is established. Useful for jump host hopping, auto cd to working directory, etc.',
+    forwardAgent: 'SSH Agent Forwarding',
+    forwardAgentHint: 'Forward local SSH keys to remote server for key-based authentication on jump host hops',
   },
   fileTransfer: {
     title: 'File Transfer',

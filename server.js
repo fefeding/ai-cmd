@@ -256,24 +256,23 @@ wss.on('connection', async (ws, req) => {
         }
 
         case 'ai-agent-run': {
-          // AI Agent 运行
-          const { aiSessionId, message, context, skillId } = data || {};
+          // AI Agent run
+          const { aiSessionId, message, context, skillId, locale } = data || {};
           if (!aiSessionId || !message) {
-            ws.send(JSON.stringify({ type: 'ai-agent-event', event: { type: 'error', error: '缺少参数' } }));
+            ws.send(JSON.stringify({ type: 'ai-agent-event', event: { type: 'error', error: 'Missing params' } }));
             break;
           }
           const { aiService } = serverModule;
           if (!aiService) {
-            ws.send(JSON.stringify({ type: 'ai-agent-event', event: { type: 'error', error: 'AI 服务不可用' } }));
+            ws.send(JSON.stringify({ type: 'ai-agent-event', event: { type: 'error', error: 'AI service unavailable' } }));
             break;
           }
-          console.log(`[WS] AI Agent run: session=${aiSessionId}, skill=${skillId || 'none'}, message=${message.substring(0, 50)}`);
-          // 异步运行 Agent，通过回调推送事件
+          console.log(`[WS] AI Agent run: session=${aiSessionId}, skill=${skillId || 'none'}, locale=${locale || 'auto'}, message=${message.substring(0, 50)}`);
           aiService.agentRun(aiSessionId, message, context, (event) => {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'ai-agent-event', sessionId: aiSessionId, event }));
             }
-          }, skillId).catch((err) => {
+          }, skillId, locale).catch((err) => {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'ai-agent-event', sessionId: aiSessionId, event: { type: 'error', error: err.message } }));
             }

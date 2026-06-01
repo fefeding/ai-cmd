@@ -101,7 +101,7 @@ import { useI18n } from 'vue-i18n';
 import { startMonitor, stopMonitor, getMonitorBatch, type MonitorAlert } from '@/service/monitor';
 import * as aiService from '@/service/ai';
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 const props = defineProps<{
   sessionId: string;
@@ -242,7 +242,7 @@ async function triggerAIAnalysis() {
     }
 
     // 通过 AI Agent 分析日志
-    const analysisPrompt = `请分析以下日志片段，指出其中的异常、错误或潜在问题，并给出建议：\n\n\`\`\`\n${batchLines.join('\n')}\n\`\`\``;
+    const analysisPrompt = `Please analyze the following log snippet, identify any anomalies, errors, or potential issues, and provide recommendations:\n\n\`\`\`\n${batchLines.join('\n')}\n\`\`\``;
 
     // 使用 ws-send 启动 AI Agent 分析
     emit('ws-send', {
@@ -251,6 +251,7 @@ async function triggerAIAnalysis() {
         aiSessionId: props.sessionId,
         message: analysisPrompt,
         context: '',
+        locale: locale.value,
       },
     });
 

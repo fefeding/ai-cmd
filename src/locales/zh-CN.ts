@@ -102,6 +102,11 @@ export default {
     nameRequired: '请填写连接名称',
     hostUsernameRequired: '请填写主机地址和用户名',
     hostUsernameTestRequired: '请先填写主机和用户名',
+    startupScript: '连接后自动执行脚本',
+    startupScriptPlaceholder: '跳板机示例：ssh 192.168.1.100\n其他示例：cd /data && source env.sh',
+    startupScriptHint: 'SSH 连接建立后自动执行的命令，常用于跳板机跳转、自动切换目录等场景',
+    forwardAgent: 'SSH Agent 转发',
+    forwardAgentHint: '将本机 SSH 密钥转发到远程服务器，用于跳板机跳转时的密钥认证',
   },
   fileTransfer: {
     title: '文件传输',

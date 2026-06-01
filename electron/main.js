@@ -6,7 +6,7 @@
  * 开发模式：连接 Vite 开发服务器（API 走 HTTP，终端走 WebSocket）
  */
 
-const { app, BrowserWindow, shell, ipcMain, protocol, net } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, protocol, net, Menu } = require('electron');
 const path = require('path');
 
 // ========== 注册自定义协议（必须在 app.whenReady 之前） ==========
@@ -27,6 +27,11 @@ let _services = null;
 
 function getServices() {
   if (_services) return _services;
+  if (isDev) {
+    // 开发模式下服务端由 Vite 开发服务器提供，主进程不加载
+    console.warn('[Electron] Dev mode: services are provided by Vite dev server, IPC disabled');
+    return null;
+  }
   // 加载编译后的服务端模块（生产模式从 dist/ 加载）
   const serverModule = require(path.join(__dirname, '..', 'dist', 'server', 'index.js'));
   _services = {
@@ -56,6 +61,10 @@ function setupTerminalIPC() {
 
     const { type, sessionId: sid, data } = msg;
     const services = getServices();
+    if (!services) {
+      send({ type: 'error', data: 'Services not available (dev mode - use Vite WebSocket instead)' });
+      return;
+    }
     const { sshService, aiService, monitorService } = services;
 
     try {
@@ -187,14 +196,14 @@ function setupTerminalIPC() {
         }
 
         case 'ai-agent-run': {
-          const { aiSessionId, message, context, skillId } = data || {};
+          const { aiSessionId, message, context, skillId, locale } = data || {};
           if (!aiSessionId || !message) {
             send({ type: 'ai-agent-event', event: { type: 'error', error: 'Missing params' } });
             return;
           }
           aiService.agentRun(aiSessionId, message, context, (agentEvent) => {
             send({ type: 'ai-agent-event', sessionId: aiSessionId, event: agentEvent });
-          }, skillId).catch((err) => {
+          }, skillId, locale).catch((err) => {
             send({ type: 'ai-agent-event', sessionId: aiSessionId, event: { type: 'error', error: err.message } });
           });
           break;
@@ -220,7 +229,7 @@ function setupTerminalIPC() {
 
 function setupMonitorEvents() {
   const services = getServices();
-  if (services.monitorService) {
+  if (services?.monitorService) {
     services.monitorService.onEvent((sid, event) => {
       // 广播到所有窗口（简化处理）
       BrowserWindow.getAllWindows().forEach(win => {
@@ -238,12 +247,14 @@ function cleanupWindow(win) {
   const sessions = windowSessions.get(win.id);
   if (sessions) {
     const services = getServices();
-    sessions.forEach(sid => {
-      try {
-        services.monitorService.stopSessionMonitors(sid);
-        services.sshService.closeSession(sid);
-      } catch (e) { /* ignore */ }
-    });
+    if (services) {
+      sessions.forEach(sid => {
+        try {
+          services.monitorService.stopSessionMonitors(sid);
+          services.sshService.closeSession(sid);
+        } catch (e) { /* ignore */ }
+      });
+    }
     windowSessions.delete(win.id);
   }
 }
@@ -296,6 +307,63 @@ function createWindow(loadTarget) {
   }
 }
 
+// ========== 应用菜单 ==========
+
+function setupMenu() {
+  const template = [
+    {
+      label: 'File',
+      submenu: [
+        { label: 'New Connection', accelerator: 'CmdOrCtrl+N', click: () => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('menu:action', 'new-connection');
+          }
+        }},
+        { type: 'separator' },
+        { role: 'quit', label: 'Quit' },
+      ],
+    },
+    {
+      label: 'Help',
+      submenu: [
+        { label: 'Documentation', click: () => shell.openExternal('https://github.com/fefeding/ai-cmd') },
+        { label: 'Report Issue', click: () => shell.openExternal('https://github.com/fefeding/ai-cmd/issues') },
+        { type: 'separator' },
+        { label: 'About', click: () => {
+          const { dialog } = require('electron');
+          dialog.showMessageBox(mainWindow, {
+            type: 'info',
+            title: 'AICmd',
+            message: 'AICmd - AI Terminal',
+            detail: `Version: ${app.getVersion()}\nAn AI-powered SSH terminal with autonomous agent.`,
+          });
+        }},
+      ],
+    },
+  ];
+
+  // macOS 需要添加 app 菜单
+  if (process.platform === 'darwin') {
+    template.unshift({
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    });
+  }
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
+
 // ========== 应用生命周期 ==========
 
 app.whenReady().then(() => {
@@ -308,12 +376,17 @@ app.whenReady().then(() => {
   });
 
   setupTerminalIPC();
+  setupMenu();
 
-  // 初始化服务（加载模块）
+  // 初始化服务（仅生产模式加载模块，开发模式由 Vite 提供）
   try {
-    getServices();
-    setupMonitorEvents();
-    console.log('[Electron] Services initialized');
+    const services = getServices();
+    if (services) {
+      setupMonitorEvents();
+      console.log('[Electron] Services initialized (production mode)');
+    } else {
+      console.log('[Electron] Services skipped (dev mode - using Vite dev server)');
+    }
   } catch (e) {
     console.error('[Electron] Failed to initialize services:', e.message);
   }

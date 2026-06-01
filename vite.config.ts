@@ -274,16 +274,16 @@ const config = defineConfig({
                                     break;
                                 }
                                 case 'ai-agent-run': {
-                                    const { aiSessionId, message, context, skillId } = data || {};
+                                    const { aiSessionId, message, context, skillId, locale } = data || {};
                                     if (!aiSessionId || !message) {
-                                        ws.send(JSON.stringify({ type: 'ai-agent-event', event: { type: 'error', error: '缺少参数' } }));
+                                        ws.send(JSON.stringify({ type: 'ai-agent-event', event: { type: 'error', error: 'Missing params' } }));
                                         break;
                                     }
                                     aiService.agentRun(aiSessionId, message, context, (event: any) => {
                                         if (ws.readyState === WebSocket.OPEN) {
                                             ws.send(JSON.stringify({ type: 'ai-agent-event', sessionId: aiSessionId, event }));
                                         }
-                                    }, skillId).catch((err: any) => {
+                                    }, skillId, locale).catch((err: any) => {
                                         if (ws.readyState === WebSocket.OPEN) {
                                             ws.send(JSON.stringify({ type: 'ai-agent-event', sessionId: aiSessionId, event: { type: 'error', error: err.message } }));
                                         }

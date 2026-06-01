@@ -202,7 +202,7 @@ import * as aiService from '@/service/ai';
 import AuditPanel from '@/components/audit-panel/index.vue';
 import LogMonitor from '@/components/log-monitor/index.vue';
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 const props = defineProps<{
   sessionId: string;
@@ -460,6 +460,7 @@ function handleSend() {
       message: actualMessage,
       context: context.substring(-3000),
       skillId: activeSkill?.id,
+      locale: locale.value,
     },
   });
 

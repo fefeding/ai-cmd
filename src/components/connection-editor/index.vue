@@ -4,7 +4,7 @@
     :title="editingConnection ? t('connection.editTitle') : t('connection.addTitle')"
     :closeButton="{ text: t('common.cancel'), show: false }"
     :confirmButton="{ text: '', show: false }"
-    :style="{ maxWidth: '700px', width: '100%' }"
+    :dialogStyle="{ maxWidth: '700px', width: '100%' }"
     @onClose="handleModalClose"
   >
     <form @submit.prevent="saveConnection" class="connection-form">
@@ -67,6 +67,29 @@
             </button>
           </div>
         </div>
+
+      <!-- 连接后自动执行脚本 -->
+      <div class="card mb-3">
+        <div class="card-header" @click="showStartupScript = !showStartupScript" style="cursor: pointer;">
+          <i class="bi bi-lightning-charge me-1"></i>{{ t('connection.startupScript') }}
+          <i :class="showStartupScript ? 'bi bi-chevron-up float-end' : 'bi bi-chevron-down float-end'"></i>
+        </div>
+        <div class="card-body" v-show="showStartupScript">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" v-model="form.forwardAgent" id="forwardAgent">
+            <label class="form-check-label" for="forwardAgent">
+              <i class="bi bi-arrow-repeat me-1"></i>{{ t('connection.forwardAgent') }}
+            </label>
+            <small class="form-text text-muted d-block">
+              <i class="bi bi-info-circle me-1"></i>{{ t('connection.forwardAgentHint') }}
+            </small>
+          </div>
+          <textarea class="form-control" v-model="form.startupScript" rows="3" :placeholder="t('connection.startupScriptPlaceholder')"></textarea>
+          <small class="form-text text-muted mt-1 d-block">
+            <i class="bi bi-info-circle me-1"></i>{{ t('connection.startupScriptHint') }}
+          </small>
+        </div>
+      </div>
 
       <!-- 终端配置 -->
       <div class="card mb-3">
@@ -136,6 +159,7 @@ const { t } = useI18n();
 const connectionModal = ref();
 const editingConnection = ref<string | null>(null);
 const showTerminalConfig = ref(false);
+const showStartupScript = ref(false);
 const testing = ref(false);
 const saving = ref(false);
 
@@ -149,6 +173,8 @@ const defaultForm = () => ({
   password: '',
   privateKey: '',
   passphrase: '',
+  startupScript: '',
+  forwardAgent: false,
   terminal: {
     cols: 80, rows: 24, fontSize: 14,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
@@ -167,9 +193,11 @@ function open(connection?: any) {
   if (connection) {
     editingConnection.value = connection.id;
     Object.assign(form, defaultForm(), connection);
+    showStartupScript.value = !!connection.startupScript || !!connection.forwardAgent;
   } else {
     editingConnection.value = null;
     Object.assign(form, defaultForm());
+    showStartupScript.value = false;
   }
   connectionModal.value?.show();
 }
