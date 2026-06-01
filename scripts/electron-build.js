@@ -15,12 +15,14 @@ const { execSync } = require('child_process');
 
 const projectRoot = resolve(__dirname, '..');
 
-// Use Chinese mirror for Electron downloads if not already set
-if (!process.env.ELECTRON_MIRROR) {
-  process.env.ELECTRON_MIRROR = 'https://npmmirror.com/mirrors/electron/';
-}
-if (!process.env.ELECTRON_BUILDER_BINARIES_MIRROR) {
-  process.env.ELECTRON_BUILDER_BINARIES_MIRROR = 'https://npmmirror.com/mirrors/electron-builder-binaries/';
+// Use Chinese mirror for local builds (outside CI). GitHub Actions runners can access GitHub directly.
+if (!process.env.CI) {
+  if (!process.env.ELECTRON_MIRROR) {
+    process.env.ELECTRON_MIRROR = 'https://npmmirror.com/mirrors/electron/';
+  }
+  if (!process.env.ELECTRON_BUILDER_BINARIES_MIRROR) {
+    process.env.ELECTRON_BUILDER_BINARIES_MIRROR = 'https://npmmirror.com/mirrors/electron-builder-binaries/';
+  }
 }
 
 const args = process.argv.slice(2);
