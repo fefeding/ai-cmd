@@ -234,4 +234,12 @@ export default {
     hint: 'Select multiple servers, enter a command and execute to operate on multiple servers at once',
     copyOutput: 'Copy Output',
   },
+  update: {
+    available: 'New version v{version} available, downloading...',
+    downloading: 'Downloading update... {percent}%',
+    downloaded: 'v{version} downloaded, restart to apply',
+    error: 'Update check failed',
+    restart: 'Restart',
+    later: 'Later',
+  },
 };

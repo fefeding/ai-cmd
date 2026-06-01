@@ -234,4 +234,12 @@ export default {
     hint: '选择多个服务器，输入命令并执行，可同时操作多台服务器',
     copyOutput: '复制输出',
   },
+  update: {
+    available: '新版本 v{version} 可用，正在下载...',
+    downloading: '正在下载更新... {percent}%',
+    downloaded: 'v{version} 已下载完成，重启即可更新',
+    error: '检查更新失败',
+    restart: '立即重启',
+    later: '稍后',
+  },
 };
