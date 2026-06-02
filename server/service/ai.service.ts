@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import axios from 'axios';
-import { getDataDir, getDataPath, ensureDataDir } from '../utils/data-dir';
+import { getDataDir, getDataPath, ensureDataDir, ensureDir } from '../utils/data-dir';
 import { AuditService, type AuditEntry } from './audit.service';
 
 /**
@@ -256,7 +256,7 @@ Response format (important):
     this.loadConfig();
     // 确保历史目录存在
     try { if (!fs.existsSync(this.historyDir)) fs.mkdirSync(this.historyDir, { recursive: true }); } catch (_) { /* ignore */ }
-    try { if (!fs.existsSync(this.messagesDir)) fs.mkdirSync(this.messagesDir, { recursive: true }); } catch (_) { /* ignore */ }
+    ensureDir(this.messagesDir);
     this.cleanupOldHistories();
     this.registerBuiltinTools();
   }
@@ -645,6 +645,7 @@ Response format (important):
    */
   private saveChatMessages(sessionId: string, messages: ChatMessage[]): void {
     try {
+      ensureDir(this.messagesDir);
       const safe = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
       const filePath = path.join(this.messagesDir, `${safe}.json`);
       const data = {
@@ -653,8 +654,8 @@ Response format (important):
         messages,
       };
       fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
-    } catch (error) {
-      console.error('[AIService] Failed to save chat messages:', error);
+    } catch (_) {
+      // 静默失败，不影响主流程
     }
   }
 
@@ -663,20 +664,19 @@ Response format (important):
    */
   private loadChatMessages(sessionId: string): ChatMessage[] | null {
     try {
+      if (!fs.existsSync(this.messagesDir)) return null;
       const safe = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
       const filePath = path.join(this.messagesDir, `${safe}.json`);
       if (!fs.existsSync(filePath)) return null;
       const raw = fs.readFileSync(filePath, 'utf-8');
       const data = JSON.parse(raw);
       if (data && Array.isArray(data.messages)) {
-        // 截取最后 MAX_MESSAGES 条
         return data.messages.length > this.MAX_MESSAGES
           ? data.messages.slice(data.messages.length - this.MAX_MESSAGES)
           : data.messages;
       }
       return null;
-    } catch (error) {
-      console.error('[AIService] Failed to load chat messages:', error);
+    } catch (_) {
       return null;
     }
   }
@@ -691,8 +691,8 @@ Response format (important):
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
       }
-    } catch (error) {
-      console.error('[AIService] Failed to delete chat messages file:', error);
+    } catch (_) {
+      // 静默失败
     }
   }
 

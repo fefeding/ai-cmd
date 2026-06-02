@@ -37,6 +37,30 @@ export function getDataPath(...segments: string[]): string {
 }
 
 /**
+ * 确保指定目录存在且可写
+ * - 目录不存在时递归创建
+ * - 权限不足时尝试修复为 0o755
+ * - 全部失败返回 false，不抛异常
+ */
+export function ensureDir(dir: string): boolean {
+  try {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    // 检查是否可写
+    try {
+      fs.accessSync(dir, fs.constants.W_OK);
+    } catch {
+      try { fs.chmodSync(dir, 0o755); } catch (_) { /* 无权限修复则忽略 */ }
+    }
+    return true;
+  } catch (e: any) {
+    console.warn(`[data-dir] Cannot create/fix directory (${dir}): ${e.message}`);
+    return false;
+  }
+}
+
+/**
  * 递归修复目录及文件权限：目录 755，文件 644
  */
 export function fixPermissions(dir?: string): void {
