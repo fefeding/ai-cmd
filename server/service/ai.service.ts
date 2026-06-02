@@ -157,7 +157,11 @@ export class AIService {
   private configPath: string;
   private config: AIConfig;
   private historyDir: string;
+  /** LLM 上下文消息持久化目录（项目执行目录下 data/messages） */
+  private messagesDir: string;
   private chatHistories: Map<string, ChatHistory> = new Map();
+  /** 已从文件加载过的 sessionId 集合 */
+  private loadedSessions = new Set<string>();
   private agentStates: Map<string, AgentRunState> = new Map();
   private toolRegistry: Map<string, RegisteredTool> = new Map();
   private sshService?: ISSHService;
@@ -244,6 +248,7 @@ Response format (important):
     this.configDir = getDataDir();
     this.configPath = getDataPath('ai-config.json');
     this.historyDir = getDataPath('ai-history');
+    this.messagesDir = path.resolve('data', 'messages');
     this.config = this.getDefaultConfig();
     this.sshService = sshService;
     this.skillService = skillService;
@@ -251,6 +256,7 @@ Response format (important):
     this.loadConfig();
     // 确保历史目录存在
     try { if (!fs.existsSync(this.historyDir)) fs.mkdirSync(this.historyDir, { recursive: true }); } catch (_) { /* ignore */ }
+    try { if (!fs.existsSync(this.messagesDir)) fs.mkdirSync(this.messagesDir, { recursive: true }); } catch (_) { /* ignore */ }
     this.cleanupOldHistories();
     this.registerBuiltinTools();
   }
@@ -597,8 +603,15 @@ Response format (important):
   private getOrCreateHistory(sessionId: string): ChatHistory {
     let history = this.chatHistories.get(sessionId);
     if (!history) {
-      history = { sessionId, messages: [], lastActive: Date.now() };
+      // 首次访问，尝试从文件加载
+      const saved = this.loadChatMessages(sessionId);
+      history = {
+        sessionId,
+        messages: saved || [],
+        lastActive: Date.now(),
+      };
       this.chatHistories.set(sessionId, history);
+      this.loadedSessions.add(sessionId);
     }
     history.lastActive = Date.now();
     return history;
@@ -609,11 +622,15 @@ Response format (important):
     while (history.messages.length > this.MAX_MESSAGES) {
       history.messages.shift();
     }
+    // 持久化到文件
+    this.saveChatMessages(history.sessionId, history.messages);
   }
 
   clearHistory(sessionId: string): void {
     this.chatHistories.delete(sessionId);
+    this.loadedSessions.delete(sessionId);
     this.deleteDisplayHistoryFile(sessionId);
+    this.deleteChatMessagesFile(sessionId);
   }
 
   getHistory(sessionId: string): ChatMessage[] | null {
@@ -621,7 +638,65 @@ Response format (important):
     return history ? [...history.messages] : null;
   }
 
-  // ========== 对话历史持久化 ==========
+  // ========== LLM 上下文消息持久化 ==========
+
+  /**
+   * 保存 LLM 上下文消息到 data/messages/{sessionId}.json
+   */
+  private saveChatMessages(sessionId: string, messages: ChatMessage[]): void {
+    try {
+      const safe = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filePath = path.join(this.messagesDir, `${safe}.json`);
+      const data = {
+        sessionId,
+        updatedAt: Date.now(),
+        messages,
+      };
+      fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    } catch (error) {
+      console.error('[AIService] Failed to save chat messages:', error);
+    }
+  }
+
+  /**
+   * 从 data/messages/{sessionId}.json 加载 LLM 上下文消息
+   */
+  private loadChatMessages(sessionId: string): ChatMessage[] | null {
+    try {
+      const safe = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filePath = path.join(this.messagesDir, `${safe}.json`);
+      if (!fs.existsSync(filePath)) return null;
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      const data = JSON.parse(raw);
+      if (data && Array.isArray(data.messages)) {
+        // 截取最后 MAX_MESSAGES 条
+        return data.messages.length > this.MAX_MESSAGES
+          ? data.messages.slice(data.messages.length - this.MAX_MESSAGES)
+          : data.messages;
+      }
+      return null;
+    } catch (error) {
+      console.error('[AIService] Failed to load chat messages:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 删除 LLM 上下文消息文件
+   */
+  private deleteChatMessagesFile(sessionId: string): void {
+    try {
+      const safe = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filePath = path.join(this.messagesDir, `${safe}.json`);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (error) {
+      console.error('[AIService] Failed to delete chat messages file:', error);
+    }
+  }
+
+  // ========== 对话历史持久化（前端显示） ==========
 
   /**
    * 保存前端显示消息到文件（含元数据）
@@ -713,6 +788,10 @@ Response format (important):
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
       }
+      // 同步删除 LLM 上下文消息文件
+      this.deleteChatMessagesFile(sessionId);
+      this.chatHistories.delete(sessionId);
+      this.loadedSessions.delete(sessionId);
     } catch (error) {
       console.error('[AIService] Failed to delete display history:', error);
     }
