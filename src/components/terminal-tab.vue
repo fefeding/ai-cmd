@@ -809,7 +809,7 @@ onBeforeUnmount(() => {
   terminal?.dispose();
 });
 
-defineExpose({ focus, fit, writeToTerminal, getTerminal, getZmodemSession, getZmodemRole, getSentry, sendToServer, setFileUploadCallback: (cb: ((msg: WSMessage) => void) | null) => { fileUploadResultCallback = cb; }, _getWsState: () => ws ? (ws.readyState === WebSocket.OPEN ? 'open' : ws.readyState === WebSocket.CONNECTING ? 'connecting' : ws.readyState === WebSocket.CLOSING ? 'closing' : 'closed') : 'null', get sessionId() { return sessionId; } });
+defineExpose({ focus, fit, writeToTerminal, getTerminal, getZmodemSession, getZmodemRole, getSentry, sendToServer, setFileUploadCallback: (cb: ((msg: WSMessage) => void) | null) => { fileUploadResultCallback = cb; }, _getWsState: () => ws ? (ws.readyState === WebSocket.OPEN ? 'open' : ws.readyState === WebSocket.CONNECTING ? 'connecting' : ws.readyState === WebSocket.CLOSING ? 'closing' : 'closed') : 'null', _getWsBufferedAmount: () => ws ? (ws as any).bufferedAmount ?? 0 : 0, get sessionId() { return sessionId; } });
 
 // AI 相关方法
 const aiChatWrapperRef = ref<HTMLElement>();

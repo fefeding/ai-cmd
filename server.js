@@ -56,8 +56,39 @@ if (!fs.existsSync(serverIndexPath)) {
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Session-Id, X-File-Name');
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
   next();
+});
+
+// HTTP 文件上传端点（绕过 WebSocket，支持大文件）
+app.post('/api/file-upload', async (req, res) => {
+  const sessionId = req.headers['x-session-id'];
+  const fileName = req.headers['x-file-name'];
+  if (!sessionId || !fileName) {
+    res.status(400).json({ success: false, error: 'Missing X-Session-Id or X-File-Name header' });
+    return;
+  }
+  try {
+    const serverModule = require('./dist/server/index.js');
+    const { sshService } = serverModule;
+    // 收集原始请求体（文件二进制数据）
+    console.log(`[HTTP-Upload] Receiving file: session=${sessionId}, file=${fileName}`);
+    const chunks = [];
+    for await (const chunk of req) {
+      chunks.push(chunk);
+    }
+    const fileBuffer = Buffer.concat(chunks);
+    console.log(`[HTTP-Upload] Received ${fileBuffer.length} bytes, calling SFTP...`);
+    // 将原始 buffer 转为 base64 传给 SFTP 方法
+    const b64 = fileBuffer.toString('base64');
+    const bytes = await sshService.uploadFileViaSftp(sessionId, fileName, b64);
+    console.log(`[HTTP-Upload] SFTP done: ${fileName}, ${bytes} bytes`);
+    res.json({ success: true, bytes, fileName });
+  } catch (err) {
+    console.error(`[HTTP-Upload] Error: ${err.message}`);
+    res.status(500).json({ success: false, error: err.message, fileName });
+  }
 });
 
 // 处理 API 请求
@@ -344,18 +375,32 @@ wss.on('connection', async (ws, req) => {
           const { uploadId: endId } = data || {};
           const endUpload = endId ? pendingUploads.get(endId) : null;
           if (!endUpload) {
+            console.error(`[WS] file-upload-end: upload session not found: ${endId}`);
             ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: 'Upload session not found' }));
             break;
           }
           try {
+            console.log(`[WS] Chunked upload end: id=${endId}, file=${endUpload.fileName}, received=${endUpload.receivedChunks}/${endUpload.totalChunks}`);
+            // 检查是否收到所有 chunk
+            const missingChunks = endUpload.chunks.reduce((acc, c, i) => c === undefined ? [...acc, i] : acc, []);
+            if (missingChunks.length > 0) {
+              console.error(`[WS] Missing chunks: ${missingChunks.join(',')}`);
+              ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: `Missing ${missingChunks.length} chunks`, fileName: endUpload.fileName }));
+              pendingUploads.delete(endId);
+              break;
+            }
             const fullB64 = endUpload.chunks.join('');
-            console.log(`[WS] Chunked upload end: id=${endId}, file=${endUpload.fileName}, b64len=${fullB64.length}`);
+            console.log(`[WS] Joined ${endUpload.totalChunks} chunks -> b64len=${fullB64.length}, calling SFTP upload...`);
             const bytes = await sshService.uploadFileViaSftp(endUpload.sessionId, endUpload.fileName, fullB64);
-            console.log(`[WS] Chunked upload complete: ${endUpload.fileName}, ${bytes} bytes`);
-            ws.send(JSON.stringify({ type: 'file-upload-result', success: true, bytes, fileName: endUpload.fileName }));
+            console.log(`[WS] Chunked upload SFTP DONE: ${endUpload.fileName}, ${bytes} bytes, wsReady=${ws.readyState}`);
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'file-upload-result', success: true, bytes, fileName: endUpload.fileName }));
+            }
           } catch (err) {
-            console.error(`[WS] Chunked upload error: ${err.message}`);
-            ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: err.message, fileName: endUpload.fileName }));
+            console.error(`[WS] Chunked upload ERROR: ${err.message}`, err.stack);
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: err.message, fileName: endUpload.fileName }));
+            }
           } finally {
             pendingUploads.delete(endId);
           }

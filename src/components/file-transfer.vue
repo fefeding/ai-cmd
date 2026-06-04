@@ -298,8 +298,7 @@ function handleFileSelect(e: Event) {
 }
 
 /**
- * 上传文件 - 通过 SFTP 直传（绕过 PTY，速度快）
- * 当 ZMODEM rz 被检测到时，先终止 rz 进程，然后通过 WebSocket + SFTP 上传
+ * 上传文件 - 通过 HTTP POST + SFTP 直传（绕过 WebSocket 和 PTY）
  */
 async function startUpload(files: File[]) {
   if (!activeTermRef) {
@@ -334,28 +333,22 @@ async function startUpload(files: File[]) {
         state: 'transferring',
       };
 
-      // 读取文件内容并 base64 编码
-      const buffer = await file.arrayBuffer();
-      const uint8 = new Uint8Array(buffer);
-      let binary = '';
-      for (let i = 0; i < uint8.length; i++) {
-        binary += String.fromCharCode(uint8[i]);
-      }
-      const b64 = btoa(binary);
-
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const sid = activeTermRef.sessionId;
+
+      console.log(`[FileTransfer] HTTP upload: ${file.name} -> ${safeName}, size=${file.size}, sessionId=${sid}`);
 
       currentProgress.value = {
         direction: 'upload',
         fileName: file.name,
-        bytesSent: Math.floor(file.size * 0.3),
+        bytesSent: Math.floor(file.size * 0.1),
         bytesTotal: file.size,
-        percent: 30,
+        percent: 10,
         state: 'transferring',
       };
 
-      // 通过 WebSocket 发送 file-upload 消息（SFTP 直传，不经过 PTY）
-      const result = await sendFileUpload(safeName, b64);
+      // 通过 HTTP POST 上传文件原始二进制数据
+      const result = await httpFileUpload(file, safeName, sid);
 
       if (result.success) {
         currentProgress.value = {
@@ -376,7 +369,7 @@ async function startUpload(files: File[]) {
           state: 'complete',
         });
       } else {
-        throw new Error(result.error || 'SFTP upload failed');
+        throw new Error(result.error || 'Upload failed');
       }
 
       currentProgress.value = null;
@@ -403,107 +396,31 @@ async function startUpload(files: File[]) {
 }
 
 /**
- * 通过 WebSocket 发送文件上传，支持分块上传（大文件）
- * base64 数据 < 50MB 时单消息发送，>=50MB 时分块发送
+ * 通过 HTTP POST 上传文件到服务端，服务端通过 SFTP 写入远程服务器
  */
-const B64_SINGLE_LIMIT = 50 * 1024 * 1024; // 50MB base64 数据上限
-const B64_CHUNK_SIZE = 5 * 1024 * 1024;     // 每个分块 5MB base64
-
-function sendFileUpload(fileName: string, base64Data: string): Promise<{ success: boolean; bytes?: number; error?: string }> {
-  return new Promise((resolve) => {
-    if (!activeTermRef) {
-      resolve({ success: false, error: 'Terminal not connected' });
-      return;
-    }
-
-    const termRef = activeTermRef;
-    const sid = termRef.sessionId;
-
-    // 检查 WebSocket 状态
-    const wsState = termRef._getWsState?.() ?? 'unknown';
-    console.log(`[FileTransfer] sendFileUpload: sessionId=${sid}, fileName=${fileName}, b64len=${base64Data.length}, wsState=${wsState}`);
-
-    if (wsState !== 'open') {
-      resolve({ success: false, error: `WebSocket not connected (state: ${wsState})` });
-      return;
-    }
-
-    // 注册回调接收服务端结果
-    termRef.setFileUploadCallback?.((msg: any) => {
-      console.log(`[FileTransfer] upload result received:`, msg);
-      termRef.setFileUploadCallback?.(null);
-      resolve({
-        success: msg.success,
-        bytes: msg.bytes,
-        error: msg.error,
-      });
+async function httpFileUpload(
+  file: File,
+  remoteName: string,
+  sessionId: string | null
+): Promise<{ success: boolean; bytes?: number; error?: string }> {
+  try {
+    console.log(`[FileTransfer] POST /api/file-upload, size=${file.size}`);
+    const resp = await fetch('/api/file-upload', {
+      method: 'POST',
+      headers: {
+        'X-Session-Id': sessionId || '',
+        'X-File-Name': remoteName,
+        'Content-Type': 'application/octet-stream',
+      },
+      body: file,
     });
-
-    if (base64Data.length <= B64_SINGLE_LIMIT) {
-      // 小文件：单消息发送
-      const msgSize = Math.round(base64Data.length / 1024 / 1024);
-      console.log(`[FileTransfer] Sending single upload: ${fileName}, ~${msgSize}MB base64`);
-      termRef.sendToServer({
-        type: 'file-upload',
-        sessionId: sid || undefined,
-        data: { fileName, data: base64Data },
-      });
-      console.log(`[FileTransfer] Single upload message sent`);
-    } else {
-      // 大文件：分块上传
-      const totalChunks = Math.ceil(base64Data.length / B64_CHUNK_SIZE);
-      const uploadId = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      console.log(`[FileTransfer] Chunked upload: ${fileName}, chunks=${totalChunks}, uploadId=${uploadId}`);
-
-      // 1. 发送 start
-      termRef.sendToServer({
-        type: 'file-upload-start',
-        sessionId: sid || undefined,
-        data: { uploadId, fileName, totalChunks },
-      });
-
-      // 2. 逐块发送（异步，避免阻塞 UI）
-      let chunkIdx = 0;
-      function sendNextChunk() {
-        if (chunkIdx >= totalChunks) {
-          // 3. 所有 chunk 发完，发送 end
-          termRef.sendToServer({
-            type: 'file-upload-end',
-            sessionId: sid || undefined,
-            data: { uploadId },
-          });
-          return;
-        }
-        const start = chunkIdx * B64_CHUNK_SIZE;
-        const chunk = base64Data.substring(start, start + B64_CHUNK_SIZE);
-        termRef.sendToServer({
-          type: 'file-upload-chunk',
-          sessionId: sid || undefined,
-          data: { uploadId, chunkIndex: chunkIdx, data: chunk },
-        });
-        // 更新进度
-        if (currentProgress.value) {
-          const pct = Math.round(30 + ((chunkIdx + 1) / totalChunks) * 65); // 30%-95%
-          currentProgress.value = {
-            ...currentProgress.value,
-            bytesSent: Math.floor(currentProgress.value.bytesTotal * pct / 100),
-            percent: pct,
-          };
-        }
-        chunkIdx++;
-        // 用 setTimeout 分片，避免同步循环阻塞 UI 线程
-        setTimeout(sendNextChunk, 0);
-      }
-      sendNextChunk();
-    }
-
-    // 超时处理（90秒，服务端60秒超时+缓冲）
-    setTimeout(() => {
-      console.warn(`[FileTransfer] Upload timeout for ${fileName}`);
-      termRef.setFileUploadCallback?.(null);
-      resolve({ success: false, error: 'Upload timeout (90s)' });
-    }, 90000);
-  });
+    const data = await resp.json();
+    console.log(`[FileTransfer] HTTP upload result:`, data);
+    return data;
+  } catch (err: any) {
+    console.error(`[FileTransfer] HTTP upload error:`, err);
+    return { success: false, error: err.message || 'HTTP upload failed' };
+  }
 }
 
 /**

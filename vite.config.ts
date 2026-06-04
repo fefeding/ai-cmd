@@ -377,6 +377,40 @@ async function serverRoute(req: Connect.IncomingMessage, res: http.ServerRespons
         const parsedUrl = url.parse(req.url, true);
         const pathname = parsedUrl.pathname || '';
         const method = req.method?.toLowerCase();
+
+        // 文件上传端点：接收原始二进制数据，通过 SFTP 写入远程服务器
+        if (pathname === '/api/file-upload') {
+            const sessionId = req.headers['x-session-id'] as string;
+            const fileName = req.headers['x-file-name'] as string;
+            if (!sessionId || !fileName) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, error: 'Missing X-Session-Id or X-File-Name header' }));
+                return true;
+            }
+            const chunks: Buffer[] = [];
+            req.on('data', (chunk: Buffer) => chunks.push(chunk));
+            req.on('end', async () => {
+                try {
+                    const fileBuffer = Buffer.concat(chunks);
+                    console.log(`[HTTP-Upload] Received ${fileBuffer.length} bytes, calling SFTP...`);
+                    const b64 = fileBuffer.toString('base64');
+                    const bytes = await sshService!.uploadFileViaSftp(sessionId, fileName, b64);
+                    console.log(`[HTTP-Upload] SFTP done: ${fileName}, ${bytes} bytes`);
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: true, bytes, fileName }));
+                } catch (err: any) {
+                    console.error(`[HTTP-Upload] Error: ${err.message}`);
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: false, error: err.message, fileName }));
+                }
+            });
+            req.on('error', (err: Error) => {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, error: err.message }));
+            });
+            return true;
+        }
+
         if (method !== 'post') {
             res.writeHead(405, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ret: 405, msg: 'Only POST method is allowed' }));
