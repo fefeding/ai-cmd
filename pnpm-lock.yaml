@@ -22,6 +22,9 @@ importers:
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
+      electron-updater:
+        specifier: ^6.8.3
+        version: 6.8.3
       express:
         specifier: ^5.2.1
         version: 5.2.1
@@ -119,9 +122,6 @@ importers:
       electron-builder:
         specifier: ^26.0.12
         version: 26.8.1(electron-builder-squirrel-windows@26.8.1)
-      electron-updater:
-        specifier: ^6.8.3
-        version: 6.8.3
       jimp:
         specifier: ^1.6.1
         version: 1.6.1
