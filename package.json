@@ -46,7 +46,8 @@
     "ssh2": "^1.17.0",
     "uuid": "^13.0.2",
     "vue-i18n": "^11.4.4",
-    "ws": "^8.21.0"
+    "ws": "^8.21.0",
+    "electron-updater": "^6.8.3"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.10.3",
