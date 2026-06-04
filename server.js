@@ -90,8 +90,12 @@ app.use((req, res) => {
 });
 
 // ========== WebSocket 服务 ==========
-const wss = new WebSocket.Server({ server, path: '/ws/terminal' });
-console.log(`[WS] WebSocket server created on path /ws/terminal`);
+// maxPayload 设为 500MB，支持较大文件的 base64 传输（base64 比原文件大 ~33%）
+const wss = new WebSocket.Server({ server, path: '/ws/terminal', maxPayload: 500 * 1024 * 1024 });
+console.log(`[WS] WebSocket server created on path /ws/terminal (maxPayload: 500MB)`);
+
+// 分块上传缓冲区: uploadId -> { chunks: string[], totalChunks: number, fileName: string, sessionId: string }
+const pendingUploads = new Map();
 
 // 跟踪 sessionId -> WebSocket 映射（用于推送监控事件）
 const wsBySessionId = new Map();
@@ -277,6 +281,84 @@ wss.on('connection', async (ws, req) => {
               ws.send(JSON.stringify({ type: 'ai-agent-event', sessionId: aiSessionId, event: { type: 'error', error: err.message } }));
             }
           });
+          break;
+        }
+
+        case 'file-upload': {
+          // SFTP 文件上传 - 单消息模式（小文件，<50MB base64）
+          const { fileName, data: fileData } = data || {};
+          if (!sid || !fileName || !fileData) {
+            console.error(`[WS] file-upload missing params: sid=${sid}, fileName=${fileName}, hasData=${!!fileData}`);
+            ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: 'Missing params', fileName }));
+            break;
+          }
+          try {
+            console.log(`[WS] SFTP upload START: session=${sid}, file=${fileName}, b64len=${fileData.length}, wsReady=${ws.readyState}`);
+            const bytes = await sshService.uploadFileViaSftp(sid, fileName, fileData);
+            console.log(`[WS] SFTP upload DONE: ${fileName}, ${bytes} bytes, wsReady=${ws.readyState}`);
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'file-upload-result', success: true, bytes, fileName }));
+            } else {
+              console.error(`[WS] Cannot send result, WS not open: state=${ws.readyState}`);
+            }
+          } catch (err) {
+            console.error(`[WS] SFTP upload ERROR: ${err.message}`, err.stack);
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: err.message, fileName }));
+            }
+          }
+          break;
+        }
+
+        case 'file-upload-start': {
+          // 分块上传 - 开始（大文件）
+          const { uploadId, fileName: startFileName, totalChunks } = data || {};
+          if (!uploadId || !startFileName || !totalChunks) {
+            ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: 'Missing params', fileName: startFileName }));
+            break;
+          }
+          console.log(`[WS] Chunked upload start: id=${uploadId}, file=${startFileName}, chunks=${totalChunks}`);
+          pendingUploads.set(uploadId, { chunks: new Array(totalChunks), totalChunks, fileName: startFileName, sessionId: sid, receivedChunks: 0 });
+          break;
+        }
+
+        case 'file-upload-chunk': {
+          // 分块上传 - 数据块
+          const { uploadId: chunkId, chunkIndex, data: chunkData } = data || {};
+          const upload = chunkId ? pendingUploads.get(chunkId) : null;
+          if (!upload) {
+            ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: 'Upload session not found' }));
+            break;
+          }
+          upload.chunks[chunkIndex] = chunkData;
+          upload.receivedChunks++;
+          // 每 10 个 chunk 反馈一次进度
+          if (upload.receivedChunks % 10 === 0 || upload.receivedChunks === upload.totalChunks) {
+            ws.send(JSON.stringify({ type: 'file-upload-progress', uploadId: chunkId, received: upload.receivedChunks, total: upload.totalChunks }));
+          }
+          break;
+        }
+
+        case 'file-upload-end': {
+          // 分块上传 - 结束，拼接并 SFTP 写入
+          const { uploadId: endId } = data || {};
+          const endUpload = endId ? pendingUploads.get(endId) : null;
+          if (!endUpload) {
+            ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: 'Upload session not found' }));
+            break;
+          }
+          try {
+            const fullB64 = endUpload.chunks.join('');
+            console.log(`[WS] Chunked upload end: id=${endId}, file=${endUpload.fileName}, b64len=${fullB64.length}`);
+            const bytes = await sshService.uploadFileViaSftp(endUpload.sessionId, endUpload.fileName, fullB64);
+            console.log(`[WS] Chunked upload complete: ${endUpload.fileName}, ${bytes} bytes`);
+            ws.send(JSON.stringify({ type: 'file-upload-result', success: true, bytes, fileName: endUpload.fileName }));
+          } catch (err) {
+            console.error(`[WS] Chunked upload error: ${err.message}`);
+            ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: err.message, fileName: endUpload.fileName }));
+          } finally {
+            pendingUploads.delete(endId);
+          }
           break;
         }
 

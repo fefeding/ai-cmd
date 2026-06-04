@@ -95,6 +95,7 @@ let resizeObserver: ResizeObserver | null = null;
 let sentry: any = null;
 let zmodemSession: any = null;
 let zmodemRole: string | null = null; // 'send' | 'receive'
+let fileUploadResultCallback: ((msg: WSMessage) => void) | null = null;
 
 // 初始化终端
 function initTerminal() {
@@ -714,6 +715,13 @@ function handleServerMessage(msg: WSMessage) {
         aiChatRef.value.handleMonitorEvent(msg.event);
       }
       break;
+
+    case 'file-upload-result':
+      // 转发 SFTP 上传结果到 file-transfer 组件
+      if (fileUploadResultCallback) {
+        fileUploadResultCallback(msg);
+      }
+      break;
   }
 }
 
@@ -801,7 +809,7 @@ onBeforeUnmount(() => {
   terminal?.dispose();
 });
 
-defineExpose({ focus, fit, writeToTerminal, getTerminal, getZmodemSession, getZmodemRole, getSentry, sendToServer, get sessionId() { return sessionId; } });
+defineExpose({ focus, fit, writeToTerminal, getTerminal, getZmodemSession, getZmodemRole, getSentry, sendToServer, setFileUploadCallback: (cb: ((msg: WSMessage) => void) | null) => { fileUploadResultCallback = cb; }, _getWsState: () => ws ? (ws.readyState === WebSocket.OPEN ? 'open' : ws.readyState === WebSocket.CONNECTING ? 'connecting' : ws.readyState === WebSocket.CLOSING ? 'closing' : 'closed') : 'null', get sessionId() { return sessionId; } });
 
 // AI 相关方法
 const aiChatWrapperRef = ref<HTMLElement>();

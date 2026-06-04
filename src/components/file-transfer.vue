@@ -298,8 +298,8 @@ function handleFileSelect(e: Event) {
 }
 
 /**
- * 上传文件 - 通过终端 base64 编码传输文件到远程
- * 当 ZMODEM rz 被检测到时，先终止 rz 进程，然后通过 base64 编码传输
+ * 上传文件 - 通过 SFTP 直传（绕过 PTY，速度快）
+ * 当 ZMODEM rz 被检测到时，先终止 rz 进程，然后通过 WebSocket + SFTP 上传
  */
 async function startUpload(files: File[]) {
   if (!activeTermRef) {
@@ -316,16 +316,13 @@ async function startUpload(files: File[]) {
       zmodemSession = null;
     }
 
-    // 可靠终止 rz 进程
+    // 终止 rz 进程
     sendToTerm('\x03'); // Ctrl+C
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 300));
     sendToTerm('\x03'); // 再发一次 Ctrl+C
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 200));
     sendToTerm('\x15'); // Ctrl+U 清空当前行
-    await new Promise(r => setTimeout(r, 300));
-    // 禁用历史扩展，避免 ! 字符被 shell 解释
-    sendToTerm('set +H\n');
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 100));
 
     for (const file of files) {
       currentProgress.value = {
@@ -347,54 +344,40 @@ async function startUpload(files: File[]) {
       const b64 = btoa(binary);
 
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const remotePath = safeName; // 使用当前目录，不加路径前缀
-      const CHUNK_SIZE = 2000; // 每次发送的 base64 字符数（保持命令行 < 4KB PTY 缓冲区限制）
-
-      // 创建空文件
-      sendToTerm(`: > '${remotePath}'\n`);
-      await new Promise(r => setTimeout(r, 400));
-
-      // 分块发送 base64 数据（使用 heredoc 避免回显 base64 内容）
-      const totalChunks = Math.ceil(b64.length / CHUNK_SIZE);
-      for (let i = 0; i < b64.length; i += CHUNK_SIZE) {
-        const chunk = b64.substring(i, i + CHUNK_SIZE);
-        const chunkIdx = Math.floor(i / CHUNK_SIZE) + 1;
-        // heredoc: base64 数据通过 stdin 传入，不会在命令行回显
-        sendToTerm(`base64 -d >> '${remotePath}' <<'__B64__'\n${chunk}\n__B64__\n`);
-        await new Promise(r => setTimeout(r, 80));
-
-        currentProgress.value = {
-          direction: 'upload',
-          fileName: file.name,
-          bytesSent: Math.min(i + CHUNK_SIZE, b64.length),
-          bytesTotal: b64.length,
-          percent: Math.round((chunkIdx / totalChunks) * 100),
-          state: 'transferring',
-        };
-      }
-
-      // 验证文件大小
-      const expectedSize = uint8.length;
-      sendToTerm(`echo "[fshell] Upload verify: $(wc -c < '${remotePath}') / ${expectedSize} bytes"\n`);
-      await new Promise(r => setTimeout(r, 300));
 
       currentProgress.value = {
         direction: 'upload',
         fileName: file.name,
-        bytesSent: file.size,
+        bytesSent: Math.floor(file.size * 0.3),
         bytesTotal: file.size,
-        percent: 100,
+        percent: 30,
         state: 'transferring',
       };
 
-      transferHistory.value.unshift({
-        direction: 'upload',
-        fileName: file.name,
-        bytesSent: file.size,
-        bytesTotal: file.size,
-        percent: 100,
-        state: 'complete',
-      });
+      // 通过 WebSocket 发送 file-upload 消息（SFTP 直传，不经过 PTY）
+      const result = await sendFileUpload(safeName, b64);
+
+      if (result.success) {
+        currentProgress.value = {
+          direction: 'upload',
+          fileName: file.name,
+          bytesSent: file.size,
+          bytesTotal: file.size,
+          percent: 100,
+          state: 'transferring',
+        };
+
+        transferHistory.value.unshift({
+          direction: 'upload',
+          fileName: file.name,
+          bytesSent: file.size,
+          bytesTotal: file.size,
+          percent: 100,
+          state: 'complete',
+        });
+      } else {
+        throw new Error(result.error || 'SFTP upload failed');
+      }
 
       currentProgress.value = null;
     }
@@ -417,6 +400,110 @@ async function startUpload(files: File[]) {
     zmodemSession = null;
     toast.error(error.message || t('fileTransfer.uploadFailed'));
   }
+}
+
+/**
+ * 通过 WebSocket 发送文件上传，支持分块上传（大文件）
+ * base64 数据 < 50MB 时单消息发送，>=50MB 时分块发送
+ */
+const B64_SINGLE_LIMIT = 50 * 1024 * 1024; // 50MB base64 数据上限
+const B64_CHUNK_SIZE = 5 * 1024 * 1024;     // 每个分块 5MB base64
+
+function sendFileUpload(fileName: string, base64Data: string): Promise<{ success: boolean; bytes?: number; error?: string }> {
+  return new Promise((resolve) => {
+    if (!activeTermRef) {
+      resolve({ success: false, error: 'Terminal not connected' });
+      return;
+    }
+
+    const termRef = activeTermRef;
+    const sid = termRef.sessionId;
+
+    // 检查 WebSocket 状态
+    const wsState = termRef._getWsState?.() ?? 'unknown';
+    console.log(`[FileTransfer] sendFileUpload: sessionId=${sid}, fileName=${fileName}, b64len=${base64Data.length}, wsState=${wsState}`);
+
+    if (wsState !== 'open') {
+      resolve({ success: false, error: `WebSocket not connected (state: ${wsState})` });
+      return;
+    }
+
+    // 注册回调接收服务端结果
+    termRef.setFileUploadCallback?.((msg: any) => {
+      console.log(`[FileTransfer] upload result received:`, msg);
+      termRef.setFileUploadCallback?.(null);
+      resolve({
+        success: msg.success,
+        bytes: msg.bytes,
+        error: msg.error,
+      });
+    });
+
+    if (base64Data.length <= B64_SINGLE_LIMIT) {
+      // 小文件：单消息发送
+      const msgSize = Math.round(base64Data.length / 1024 / 1024);
+      console.log(`[FileTransfer] Sending single upload: ${fileName}, ~${msgSize}MB base64`);
+      termRef.sendToServer({
+        type: 'file-upload',
+        sessionId: sid || undefined,
+        data: { fileName, data: base64Data },
+      });
+      console.log(`[FileTransfer] Single upload message sent`);
+    } else {
+      // 大文件：分块上传
+      const totalChunks = Math.ceil(base64Data.length / B64_CHUNK_SIZE);
+      const uploadId = `up-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      console.log(`[FileTransfer] Chunked upload: ${fileName}, chunks=${totalChunks}, uploadId=${uploadId}`);
+
+      // 1. 发送 start
+      termRef.sendToServer({
+        type: 'file-upload-start',
+        sessionId: sid || undefined,
+        data: { uploadId, fileName, totalChunks },
+      });
+
+      // 2. 逐块发送（异步，避免阻塞 UI）
+      let chunkIdx = 0;
+      function sendNextChunk() {
+        if (chunkIdx >= totalChunks) {
+          // 3. 所有 chunk 发完，发送 end
+          termRef.sendToServer({
+            type: 'file-upload-end',
+            sessionId: sid || undefined,
+            data: { uploadId },
+          });
+          return;
+        }
+        const start = chunkIdx * B64_CHUNK_SIZE;
+        const chunk = base64Data.substring(start, start + B64_CHUNK_SIZE);
+        termRef.sendToServer({
+          type: 'file-upload-chunk',
+          sessionId: sid || undefined,
+          data: { uploadId, chunkIndex: chunkIdx, data: chunk },
+        });
+        // 更新进度
+        if (currentProgress.value) {
+          const pct = Math.round(30 + ((chunkIdx + 1) / totalChunks) * 65); // 30%-95%
+          currentProgress.value = {
+            ...currentProgress.value,
+            bytesSent: Math.floor(currentProgress.value.bytesTotal * pct / 100),
+            percent: pct,
+          };
+        }
+        chunkIdx++;
+        // 用 setTimeout 分片，避免同步循环阻塞 UI 线程
+        setTimeout(sendNextChunk, 0);
+      }
+      sendNextChunk();
+    }
+
+    // 超时处理（90秒，服务端60秒超时+缓冲）
+    setTimeout(() => {
+      console.warn(`[FileTransfer] Upload timeout for ${fileName}`);
+      termRef.setFileUploadCallback?.(null);
+      resolve({ success: false, error: 'Upload timeout (90s)' });
+    }, 90000);
+  });
 }
 
 /**

@@ -49,7 +49,7 @@ export interface TerminalTab {
  * WebSocket 消息协议
  */
 export interface WSMessage {
-  type: 'terminal' | 'resize' | 'create' | 'reconnect' | 'close' | 'status' | 'error' | 'zmodem' | 'ai-agent-event' | 'ai-agent-run' | 'ai-agent-stop' | 'monitor-event';
+  type: 'terminal' | 'resize' | 'create' | 'reconnect' | 'close' | 'status' | 'error' | 'zmodem' | 'ai-agent-event' | 'ai-agent-run' | 'ai-agent-stop' | 'monitor-event' | 'file-upload' | 'file-upload-result' | 'file-upload-start' | 'file-upload-chunk' | 'file-upload-end' | 'file-upload-progress';
   sessionId?: string;
   data?: any;
   binary?: boolean;

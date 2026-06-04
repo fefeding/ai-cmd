@@ -1000,6 +1000,119 @@ Write-Output "__DOCKER__: $dockerVer"
   }
 
   /**
+   * 获取 SSH 会话的当前工作目录（通过 shell stream 执行 pwd）
+   */
+  async getSessionCwd(sessionId: string): Promise<string> {
+    const marker = `__FShell_CWD_${Date.now()}__`;
+    this.writeData(sessionId, `echo "${marker}:$(pwd)"\n`);
+    const output = await this.captureOutput(sessionId, 1500);
+    const cleaned = output.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').replace(/\r/g, '');
+    for (const line of cleaned.split('\n')) {
+      const idx = line.indexOf(marker + ':');
+      if (idx >= 0) {
+        const cwd = line.substring(idx + marker.length + 1).trim();
+        if (cwd) return cwd;
+      }
+    }
+    return '';
+  }
+
+  /**
+   * 通过 SFTP 上传文件到远程服务器（绕过 PTY，速度快）
+   * @param sessionId 会话 ID
+   * @param remotePath 远程文件路径（相对路径或绝对路径）
+   * @param base64Data 文件的 base64 编码数据
+   * @returns 写入的字节数
+   */
+  async uploadFileViaSftp(sessionId: string, remotePath: string, base64Data: string): Promise<number> {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error('Session not found: ' + sessionId);
+    if (session.type !== 'ssh' || !session.client) {
+      throw new Error('SFTP upload only supported for SSH sessions');
+    }
+
+    const fileBuffer = Buffer.from(base64Data, 'base64');
+    console.log(`[SSH] SFTP upload: decoded ${base64Data.length} b64 -> ${fileBuffer.length} bytes`);
+
+    // 使用 Promise + 超时包装（60秒）
+    const SFTP_TIMEOUT = 60000;
+    return new Promise<number>((resolve, reject) => {
+      let done = false;
+      const timer = setTimeout(() => {
+        if (!done) { done = true; reject(new Error(`SFTP timeout after ${SFTP_TIMEOUT / 1000}s`)); }
+      }, SFTP_TIMEOUT);
+
+      const finish = (err: Error | null, bytes?: number) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (err) reject(err); else resolve(bytes!);
+      };
+
+      console.log(`[SSH] SFTP opening subsystem...`);
+      session.client!.sftp((sftpErr: Error | undefined, sftp: any) => {
+        if (done) return;
+        if (sftpErr) {
+          console.error(`[SSH] SFTP open failed: ${sftpErr.message}`);
+          finish(new Error('SFTP init failed: ' + sftpErr.message));
+          return;
+        }
+        console.log(`[SSH] SFTP subsystem ready`);
+
+        // 解析路径：先获取远程 CWD
+        const resolvePath = (cb: (fullPath: string) => void) => {
+          if (remotePath.startsWith('/')) {
+            cb(remotePath);
+          } else {
+            console.log(`[SSH] SFTP resolving CWD...`);
+            sftp.realpath('.', (rpErr: Error | undefined, absCwd: string) => {
+              if (rpErr) {
+                console.warn(`[SSH] SFTP realpath failed: ${rpErr.message}, using /tmp`);
+                cb(`/tmp/${remotePath}`);
+              } else {
+                const resolved = `${absCwd}/${remotePath}`;
+                console.log(`[SSH] SFTP resolved path: ${absCwd} + ${remotePath} = ${resolved}`);
+                cb(resolved);
+              }
+            });
+          }
+        };
+
+        resolvePath((fullPath) => {
+          if (done) return;
+          console.log(`[SSH] SFTP writing ${fileBuffer.length} bytes to ${fullPath}...`);
+          // 使用 createWriteStream 代替 writeFile（更可靠）
+          try {
+            const ws = sftp.createWriteStream(fullPath);
+            let writeError: Error | null = null;
+
+            ws.on('error', (err: Error) => {
+              console.error(`[SSH] SFTP stream error: ${err.message}`);
+              writeError = err;
+            });
+
+            ws.on('close', () => {
+              if (done) return;
+              if (writeError) {
+                console.error(`[SSH] SFTP write error: ${writeError.message}`);
+                finish(new Error('SFTP write failed: ' + writeError.message));
+              } else {
+                console.log(`[SSH] SFTP upload complete: ${fullPath} (${fileBuffer.length} bytes)`);
+                finish(null, fileBuffer.length);
+              }
+            });
+
+            ws.end(fileBuffer);
+          } catch (streamErr: any) {
+            console.error(`[SSH] SFTP createWriteStream error: ${streamErr.message}`);
+            finish(new Error('SFTP stream error: ' + streamErr.message));
+          }
+        });
+      });
+    });
+  }
+
+  /**
    * 获取活跃会话数量
    */
   getActiveSessionCount(): number {
