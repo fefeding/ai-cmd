@@ -1,7 +1,7 @@
 <template>
-  <div v-if="visible" class="file-transfer-widget" :class="{ collapsed: isCollapsed }">
-    <!-- 标题栏（始终可见，点击切换折叠） -->
-    <div class="ft-header" @click="isCollapsed = !isCollapsed">
+  <div v-if="visible" ref="widgetRef" class="file-transfer-widget" :class="{ collapsed: isCollapsed, dragging: isWidgetDragging }" :style="dragStyle">
+    <!-- 标题栏（拖拽手柄） -->
+    <div class="ft-header" @mousedown="onDragStart" @dblclick="isCollapsed = !isCollapsed">
       <span class="ft-title">
         <i class="bi bi-cloud-arrow-up me-1"></i>
         <template v-if="transferring">
@@ -146,7 +146,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Zmodem, formatFileSize, type ZmodemProgress } from '@/utils/zmodem';
 import { toast } from '@/utils/toast';
@@ -154,8 +154,57 @@ import { toast } from '@/utils/toast';
 const { t } = useI18n();
 
 const fileInput = ref<HTMLInputElement>();
+const widgetRef = ref<HTMLElement>();
 const visible = ref(false);
 const isCollapsed = ref(false);
+
+// 拖拽状态
+const dragPos = ref({ x: 0, y: 0 });
+const isMoved = ref(false);
+const isWidgetDragging = ref(false);
+const dragStyle = computed(() => {
+  if (!isMoved.value) return {}; // 默认用 CSS 定位
+  return { left: `${dragPos.value.x}px`, top: `${dragPos.value.y}px`, bottom: 'auto', right: 'auto' };
+});
+
+let dragStartX = 0, dragStartY = 0, dragStartLeft = 0, dragStartTop = 0;
+
+function onDragStart(e: MouseEvent) {
+  // 只在左键拖拽，忽略按钮点击
+  if (e.button !== 0) return;
+  const target = e.target as HTMLElement;
+  if (target.closest('.ft-btn-icon')) return; // 点击按钮不触发拖拽
+
+  e.preventDefault();
+  const el = widgetRef.value!;
+  const rect = el.getBoundingClientRect();
+  const parentRect = el.parentElement!.getBoundingClientRect();
+
+  // 首次拖拽时从 bottom/right 转为 left/top
+  if (!isMoved.value) {
+    dragPos.value = { x: rect.left - parentRect.left, y: rect.top - parentRect.top };
+    isMoved.value = true;
+  }
+
+  dragStartX = e.clientX;
+  dragStartY = e.clientY;
+  dragStartLeft = dragPos.value.x;
+  dragStartTop = dragPos.value.y;
+  isWidgetDragging.value = true;
+
+  const onMouseMove = (ev: MouseEvent) => {
+    const dx = ev.clientX - dragStartX;
+    const dy = ev.clientY - dragStartY;
+    dragPos.value = { x: dragStartLeft + dx, y: dragStartTop + dy };
+  };
+  const onMouseUp = () => {
+    isWidgetDragging.value = false;
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+  };
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
+}
 const mode = ref<'upload' | 'download'>('upload');
 const isDragging = ref(false);
 const remoteFilePath = ref('');
@@ -549,19 +598,24 @@ defineExpose({ show });
   width: 200px;
 }
 
+.file-transfer-widget.dragging {
+  pointer-events: none; /* 拖拽时禁止子元素捕获事件，避免干扰文件拖放 */
+  opacity: 0.85;
+}
+
 .ft-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 8px 10px;
-  cursor: pointer;
+  cursor: grab;
   user-select: none;
   background: rgba(255, 255, 255, 0.04);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.ft-header:hover {
-  background: rgba(255, 255, 255, 0.06);
+.ft-header:active {
+  cursor: grabbing;
 }
 
 .ft-title {

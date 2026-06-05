@@ -939,9 +939,26 @@ Write-Output "__DOCKER__: $dockerVer"
       const listener = (data: string) => {
         output += data;
       };
+      // 方式1: 通过 notifyOutput 机制捕获
       this.addOutputListener(sessionId, listener);
+
+      // 方式2: 直接在 SSH stream 上监听（绕过 hasBinary 检查）
+      const session = this.sessions.get(sessionId);
+      let streamHandler: ((chunk: Buffer) => void) | null = null;
+      if (session?.stream) {
+        streamHandler = (chunk: Buffer) => {
+          // 只捕获可打印文本部分
+          const text = chunk.toString('utf-8');
+          output += text;
+        };
+        session.stream.on('data', streamHandler);
+      }
+
       setTimeout(() => {
         this.removeOutputListener(sessionId);
+        if (streamHandler && session?.stream) {
+          session.stream.removeListener('data', streamHandler);
+        }
         // 去除 ANSI 转义序列
         resolve(output.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1B\].*?\x07/g, ''));
       }, timeoutMs);
@@ -1003,17 +1020,25 @@ Write-Output "__DOCKER__: $dockerVer"
    * 获取 SSH 会话的当前工作目录（通过 shell stream 执行 pwd）
    */
   async getSessionCwd(sessionId: string): Promise<string> {
-    const marker = `__FShell_CWD_${Date.now()}__`;
-    this.writeData(sessionId, `echo "${marker}:$(pwd)"\n`);
-    const output = await this.captureOutput(sessionId, 1500);
+    const marker = `__AICmd_CWD_${Date.now()}__`;
+    // 前加空格避免 shell 回显（HISTCONTROL=ignorespace），先启动捕获再发命令
+    const outputPromise = this.captureOutput(sessionId, 1500);
+    this.writeData(sessionId, ` echo ${marker}:$(pwd)\n`);
+    const output = await outputPromise;
+    console.log(`[SSH] getSessionCwd: raw output: ${JSON.stringify(output.substring(0, 300))}`);
     const cleaned = output.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').replace(/\r/g, '');
     for (const line of cleaned.split('\n')) {
-      const idx = line.indexOf(marker + ':');
-      if (idx >= 0) {
-        const cwd = line.substring(idx + marker.length + 1).trim();
-        if (cwd) return cwd;
+      const trimmed = line.trim();
+      // 只匹配以 marker 开头的行（实际输出），跳过 echo 回显行（以 echo 开头）
+      if (trimmed.startsWith(marker + ':')) {
+        const cwd = trimmed.substring(marker.length + 1).trim();
+        if (cwd && !cwd.includes('$(pwd)')) {
+          console.log(`[SSH] getSessionCwd parsed: '${cwd}' from line: '${trimmed}'`);
+          return cwd;
+        }
       }
     }
+    console.log(`[SSH] getSessionCwd: no marker found in cleaned output: ${JSON.stringify(cleaned.substring(0, 300))}`);
     return '';
   }
 
@@ -1024,18 +1049,44 @@ Write-Output "__DOCKER__: $dockerVer"
    * @param base64Data 文件的 base64 编码数据
    * @returns 写入的字节数
    */
-  async uploadFileViaSftp(sessionId: string, remotePath: string, base64Data: string): Promise<number> {
+  async uploadFileViaSftp(sessionId: string, remotePath: string, fileBuffer: Buffer): Promise<number> {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error('Session not found: ' + sessionId);
     if (session.type !== 'ssh' || !session.client) {
       throw new Error('SFTP upload only supported for SSH sessions');
     }
 
-    const fileBuffer = Buffer.from(base64Data, 'base64');
-    console.log(`[SSH] SFTP upload: decoded ${base64Data.length} b64 -> ${fileBuffer.length} bytes`);
+    console.log(`[SSH] SFTP upload: ${fileBuffer.length} bytes`);
 
-    // 使用 Promise + 超时包装（60秒）
-    const SFTP_TIMEOUT = 60000;
+    // 解析相对路径：先通过 shell 获取交互式 CWD（而非 SFTP 默认的 home 目录）
+    let fullPath = remotePath;
+    if (!remotePath.startsWith('/')) {
+      try {
+        console.log(`[SSH] Getting shell CWD...`);
+        const cwd = await this.getSessionCwd(sessionId);
+        console.log(`[SSH] Shell CWD: '${cwd}'`);
+        if (cwd) {
+          fullPath = `${cwd}/${remotePath}`;
+        } else {
+          console.warn(`[SSH] Shell CWD empty, falling back to SFTP realpath`);
+          // fallback: 用 SFTP realpath（默认 home 目录）
+          fullPath = await new Promise<string>((resolve) => {
+            session.client!.sftp((err: Error | undefined, sftp: any) => {
+              if (err) { resolve(remotePath); return; }
+              sftp.realpath('.', (rpErr: Error | undefined, absCwd: string) => {
+                resolve(rpErr ? remotePath : `${absCwd}/${remotePath}`);
+              });
+            });
+          });
+        }
+      } catch (cwdErr: any) {
+        console.warn(`[SSH] getSessionCwd failed: ${cwdErr.message}, using relative path`);
+      }
+    }
+    console.log(`[SSH] SFTP upload path: ${remotePath} -> ${fullPath}`);
+
+    // 使用 Promise + 超时包装（120秒，大文件需要更多时间）
+    const SFTP_TIMEOUT = 120000;
     return new Promise<number>((resolve, reject) => {
       let done = false;
       const timer = setTimeout(() => {
@@ -1049,88 +1100,114 @@ Write-Output "__DOCKER__: $dockerVer"
         if (err) reject(err); else resolve(bytes!);
       };
 
-      console.log(`[SSH] SFTP opening subsystem...`);
-      session.client!.sftp((sftpErr: Error | undefined, sftp: any) => {
-        if (done) return;
-        if (sftpErr) {
-          console.error(`[SSH] SFTP open failed: ${sftpErr.message}`);
-          finish(new Error('SFTP init failed: ' + sftpErr.message));
-          return;
-        }
-        console.log(`[SSH] SFTP subsystem ready`);
-
-        // 解析路径：先获取远程 CWD
-        const resolvePath = (cb: (fullPath: string) => void) => {
-          if (remotePath.startsWith('/')) {
-            cb(remotePath);
-          } else {
-            console.log(`[SSH] SFTP resolving CWD...`);
-            sftp.realpath('.', (rpErr: Error | undefined, absCwd: string) => {
-              if (rpErr) {
-                console.warn(`[SSH] SFTP realpath failed: ${rpErr.message}, using /tmp`);
-                cb(`/tmp/${remotePath}`);
-              } else {
-                const resolved = `${absCwd}/${remotePath}`;
-                console.log(`[SSH] SFTP resolved path: ${absCwd} + ${remotePath} = ${resolved}`);
-                cb(resolved);
-              }
-            });
-          }
-        };
-
-        resolvePath((fullPath) => {
+      const doSftpWrite = (targetPath: string, callback: (err: Error | null) => void) => {
+        console.log(`[SSH] SFTP opening subsystem...`);
+        session.client!.sftp((sftpErr: Error | undefined, sftp: any) => {
           if (done) return;
-          console.log(`[SSH] SFTP writing ${fileBuffer.length} bytes to ${fullPath}...`);
+          if (sftpErr) {
+            callback(new Error('SFTP init failed: ' + sftpErr.message));
+            return;
+          }
+          console.log(`[SSH] SFTP writing ${fileBuffer.length} bytes to ${targetPath}...`);
 
-          // 使用低层 open + write + close 确保数据真正写入远程服务器
-          sftp.open(fullPath, 'w', (openErr: Error | undefined, fd: number) => {
+          sftp.open(targetPath, 'w', (openErr: Error | undefined, fd: number) => {
             if (done) return;
             if (openErr) {
               console.error(`[SSH] SFTP open error: ${openErr.message}`);
-              finish(new Error('SFTP open failed: ' + openErr.message));
+              callback(new Error('SFTP open failed: ' + openErr.message));
               return;
             }
 
-            // 写入数据（支持大文件分块写入）
             sftp.write(fd, fileBuffer, 0, fileBuffer.length, 0, (writeErr: Error | undefined) => {
               if (done) return;
               if (writeErr) {
                 console.error(`[SSH] SFTP write error: ${writeErr.message}`);
-                sftp.close(fd, () => {}); // 尝试关闭句柄
-                finish(new Error('SFTP write failed: ' + writeErr.message));
+                sftp.close(fd, () => {});
+                callback(new Error('SFTP write failed: ' + writeErr.message));
                 return;
               }
 
-              // 关闭文件句柄
               sftp.close(fd, (closeErr: Error | undefined) => {
                 if (done) return;
                 if (closeErr) {
-                  console.error(`[SSH] SFTP close error: ${closeErr.message}`);
-                  finish(new Error('SFTP close failed: ' + closeErr.message));
+                  callback(new Error('SFTP close failed: ' + closeErr.message));
                   return;
                 }
-
-                // 写入后验证：stat 检查文件是否真实存在且大小正确
-                sftp.stat(fullPath, (statErr: Error | undefined, stats: any) => {
-                  if (done) return;
-                  if (statErr) {
-                    console.error(`[SSH] SFTP verify failed: file not found after write: ${statErr.message}`);
-                    finish(new Error('SFTP verify failed: file not found on remote server after write'));
-                    return;
-                  }
-                  const remoteSize = stats.size;
-                  if (remoteSize !== fileBuffer.length) {
-                    console.error(`[SSH] SFTP verify failed: size mismatch, expected ${fileBuffer.length}, got ${remoteSize}`);
-                    finish(new Error(`SFTP verify failed: size mismatch (expected ${fileBuffer.length}, got ${remoteSize})`));
-                    return;
-                  }
-                  console.log(`[SSH] SFTP upload verified: ${fullPath} (${remoteSize} bytes)`);
-                  finish(null, fileBuffer.length);
-                });
+                callback(null);
               });
             });
           });
         });
+      };
+
+      // 先尝试直接写入目标路径
+      doSftpWrite(fullPath, (err) => {
+        if (done) return;
+        if (!err) {
+          // 直接写入成功，验证文件
+          console.log(`[SSH] SFTP direct write succeeded, verifying...`);
+          session.client!.sftp((_, sftp) => {
+            sftp.stat(fullPath, (statErr: Error | undefined, stats: any) => {
+              if (statErr || stats.size !== fileBuffer.length) {
+                finish(new Error('SFTP verify failed'));
+              } else {
+                console.log(`[SSH] SFTP upload verified: ${fullPath} (${stats.size} bytes)`);
+                finish(null, fileBuffer.length);
+              }
+            });
+          });
+          return;
+        }
+
+        // 权限不足 → fallback: 写入 /tmp 再用 shell mv
+        if (err.message.includes('Permission denied') || err.message.includes('permission')) {
+          const tmpPath = `/tmp/.aicmd_upload_${Date.now()}`;
+          console.log(`[SSH] Permission denied on ${fullPath}, falling back to ${tmpPath} + mv`);
+
+          doSftpWrite(tmpPath, async (tmpErr) => {
+            if (done) return;
+            if (tmpErr) {
+              finish(new Error('SFTP fallback write failed: ' + tmpErr.message));
+              return;
+            }
+
+            // 通过已有 shell stream 执行 mv（避免 exec channel 挂起）
+            try {
+              const mvCmd = `mv -f '${tmpPath}' '${fullPath}'`;
+              console.log(`[SSH] Shell exec: ${mvCmd}`);
+              const mvMarker = `__AICmd_MV_${Date.now()}__`;
+              const captureP = this.captureOutput(sessionId, 5000);
+              this.writeData(sessionId, `${mvCmd} && echo ${mvMarker}:OK || echo ${mvMarker}:FAIL\n`);
+              const mvOutput = await captureP;
+              console.log(`[SSH] mv output: ${JSON.stringify(mvOutput.substring(0, 200))}`);
+
+              if (mvOutput.includes(`${mvMarker}:OK`)) {
+                console.log(`[SSH] SFTP upload via mv: ${fullPath} (${fileBuffer.length} bytes)`);
+                finish(null, fileBuffer.length);
+                return;
+              }
+
+              // mv 失败，尝试 sudo mv
+              console.log(`[SSH] mv failed, trying sudo mv...`);
+              const sudoMarker = `__AICmd_SUDO_${Date.now()}__`;
+              const sudoCaptureP = this.captureOutput(sessionId, 5000);
+              this.writeData(sessionId, `sudo mv -f '${tmpPath}' '${fullPath}' && echo ${sudoMarker}:OK || echo ${sudoMarker}:FAIL\n`);
+              const sudoOutput = await sudoCaptureP;
+              console.log(`[SSH] sudo mv output: ${JSON.stringify(sudoOutput.substring(0, 200))}`);
+
+              if (sudoOutput.includes(`${sudoMarker}:OK`)) {
+                console.log(`[SSH] SFTP upload via sudo mv: ${fullPath} (${fileBuffer.length} bytes)`);
+                finish(null, fileBuffer.length);
+              } else {
+                finish(new Error(`Upload failed: cannot write to ${fullPath}`));
+              }
+            } catch (mvErr: any) {
+              finish(new Error('Shell mv failed: ' + mvErr.message));
+            }
+          });
+        } else {
+          finish(err);
+        }
       });
     });
   }

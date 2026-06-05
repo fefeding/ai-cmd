@@ -318,7 +318,7 @@ export class ConnectionService {
    */
   private convertWithSSHKeygen(keyPath: string): string | null {
     try {
-      const tmpDir = path.join(os.tmpdir(), 'fshell-ssh-key-convert');
+      const tmpDir = path.join(os.tmpdir(), 'aicmd-ssh-key-convert');
       if (!fs.existsSync(tmpDir)) {
         fs.mkdirSync(tmpDir, { recursive: true });
       }

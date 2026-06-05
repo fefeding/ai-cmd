@@ -393,8 +393,7 @@ async function serverRoute(req: Connect.IncomingMessage, res: http.ServerRespons
                 try {
                     const fileBuffer = Buffer.concat(chunks);
                     console.log(`[HTTP-Upload] Received ${fileBuffer.length} bytes, calling SFTP...`);
-                    const b64 = fileBuffer.toString('base64');
-                    const bytes = await sshService!.uploadFileViaSftp(sessionId, fileName, b64);
+                    const bytes = await sshService!.uploadFileViaSftp(sessionId, fileName, fileBuffer);
                     console.log(`[HTTP-Upload] SFTP done: ${fileName}, ${bytes} bytes`);
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify({ success: true, bytes, fileName }));

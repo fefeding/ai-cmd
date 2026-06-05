@@ -80,9 +80,7 @@ app.post('/api/file-upload', async (req, res) => {
     }
     const fileBuffer = Buffer.concat(chunks);
     console.log(`[HTTP-Upload] Received ${fileBuffer.length} bytes, calling SFTP...`);
-    // 将原始 buffer 转为 base64 传给 SFTP 方法
-    const b64 = fileBuffer.toString('base64');
-    const bytes = await sshService.uploadFileViaSftp(sessionId, fileName, b64);
+    const bytes = await sshService.uploadFileViaSftp(sessionId, fileName, fileBuffer);
     console.log(`[HTTP-Upload] SFTP done: ${fileName}, ${bytes} bytes`);
     res.json({ success: true, bytes, fileName });
   } catch (err) {
@@ -325,7 +323,7 @@ wss.on('connection', async (ws, req) => {
           }
           try {
             console.log(`[WS] SFTP upload START: session=${sid}, file=${fileName}, b64len=${fileData.length}, wsReady=${ws.readyState}`);
-            const bytes = await sshService.uploadFileViaSftp(sid, fileName, fileData);
+            const bytes = await sshService.uploadFileViaSftp(sid, fileName, Buffer.from(fileData, 'base64'));
             console.log(`[WS] SFTP upload DONE: ${fileName}, ${bytes} bytes, wsReady=${ws.readyState}`);
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'file-upload-result', success: true, bytes, fileName }));
@@ -391,7 +389,7 @@ wss.on('connection', async (ws, req) => {
             }
             const fullB64 = endUpload.chunks.join('');
             console.log(`[WS] Joined ${endUpload.totalChunks} chunks -> b64len=${fullB64.length}, calling SFTP upload...`);
-            const bytes = await sshService.uploadFileViaSftp(endUpload.sessionId, endUpload.fileName, fullB64);
+            const bytes = await sshService.uploadFileViaSftp(endUpload.sessionId, endUpload.fileName, Buffer.from(fullB64, 'base64'));
             console.log(`[WS] Chunked upload SFTP DONE: ${endUpload.fileName}, ${bytes} bytes, wsReady=${ws.readyState}`);
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'file-upload-result', success: true, bytes, fileName: endUpload.fileName }));
