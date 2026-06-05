@@ -72,7 +72,6 @@
               :connection="getConnection(tab.connectionId)"
               :active="tab.id === store.activeTabId"
               @status-change="(s, sid) => handleStatusChange(tab.id, s, sid)"
-              @zmodem-detected="(info: any) => handleZmodemDetected(tab.id, info)"
               @open-ai-settings="openAISettings"
             />
           </div>
@@ -116,9 +115,6 @@
       </div>
     </div>
 
-    <!-- 文件传输对话框 -->
-    <FileTransfer ref="fileTransferRef" />
-
     <!-- Tab 右键菜单 -->
     <div
       v-if="contextMenuVisible"
@@ -154,7 +150,6 @@ import * as terminalService from '@/service/terminal';
 import TerminalSidebar from '@/components/terminal-sidebar.vue';
 import TerminalTabComp from '@/components/terminal-tab.vue';
 import ConnectionEditor from '@/components/connection-editor/index.vue';
-import FileTransfer from '@/components/file-transfer.vue';
 import AISettings from '@/components/ai-settings/index.vue';
 import BatchPanel from '@/components/batch-panel/index.vue';
 import type { ConnectionEntity, TerminalTab as TerminalTabType } from '@/typings/connection';
@@ -163,12 +158,9 @@ const { t } = useI18n();
 
 const store = useTerminalStore();
 const connectionEditorRef = ref<InstanceType<typeof ConnectionEditor>>();
-const fileTransferRef = ref<InstanceType<typeof FileTransfer>>();
 const aiSettingsRef = ref<InstanceType<typeof AISettings>>();
 const batchPanelRef = ref<InstanceType<typeof BatchPanel>>();
 const showBatchPanel = ref(false);
-const showZmodemBtn = ref(false);
-const activeZmodemTabId = ref<string | null>(null);
 
 // Tab 重命名状态
 const editingTabId = ref<string | null>(null);
@@ -337,27 +329,6 @@ async function handleCloseAllFromContext() {
 // Tab 状态变化
 function handleStatusChange(tabId: string, status: TerminalTabType['status'], sessionId?: string) {
   store.updateTabStatus(tabId, status, sessionId);
-}
-
-// ZMODEM 检测 - 自动弹出文件传输对话框
-function handleZmodemDetected(tabId: string, info: any) {
-  console.log('[ZMODEM] Auto-detected in tab:', tabId, 'role:', info?.role);
-  activeZmodemTabId.value = tabId;
-  const termRef = termRefs.get(tabId);
-  if (termRef && fileTransferRef.value) {
-    // 自动弹出文件传输对话框，传入 session 信息
-    fileTransferRef.value.show(tabId, termRef, info);
-  }
-}
-
-// 文件传输
-function handleFileTransfer() {
-  const tabId = activeZmodemTabId.value || store.activeTabId;
-  if (!tabId) return;
-  const termRef = termRefs.get(tabId);
-  if (termRef) {
-    fileTransferRef.value?.show(tabId, termRef);
-  }
 }
 
 // 打开 AI 设置

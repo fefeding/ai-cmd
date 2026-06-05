@@ -2,6 +2,9 @@
   <div class="terminal-wrapper" ref="terminalWrapper">
     <div class="terminal-container" ref="terminalContainer"></div>
     
+    <!-- 文件传输浮动面板 -->
+    <FileTransfer ref="fileTransferRef" />
+
     <!-- AI 按钮 -->
     <button 
       v-if="status === 'connected'" 
@@ -62,6 +65,7 @@ import '@xterm/xterm/css/xterm.css';
 import type { ConnectionEntity, WSMessage } from '@/typings/connection';
 import { createSentry, base64ToOctets, stringToOctets, octetsToBase64, Zmodem } from '@/utils/zmodem';
 import AIChat from '@/components/ai-chat/index.vue';
+import FileTransfer from '@/components/file-transfer.vue';
 
 const { t } = useI18n();
 
@@ -79,12 +83,26 @@ const emit = defineEmits<{
 
 const terminalWrapper = ref<HTMLElement>();
 const terminalContainer = ref<HTMLElement>();
+const fileTransferRef = ref<InstanceType<typeof FileTransfer>>();
 const status = ref<'connecting' | 'connected' | 'disconnected' | 'error' | 'reconnecting'>('connecting');
 const errorMessage = ref('');
 
 // AI 聊天相关
 const showAIChat = ref(false);
 const aiChatRef = ref<InstanceType<typeof AIChat>>();
+
+/** 显示文件传输浮动面板 */
+function showFileTransfer(info?: any) {
+  const termRef = {
+    sessionId: sessionId,
+    sendToServer: (msg: WSMessage) => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(msg));
+      }
+    },
+  };
+  fileTransferRef.value?.show(props.tabId, termRef, info);
+}
 
 let terminal: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
@@ -291,11 +309,13 @@ function initSentry() {
           // rz 发送 ZRINIT，浏览器应上传文件
           console.log('[ZMODEM] rz detected (ZRINIT) - browser will send files');
           emit('zmodem-detected', { role, session, markHandlersReady });
+          showFileTransfer({ role, session, markHandlersReady });
         } else {
           // zmodem.js: ZRQINIT → Session.Receive → role='receive'
           // sz 发送 ZRQINIT，浏览器应下载文件
           console.log('[ZMODEM] sz detected (ZRQINIT) - browser will receive files');
           emit('zmodem-detected', { role, session, markHandlersReady });
+          showFileTransfer({ role, session, markHandlersReady });
         }
       } catch (err) {
         console.error('[ZMODEM] Auto-confirm error:', err);
@@ -606,6 +626,7 @@ function createManualSession(type: 'ZRQINIT' | 'ZRINIT', frameOctets: number[]) 
 
   // 通知父组件
   emit('zmodem-detected', { role, session, markHandlersReady });
+  showFileTransfer({ role, session, markHandlersReady });
 }
 
 // 处理服务端消息

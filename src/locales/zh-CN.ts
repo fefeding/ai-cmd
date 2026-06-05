@@ -110,6 +110,7 @@ export default {
   },
   fileTransfer: {
     title: '文件传输',
+    transferring: '传输中...',
     upload: '上传文件 (rz)',
     download: '下载文件 (sz)',
     dropZone: '拖放文件到此处，或点击选择文件',

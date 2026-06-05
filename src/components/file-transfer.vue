@@ -1,24 +1,42 @@
 <template>
-  <Modal
-    ref="modalRef"
-    :title="t('fileTransfer.title')"
-    :closeButton="{ text: t('common.close'), show: true }"
-    :confirmButton="{ text: '', show: false }"
-    :style="{ maxWidth: '500px', width: '100%' }"
-    @onHidden="handleClose"
-  >
-    <div class="file-transfer-body">
+  <div v-if="visible" class="file-transfer-widget" :class="{ collapsed: isCollapsed }">
+    <!-- 标题栏（始终可见，点击切换折叠） -->
+    <div class="ft-header" @click="isCollapsed = !isCollapsed">
+      <span class="ft-title">
+        <i class="bi bi-cloud-arrow-up me-1"></i>
+        <template v-if="transferring">
+          {{ t('fileTransfer.transferring') }}
+        </template>
+        <template v-else-if="transferHistory.length > 0">
+          {{ t('fileTransfer.title') }} ({{ transferHistory.length }})
+        </template>
+        <template v-else>
+          {{ t('fileTransfer.title') }}
+        </template>
+      </span>
+      <div class="ft-header-actions">
+        <button class="ft-btn-icon" @click.stop="isCollapsed = !isCollapsed" :title="isCollapsed ? '展开' : '收起'">
+          <i :class="isCollapsed ? 'bi bi-chevron-up' : 'bi bi-chevron-down'"></i>
+        </button>
+        <button class="ft-btn-icon" @click.stop="handleClose" :title="t('common.close')">
+          <i class="bi bi-x"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- 可折叠内容区 -->
+    <div v-show="!isCollapsed" class="ft-body">
       <!-- 操作选择（自动模式时隐藏） -->
-      <div v-if="!zmodemAutoMode" class="d-flex gap-2 mb-3">
+      <div v-if="!zmodemAutoMode" class="d-flex gap-2 mb-2">
         <button
-          class="btn flex-fill"
+          class="btn btn-sm flex-fill"
           :class="mode === 'upload' ? 'btn-primary' : 'btn-outline-secondary'"
           @click="mode = 'upload'"
         >
           <i class="bi bi-upload me-1"></i>{{ t('fileTransfer.upload') }}
         </button>
         <button
-          class="btn flex-fill"
+          class="btn btn-sm flex-fill"
           :class="mode === 'download' ? 'btn-primary' : 'btn-outline-secondary'"
           @click="mode = 'download'"
         >
@@ -36,11 +54,8 @@
           @drop.prevent="handleDrop"
           @click="triggerFileInput"
         >
-          <i class="bi bi-cloud-upload" style="font-size: 32px;"></i>
-          <div class="mt-2">{{ t('fileTransfer.dropZone') }}</div>
-          <div class="mt-1" style="font-size: 12px; color: var(--text-secondary);">
-            {{ t('fileTransfer.multiFileSupport') }}
-          </div>
+          <i class="bi bi-cloud-upload" style="font-size: 20px;"></i>
+          <span class="ms-2">{{ t('fileTransfer.dropZone') }}</span>
         </div>
         <input
           ref="fileInput"
@@ -53,53 +68,50 @@
 
       <!-- 下载模式 -->
       <div v-if="mode === 'download'">
-        <div v-if="zmodemAutoMode" class="text-center py-3">
+        <div v-if="zmodemAutoMode" class="text-center py-2">
           <div class="spinner-border spinner-border-sm text-primary me-2"></div>
           {{ t('fileTransfer.waitingForFiles') }}
         </div>
-        <div v-else class="mb-3">
-          <label class="form-label">{{ t('fileTransfer.remotePath') }}</label>
+        <div v-else class="mb-2">
           <input
             type="text"
-            class="form-control"
+            class="form-control form-control-sm"
             v-model="remoteFilePath"
             :placeholder="t('fileTransfer.remotePathPlaceholder')"
             style="background: #313244; border-color: #45475a; color: var(--text-primary);"
           >
+          <button
+            class="btn btn-primary btn-sm w-100 mt-2"
+            :disabled="!remoteFilePath || transferring"
+            @click="startManualDownload"
+          >
+            <i class="bi bi-download me-1"></i>{{ t('fileTransfer.startDownload') }}
+          </button>
         </div>
-        <button
-          v-if="!zmodemAutoMode"
-          class="btn btn-primary w-100"
-          :disabled="!remoteFilePath || transferring"
-          @click="startManualDownload"
-        >
-          <i class="bi bi-download me-1"></i>{{ t('fileTransfer.startDownload') }}
-        </button>
       </div>
 
       <!-- 传输进度 -->
-      <div v-if="transferring || transferHistory.length > 0" class="mt-3">
-        <div class="fw-bold mb-2" style="font-size: 13px;">{{ t('fileTransfer.transferHistory') }}</div>
+      <div v-if="transferring || transferHistory.length > 0" class="mt-2">
         <div class="transfer-list">
           <!-- 当前传输 -->
           <div v-if="currentProgress" class="transfer-item">
             <div class="d-flex align-items-center justify-content-between mb-1">
-              <span class="text-truncate" style="font-size: 13px;">
+              <span class="text-truncate" style="font-size: 12px;">
                 <i :class="currentProgress.direction === 'upload' ? 'bi bi-upload' : 'bi bi-download'" class="me-1"></i>
                 {{ currentProgress.fileName }}
               </span>
-              <span style="font-size: 12px; color: var(--text-secondary);">
+              <span style="font-size: 11px; color: var(--text-secondary);">
                 {{ formatSize(currentProgress.bytesSent) }} / {{ formatSize(currentProgress.bytesTotal) }}
               </span>
             </div>
-            <div class="progress" style="height: 4px;">
+            <div class="progress" style="height: 3px;">
               <div
                 class="progress-bar"
                 :class="currentProgress.state === 'error' ? 'bg-danger' : 'bg-primary'"
                 :style="{ width: currentProgress.percent + '%' }"
               ></div>
             </div>
-            <div v-if="currentProgress.state === 'error'" class="text-danger" style="font-size: 12px;">
+            <div v-if="currentProgress.state === 'error'" class="text-danger" style="font-size: 11px;">
               {{ t('fileTransfer.transferFailed') }}
             </div>
           </div>
@@ -111,14 +123,11 @@
             class="transfer-item"
           >
             <div class="d-flex align-items-center justify-content-between">
-              <span class="text-truncate" style="font-size: 13px;">
+              <span class="text-truncate" style="font-size: 12px;">
                 <i :class="item.direction === 'upload' ? 'bi bi-upload' : 'bi bi-download'" class="me-1"></i>
                 {{ item.fileName }}
               </span>
-              <span
-                style="font-size: 12px;"
-                :class="item.state === 'complete' ? 'text-success' : 'text-danger'"
-              >
+              <span style="font-size: 11px;" :class="item.state === 'complete' ? 'text-success' : 'text-danger'">
                 {{ item.state === 'complete' ? t('fileTransfer.complete') : t('fileTransfer.failed') }}
               </span>
             </div>
@@ -126,27 +135,27 @@
         </div>
       </div>
 
-      <!-- 操作按钮 -->
-      <div v-if="transferring" class="mt-3 text-center">
+      <!-- 取消按钮 -->
+      <div v-if="transferring" class="mt-2 text-center">
         <button class="btn btn-outline-danger btn-sm" @click="cancelTransfer">
           <i class="bi bi-x-circle me-1"></i>{{ t('fileTransfer.cancelTransfer') }}
         </button>
       </div>
     </div>
-  </Modal>
+  </div>
 </template>
 
 <script lang="ts" setup>
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import Modal from '@/components/modal/index.vue';
 import { Zmodem, formatFileSize, type ZmodemProgress } from '@/utils/zmodem';
 import { toast } from '@/utils/toast';
 
 const { t } = useI18n();
 
-const modalRef = ref();
 const fileInput = ref<HTMLInputElement>();
+const visible = ref(false);
+const isCollapsed = ref(false);
 const mode = ref<'upload' | 'download'>('upload');
 const isDragging = ref(false);
 const remoteFilePath = ref('');
@@ -183,16 +192,17 @@ function setupReceiveHandlers(session: any) {
     console.log('[FileTransfer] Receive session ended');
     transferring.value = false;
     currentProgress.value = null;
-    // 自动关闭弹窗
+    // 自动折叠
     setTimeout(() => {
-      (document.activeElement as HTMLElement)?.blur?.();
-      modalRef.value?.hide?.();
+      if (!transferring.value) {
+        isCollapsed.value = true;
+      }
     }, 800);
   });
 }
 
 /**
- * 显示文件传输对话框
+ * 显示文件传输面板
  * @param tabId 当前 tab ID
  * @param termRef 终端组件引用
  * @param info ZMODEM session 信息 { role, session, offer? }
@@ -204,6 +214,8 @@ function show(tabId: string, termRef: any, info?: any) {
   transferHistory.value = [];
   transferring.value = false;
   zmodemAutoMode.value = false;
+  visible.value = true;
+  isCollapsed.value = false;
 
   if (info && info.session) {
     zmodemSession = info.session;
@@ -211,27 +223,20 @@ function show(tabId: string, termRef: any, info?: any) {
     console.log('[FileTransfer] ZMODEM session ready, role:', role);
 
     if (role === 'send') {
-      // zmodem.js: ZRINIT → Session.Send → role='send'
-      // rz 发送 ZRINIT 表示"我想接收文件" → 浏览器上传文件
       mode.value = 'upload';
       zmodemAutoMode.value = true;
       info.markHandlersReady?.();
     } else if (role === 'receive') {
-      // zmodem.js: ZRQINIT → Session.Receive → role='receive'
-      // sz 发送 ZRQINIT 表示"我想发送文件" → 浏览器下载文件
       mode.value = 'download';
       zmodemAutoMode.value = true;
       setupReceiveHandlers(zmodemSession);
       info.markHandlersReady?.();
 
-      // start() 发送 ZRINIT，返回 Promise<Offer | undefined>
       zmodemSession.start?.().then((offerOrUndefined: any) => {
         if (offerOrUndefined && typeof offerOrUndefined.accept === 'function') {
-          // start() 返回了 Offer 对象，直接处理
           console.log('[FileTransfer] start() returned offer, handling directly');
           handleFileOffer(offerOrUndefined);
         } else {
-          // ZFIN 直接到达（没有文件）
           console.log('[FileTransfer] start() resolved without offer (ZFIN)');
         }
       }).catch((err: any) => {
@@ -243,28 +248,19 @@ function show(tabId: string, termRef: any, info?: any) {
     zmodemSession = null;
     mode.value = 'upload';
   }
-
-  modalRef.value?.show();
 }
 
 function handleClose() {
-  // 移除焦点避免 Bootstrap aria-hidden 警告
-  (document.activeElement as HTMLElement)?.blur?.();
-
   if (transferring.value) {
     cancelTransfer();
   } else {
-    // 即使没有传输中，也需要终止远程 rz/sz 进程
     if (activeTermRef) {
-      // 保存引用，因为 setTimeout 回调执行时 activeTermRef 已被清空
       const termRef = activeTermRef;
       const sid = termRef.sessionId;
       const sendAbort = (data: string) => {
         termRef.sendToServer({ type: 'terminal', sessionId: sid || undefined, data });
       };
-      // 发送 ZMODEM abort 序列（5 个 CAN 字符 = \x18）
       sendAbort('\x18\x18\x18\x18\x18');
-      // 再发送 Ctrl+C 确保进程退出
       setTimeout(() => sendAbort('\x03'), 100);
       setTimeout(() => sendAbort('\x03'), 300);
     }
@@ -273,6 +269,7 @@ function handleClose() {
       zmodemSession = null;
     }
   }
+  visible.value = false;
   activeTermRef = null;
   activeTabId = null;
 }
@@ -298,7 +295,7 @@ function handleFileSelect(e: Event) {
 }
 
 /**
- * 上传文件 - 通过 HTTP POST + SFTP 直传（绕过 WebSocket 和 PTY）
+ * 上传文件 - 通过 HTTP POST + SFTP 直传
  */
 async function startUpload(files: File[]) {
   if (!activeTermRef) {
@@ -309,18 +306,16 @@ async function startUpload(files: File[]) {
   transferring.value = true;
 
   try {
-    // 如果有 ZMODEM session，先 abort
     if (zmodemSession) {
       try { zmodemSession.abort?.(); } catch (e) { /* ignore */ }
       zmodemSession = null;
     }
 
-    // 终止 rz 进程
-    sendToTerm('\x03'); // Ctrl+C
+    sendToTerm('\x03');
     await new Promise(r => setTimeout(r, 300));
-    sendToTerm('\x03'); // 再发一次 Ctrl+C
+    sendToTerm('\x03');
     await new Promise(r => setTimeout(r, 200));
-    sendToTerm('\x15'); // Ctrl+U 清空当前行
+    sendToTerm('\x15');
     await new Promise(r => setTimeout(r, 100));
 
     for (const file of files) {
@@ -347,7 +342,6 @@ async function startUpload(files: File[]) {
         state: 'transferring',
       };
 
-      // 通过 HTTP POST 上传文件原始二进制数据
       const result = await httpFileUpload(file, safeName, sid);
 
       if (result.success) {
@@ -378,10 +372,11 @@ async function startUpload(files: File[]) {
     transferring.value = false;
     toast.success(t('fileTransfer.uploadComplete'));
 
-    // 自动关闭对话框
+    // 上传完成后自动折叠
     setTimeout(() => {
-      (document.activeElement as HTMLElement)?.blur?.();
-      modalRef.value?.hide?.();
+      if (!transferring.value) {
+        isCollapsed.value = true;
+      }
     }, 800);
   } catch (error: any) {
     console.error('[FileTransfer] Upload error:', error);
@@ -396,7 +391,7 @@ async function startUpload(files: File[]) {
 }
 
 /**
- * 通过 HTTP POST 上传文件到服务端，服务端通过 SFTP 写入远程服务器
+ * 通过 HTTP POST 上传文件到服务端
  */
 async function httpFileUpload(
   file: File,
@@ -425,7 +420,6 @@ async function httpFileUpload(
 
 /**
  * 处理下载的文件 offer (sz)
- * session role = 'receive'
  */
 function handleFileOffer(offer: any) {
   const details = offer.get_details();
@@ -444,7 +438,6 @@ function handleFileOffer(offer: any) {
     state: 'transferring',
   };
 
-  // 监听数据输入
   let receivedBytes = 0;
   offer.on('input', (payload: any) => {
     receivedBytes += payload.length;
@@ -458,14 +451,11 @@ function handleFileOffer(offer: any) {
     };
   });
 
-  // 接受文件并保存
   offer.accept().then((packets: any[]) => {
     console.log('[FileTransfer] File received:', fileName, packets?.length, 'packets');
-
     if (packets && packets.length > 0) {
       Zmodem.Browser.save_to_disk(packets, fileName);
     }
-
     transferHistory.value.unshift({
       direction: 'download',
       fileName,
@@ -478,11 +468,9 @@ function handleFileOffer(offer: any) {
     transferring.value = false;
     toast.success(t('fileTransfer.downloadComplete'));
 
-    // 自动关闭弹窗（等待可能的后续文件或 session_end）
     setTimeout(() => {
       if (!transferring.value) {
-        (document.activeElement as HTMLElement)?.blur?.();
-        modalRef.value?.hide?.();
+        isCollapsed.value = true;
       }
     }, 2000);
   }).catch((err: any) => {
@@ -497,28 +485,23 @@ function handleFileOffer(offer: any) {
 }
 
 /**
- * 手动下载（非 ZMODEM 自动检测，通过在终端执行 sz 命令触发）
+ * 手动下载（非 ZMODEM 自动检测）
  */
 function startManualDownload() {
   if (!remoteFilePath.value) {
     toast.warning(t('fileTransfer.remotePathRequired'));
     return;
   }
-
   if (activeTermRef) {
-    // 发送 sz 命令到终端
     const cmd = `sz ${remoteFilePath.value}\n`;
     activeTermRef.sendToServer?.({ type: 'terminal', sessionId: undefined, data: cmd });
     toast.info(t('fileTransfer.startDownload'));
   }
-
-  modalRef.value?.hide?.();
+  isCollapsed.value = true;
 }
 
 function cancelTransfer() {
-  // 发送 ZMODEM abort 序列（5 个 CAN 字符 = \x18）终止远程 rz/sz 进程
   if (activeTermRef) {
-    // 保存引用，因为 setTimeout 回调执行时 activeTermRef 可能已被清空
     const termRef = activeTermRef;
     const sid = termRef.sessionId;
     const sendAbort = (data: string) => {
@@ -529,11 +512,7 @@ function cancelTransfer() {
     setTimeout(() => sendAbort('\x03'), 300);
   }
   if (zmodemSession) {
-    try {
-      zmodemSession.abort?.();
-    } catch (e) {
-      // ignore
-    }
+    try { zmodemSession.abort?.(); } catch (e) { /* ignore */ }
   }
   transferring.value = false;
   if (currentProgress.value) {
@@ -551,36 +530,107 @@ defineExpose({ show });
 </script>
 
 <style scoped>
-.file-transfer-body {
-  padding: 0.5rem;
+.file-transfer-widget {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  width: 300px;
+  background: rgba(30, 30, 46, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 30;
+  overflow: hidden;
+  backdrop-filter: blur(12px);
+  font-size: 13px;
+}
+
+.file-transfer-widget.collapsed {
+  width: 200px;
+}
+
+.ft-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  cursor: pointer;
+  user-select: none;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.ft-header:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.ft-title {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary, #cdd6f4);
+}
+
+.ft-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ft-btn-icon {
+  background: none;
+  border: none;
+  color: var(--text-secondary, #a6adc8);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ft-btn-icon:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary, #cdd6f4);
+}
+
+.ft-body {
+  padding: 10px;
 }
 
 .drop-zone {
   border: 2px dashed #45475a;
-  border-radius: 8px;
-  padding: 32px 16px;
+  border-radius: 6px;
+  padding: 14px 10px;
   text-align: center;
   cursor: pointer;
   transition: all 0.2s;
-  color: var(--text-secondary);
+  color: var(--text-secondary, #a6adc8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
 }
 
 .drop-zone:hover,
 .drop-zone.dragging {
-  border-color: var(--accent);
+  border-color: var(--accent, #89b4fa);
   background-color: rgba(137, 180, 250, 0.05);
-  color: var(--text-primary);
+  color: var(--text-primary, #cdd6f4);
 }
 
 .transfer-list {
-  max-height: 200px;
+  max-height: 140px;
   overflow-y: auto;
 }
 
 .transfer-item {
-  padding: 8px;
-  border-radius: 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
   background-color: rgba(255, 255, 255, 0.03);
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 </style>

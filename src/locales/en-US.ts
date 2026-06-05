@@ -110,6 +110,7 @@ export default {
   },
   fileTransfer: {
     title: 'File Transfer',
+    transferring: 'Transferring...',
     upload: 'Upload (rz)',
     download: 'Download (sz)',
     dropZone: 'Drag files here or click to select',

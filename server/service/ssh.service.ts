@@ -1081,32 +1081,55 @@ Write-Output "__DOCKER__: $dockerVer"
         resolvePath((fullPath) => {
           if (done) return;
           console.log(`[SSH] SFTP writing ${fileBuffer.length} bytes to ${fullPath}...`);
-          // 使用 createWriteStream 代替 writeFile（更可靠）
-          try {
-            const ws = sftp.createWriteStream(fullPath);
-            let writeError: Error | null = null;
 
-            ws.on('error', (err: Error) => {
-              console.error(`[SSH] SFTP stream error: ${err.message}`);
-              writeError = err;
-            });
+          // 使用低层 open + write + close 确保数据真正写入远程服务器
+          sftp.open(fullPath, 'w', (openErr: Error | undefined, fd: number) => {
+            if (done) return;
+            if (openErr) {
+              console.error(`[SSH] SFTP open error: ${openErr.message}`);
+              finish(new Error('SFTP open failed: ' + openErr.message));
+              return;
+            }
 
-            ws.on('close', () => {
+            // 写入数据（支持大文件分块写入）
+            sftp.write(fd, fileBuffer, 0, fileBuffer.length, 0, (writeErr: Error | undefined) => {
               if (done) return;
-              if (writeError) {
-                console.error(`[SSH] SFTP write error: ${writeError.message}`);
-                finish(new Error('SFTP write failed: ' + writeError.message));
-              } else {
-                console.log(`[SSH] SFTP upload complete: ${fullPath} (${fileBuffer.length} bytes)`);
-                finish(null, fileBuffer.length);
+              if (writeErr) {
+                console.error(`[SSH] SFTP write error: ${writeErr.message}`);
+                sftp.close(fd, () => {}); // 尝试关闭句柄
+                finish(new Error('SFTP write failed: ' + writeErr.message));
+                return;
               }
-            });
 
-            ws.end(fileBuffer);
-          } catch (streamErr: any) {
-            console.error(`[SSH] SFTP createWriteStream error: ${streamErr.message}`);
-            finish(new Error('SFTP stream error: ' + streamErr.message));
-          }
+              // 关闭文件句柄
+              sftp.close(fd, (closeErr: Error | undefined) => {
+                if (done) return;
+                if (closeErr) {
+                  console.error(`[SSH] SFTP close error: ${closeErr.message}`);
+                  finish(new Error('SFTP close failed: ' + closeErr.message));
+                  return;
+                }
+
+                // 写入后验证：stat 检查文件是否真实存在且大小正确
+                sftp.stat(fullPath, (statErr: Error | undefined, stats: any) => {
+                  if (done) return;
+                  if (statErr) {
+                    console.error(`[SSH] SFTP verify failed: file not found after write: ${statErr.message}`);
+                    finish(new Error('SFTP verify failed: file not found on remote server after write'));
+                    return;
+                  }
+                  const remoteSize = stats.size;
+                  if (remoteSize !== fileBuffer.length) {
+                    console.error(`[SSH] SFTP verify failed: size mismatch, expected ${fileBuffer.length}, got ${remoteSize}`);
+                    finish(new Error(`SFTP verify failed: size mismatch (expected ${fileBuffer.length}, got ${remoteSize})`));
+                    return;
+                  }
+                  console.log(`[SSH] SFTP upload verified: ${fullPath} (${remoteSize} bytes)`);
+                  finish(null, fileBuffer.length);
+                });
+              });
+            });
+          });
         });
       });
     });
