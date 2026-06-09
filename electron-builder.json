@@ -30,7 +30,11 @@
       }
     ],
     "icon": "public/favicon.icns",
-    "hardenedRuntime": false
+    "hardenedRuntime": true,
+    "gatekeeperAssess": false,
+    "identity": null,
+    "entitlements": "build/entitlements.mac.plist",
+    "entitlementsInherit": "build/entitlements.mac.plist"
   },
   "win": {
     "target": [
