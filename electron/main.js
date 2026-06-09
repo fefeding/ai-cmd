@@ -8,7 +8,38 @@
 
 const { app, BrowserWindow, shell, ipcMain, protocol, net, Menu } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const { initAutoUpdater } = require('./updater');
+
+// ========== 日志输出到文件（生产模式调试用） ==========
+const logDir = path.join(os.homedir(), '.aicmd');
+try { if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true }); } catch (e) { /* ignore */ }
+const logFile = path.join(logDir, 'electron.log');
+const logStream = (() => {
+  try {
+    return fs.createWriteStream(logFile, { flags: 'w' });
+  } catch (e) { return null; }
+})();
+const origLog = console.log;
+const origError = console.error;
+const origWarn = console.warn;
+function ts() { return new Date().toISOString(); }
+console.log = function(...args) {
+  origLog.apply(console, args);
+  if (logStream) logStream.write(`[${ts()}] LOG ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}\n`);
+};
+console.error = function(...args) {
+  origError.apply(console, args);
+  if (logStream) logStream.write(`[${ts()}] ERR ${args.map(a => typeof a === 'string' ? a : (a instanceof Error ? a.message + '\n' + a.stack : JSON.stringify(a))).join(' ')}\n`);
+};
+console.warn = function(...args) {
+  origWarn.apply(console, args);
+  if (logStream) logStream.write(`[${ts()}] WRN ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}\n`);
+};
+console.log(`[Electron] Log file: ${logFile}`);
+console.log(`[Electron] App starting, packaged: ${app.isPackaged}, platform: ${process.platform}, arch: ${process.arch}`);
+console.log(`[Electron] __dirname: ${__dirname}, cwd: ${process.cwd()}`);
 
 // ========== 注册自定义协议（必须在 app.whenReady 之前） ==========
 // 解决 file:// 协议下绝对路径（/public/xxx.js）无法加载的问题
@@ -29,19 +60,32 @@ let _services = null;
 function getServices() {
   if (_services) return _services;
   if (isDev) {
-    // 开发模式下服务端由 Vite 开发服务器提供，主进程不加载
     console.warn('[Electron] Dev mode: services are provided by Vite dev server, IPC disabled');
     return null;
   }
-  // 加载编译后的服务端模块（生产模式从 dist/ 加载）
-  const serverModule = require(path.join(__dirname, '..', 'dist', 'server', 'index.js'));
-  _services = {
-    sshService: serverModule.sshService,
-    connectionService: serverModule.connectionService,
-    aiService: serverModule.aiService,
-    monitorService: serverModule.monitorService,
-  };
-  return _services;
+  try {
+    const serverPath = path.join(__dirname, '..', 'dist', 'server', 'index.js');
+    console.log(`[Electron] Loading server module from: ${serverPath}`);
+    console.log(`[Electron] __dirname: ${__dirname}`);
+    console.log(`[Electron] File exists: ${require('fs').existsSync(serverPath)}`);
+    const serverModule = require(serverPath);
+    console.log(`[Electron] Server module loaded, keys: ${Object.keys(serverModule).join(', ')}`);
+    _services = {
+      sshService: serverModule.sshService,
+      connectionService: serverModule.connectionService,
+      aiService: serverModule.aiService,
+      monitorService: serverModule.monitorService,
+    };
+    // 检查各服务是否正常
+    for (const [name, svc] of Object.entries(_services)) {
+      console.log(`[Electron] Service '${name}': ${svc ? 'OK' : 'NULL'}`);
+    }
+    return _services;
+  } catch (e) {
+    console.error(`[Electron] Failed to load server module: ${e.message}`);
+    console.error(e.stack);
+    return null;
+  }
 }
 
 // ========== 终端 IPC 处理（替代 WebSocket） ==========
@@ -189,7 +233,7 @@ function setupTerminalIPC() {
 
         case 'close': {
           if (sid) {
-            sshService.closeSession(sid);
+            sshService.deleteSession(sid);
             const sessions = windowSessions.get(win.id);
             if (sessions) sessions.delete(sid);
           }
@@ -252,6 +296,7 @@ function cleanupWindow(win) {
       sessions.forEach(sid => {
         try {
           services.monitorService.stopSessionMonitors(sid);
+          // 仅关闭连接，不删除元数据（保留 sessions.json 供下次启动恢复）
           services.sshService.closeSession(sid);
         } catch (e) { /* ignore */ }
       });
@@ -306,6 +351,13 @@ function createWindow(loadTarget) {
   if (isDev) {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
+
+  // 生产模式下可通过快捷键打开 DevTools 调试
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if ((input.meta || input.control) && input.shift && input.key.toLowerCase() === 'i') {
+      mainWindow.webContents.toggleDevTools();
+    }
+  });
 }
 
 // ========== 应用菜单 ==========

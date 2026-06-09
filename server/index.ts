@@ -16,13 +16,24 @@ const batchService = new BatchService(sshService, connectionService);
 const aiService = new AIService(sshService, skillService, auditService);
 
 // 初始化
-connectionService.init();
+console.log('[Server] Initializing services...');
+console.log(`[Server] Node version: ${process.version}, platform: ${process.platform}, arch: ${process.arch}`);
+console.log(`[Server] cwd: ${process.cwd()}`);
+console.log(`[Server] __dirname: ${__dirname}`);
+try {
+  connectionService.init();
+  console.log('[Server] connectionService.init() completed');
+} catch (e: any) {
+  console.error(`[Server] connectionService.init() FAILED: ${e.message}`);
+  console.error(e.stack);
+}
 
 /**
  * REST API 路由处理
  * 所有 API 请求通过此函数统一分发
  */
 export async function handleRoutes(pathname: string, body: any) {
+  console.log(`[Server] handleRoutes: ${pathname}`);
   try {
     // ========== 连接管理 ==========
 

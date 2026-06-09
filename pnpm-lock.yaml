@@ -59,6 +59,9 @@ importers:
       '@codemirror/view':
         specifier: ^6.43.0
         version: 6.43.0
+      '@electron/rebuild':
+        specifier: ^4.0.4
+        version: 4.0.4
       '@fefeding/eventemitter':
         specifier: ^1.0.5
         version: 1.0.5

@@ -7,6 +7,10 @@
  */
 
 const { ipcRenderer } = require('electron');
+const path = require('path');
+
+// 服务端模块绝对路径（供渲染进程 require 使用）
+const serverModulePath = path.join(process.resourcesPath, 'app.asar', 'dist', 'server', 'index.js');
 
 // 终端 IPC 通道（替代 WebSocket）
 const terminalIPC = {
@@ -54,6 +58,7 @@ window.electronAPI = {
   isElectron: true,
   isPackaged: !process.env.ELECTRON_DEV,
   platform: process.platform,
+  serverModulePath,
   terminalIPC,
   updater,
 };

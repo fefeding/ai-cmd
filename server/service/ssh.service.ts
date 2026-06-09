@@ -67,17 +67,24 @@ export class SSHService {
   private pendingMOTDCaptures: Map<string, Promise<string>> = new Map();
   /** Session 元数据持久化文件路径 */
   private sessionsFilePath: string;
+  /** 是否曾在本实例创建过 session（用于区分主进程/渲染进程实例，仅主进程实例执行定时清理） */
+  private hasCreatedSession: boolean = false;
+  /** 定时清理僵尸 session 的定时器 */
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(connectionService: ConnectionService) {
     this.connectionService = connectionService;
     this.sessionsFilePath = getDataPath('sessions.json');
     this.loadSessionsFromDisk();
+    this.startPeriodicCleanup();
   }
 
   /**
    * 创建会话（自动判断 SSH 或本地 shell）
    */
   async createSession(sessionId: string, connectionId: string, cols: number = 80, rows: number = 24, name?: string): Promise<TerminalSession> {
+    // 标记本实例曾创建过 session（用于定时清理判断）
+    this.hasCreatedSession = true;
     // 如果已存在同 ID 的会话，先关闭
     if (this.sessions.has(sessionId)) {
       this.closeSession(sessionId);
@@ -410,12 +417,19 @@ export class SSHService {
 
   /**
    * 删除会话（关闭进程并从 server 端移除 metadata）
+   * 注意：由于 Electron 主进程和渲染进程各自有独立的模块实例，
+   * 渲染进程实例的 sessionMetadata 可能不含主进程创建的 session，
+   * 因此先从磁盘重新加载以确保同步，再执行删除。
    */
   deleteSession(sessionId: string): void {
     // 先关闭进程
     this.closeSession(sessionId);
+    // 从磁盘重新加载元数据（确保与主进程实例同步）
+    this.loadSessionsFromDisk();
     // 再删除元数据
+    const had = this.sessionMetadata.has(sessionId);
     this.sessionMetadata.delete(sessionId);
+    console.log(`[SSH] deleteSession: ${sessionId}, had=${had}, remaining: ${this.sessionMetadata.size}, keys=[${Array.from(this.sessionMetadata.keys()).join(', ')}]`);
     this.saveSessionsToDisk();
   }
 
@@ -436,6 +450,7 @@ export class SSHService {
       if (fs.existsSync(this.sessionsFilePath)) {
         const raw = fs.readFileSync(this.sessionsFilePath, 'utf-8');
         const list: any[] = JSON.parse(raw);
+        this.sessionMetadata.clear();
         for (const item of list) {
           this.sessionMetadata.set(item.sessionId, {
             sessionId: item.sessionId,
@@ -446,7 +461,7 @@ export class SSHService {
             systemContext: item.systemContext,
           });
         }
-        console.log(`[SSH] Loaded ${list.length} session(s) from disk`);
+        console.log(`[SSH] Loaded ${list.length} session(s) from disk, ids=[${list.map(i => i.sessionId).join(', ')}]`);
       }
     } catch (error) {
       console.error('[SSH] Failed to load sessions from disk:', error);
@@ -466,7 +481,9 @@ export class SSHService {
         createdAt: m.createdAt instanceof Date ? m.createdAt.toISOString() : m.createdAt,
         systemContext: m.systemContext,
       }));
-      fs.writeFileSync(this.sessionsFilePath, JSON.stringify(list, null, 2), 'utf-8');
+      const json = JSON.stringify(list, null, 2);
+      console.log(`[SSH] saveSessionsToDisk: ${list.length} session(s), path=${this.sessionsFilePath}`);
+      fs.writeFileSync(this.sessionsFilePath, json, 'utf-8');
     } catch (error) {
       console.error('[SSH] Failed to save sessions to disk:', error);
     }
@@ -1210,6 +1227,67 @@ Write-Output "__DOCKER__: $dockerVer"
         }
       });
     });
+  }
+
+ // ========== 定时清理僵尸 Session ==========
+
+  /**
+   * 启动定时清理任务（每 30 秒执行一次）
+   * 清理磁盘上存在但进程已不存在的 session 元数据
+   * 仅在本实例曾创建过 session 时才执行（避免渲染进程实例误删主进程的数据）
+   */
+  private startPeriodicCleanup(): void {
+    const CLEANUP_INTERVAL = 30000; // 30 秒
+    this.cleanupTimer = setInterval(() => {
+      try {
+        this.cleanupZombieSessions();
+      } catch (e) {
+        console.error('[SSH] Periodic cleanup error:', e);
+      }
+    }, CLEANUP_INTERVAL);
+    // 避免定时器阻止 Node.js 进程正常退出
+    if (this.cleanupTimer && typeof this.cleanupTimer === 'object' && 'unref' in this.cleanupTimer) {
+      this.cleanupTimer.unref();
+    }
+  }
+
+  /**
+   * 清理僵尸 session：从磁盘重新加载，移除进程已不存在的条目
+   */
+  private cleanupZombieSessions(): void {
+    // 仅当本实例曾创建过 session 时才执行清理（主进程实例）
+    // 渲染进程实例从不创建 session（创建通过 IPC 在主进程完成），跳过以避免误删
+    if (!this.hasCreatedSession) return;
+
+    // 从磁盘重新加载最新状态
+    this.loadSessionsFromDisk();
+
+    // 找出磁盘上有但进程已不存在的 session
+    const toRemove: string[] = [];
+    for (const sid of this.sessionMetadata.keys()) {
+      if (!this.sessions.has(sid)) {
+        toRemove.push(sid);
+      }
+    }
+
+    if (toRemove.length > 0) {
+      for (const sid of toRemove) {
+        this.sessionMetadata.delete(sid);
+      }
+      this.saveSessionsToDisk();
+      console.log(`[SSH] Periodic cleanup: removed ${toRemove.length} zombie session(s): ${toRemove.join(', ')}`);
+    }
+  }
+
+  /**
+   * 停止定时清理（应用退出时调用）
+   */
+  destroy(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+    this.closeAllSessions();
   }
 
   /**

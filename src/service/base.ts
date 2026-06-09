@@ -16,21 +16,25 @@ export async function requestServer(url: string, data?: any, option?: AxiosReque
     if (isNWjs || isElectronProduction) {
         try {
             const apiPath = url.replace(/^(http(s)?:)?\/\//, '').replace(/.*?\/api\//, '/api/');
+            console.log(`[requestServer] Calling API: ${apiPath}`);
             let server;
-            try {
+            // 使用 preload 提供的绝对路径加载 server 模块
+            const serverPath = window.electronAPI?.serverModulePath;
+            if (serverPath) {
+                console.log(`[requestServer] Loading server from preload path: ${serverPath}`);
+                server = require(serverPath);
+            } else {
+                // fallback: 开发模式或未配置 serverModulePath 时
+                console.log(`[requestServer] No serverModulePath, trying relative require`);
                 server = require('../server/index.js');
-            } catch (e) {
-                try {
-                    const path = require('path');
-                    const serverFilePath = path.join(process.cwd(), 'server', 'index.js');
-                    server = require(serverFilePath);
-                } catch (err) {
-                    server = require('./server/index.js');
-                }
             }
+            console.log(`[requestServer] Server loaded, calling handleRoutes`);
             const res = await server.handleRoutes(apiPath, data);
+            console.log(`[requestServer] handleRoutes returned for ${apiPath}`);
             return { status: 200, statusText: 'OK', data: { ret: 0, msg: 'success', data: res } };
         } catch (error: any) {
+            console.error(`[requestServer] ERROR: ${error.message}`);
+            console.error(error.stack);
             return { status: 500, statusText: 'Error', data: { ret: 500, msg: error.message || '执行失败' } };
         }
     } else {

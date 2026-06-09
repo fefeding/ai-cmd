@@ -9,7 +9,9 @@ import * as fs from 'fs';
  * 优先级：环境变量 AICMD_DATA_DIR > ~/.aicmd
  */
 export function getDataDir(): string {
-  return process.env.AICMD_DATA_DIR || path.join(os.homedir(), '.aicmd');
+  const dir = process.env.AICMD_DATA_DIR || path.join(os.homedir(), '.aicmd');
+  console.log(`[data-dir] getDataDir: ${dir}, home: ${os.homedir()}`);
+  return dir;
 }
 
 /**
@@ -18,11 +20,16 @@ export function getDataDir(): string {
 export function ensureDataDir(): string {
   const dir = getDataDir();
   try {
+    console.log(`[data-dir] ensureDataDir: ${dir}`);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
+      console.log(`[data-dir] Created directory: ${dir}`);
     }
+    fs.accessSync(dir, fs.constants.W_OK);
+    console.log(`[data-dir] Directory is writable: ${dir}`);
   } catch (e: any) {
-    console.error(`Cannot create data directory ${dir}: ${e.message}`);
+    console.error(`[data-dir] Cannot create/access data directory ${dir}: ${e.message}`);
+    console.error(`[data-dir] dir exists: ${fs.existsSync(dir)}`);
     throw e;
   }
   return dir;

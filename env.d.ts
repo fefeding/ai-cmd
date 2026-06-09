@@ -6,6 +6,7 @@ declare interface Window {
     isElectron: boolean;
     isPackaged: boolean;
     platform: string;
+    serverModulePath?: string;
     terminalIPC: {
       send(message: any): void;
       onMessage(callback: (msg: any) => void): () => void;

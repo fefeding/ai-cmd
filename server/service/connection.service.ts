@@ -20,6 +20,7 @@ export class ConnectionService {
 
   constructor() {
     this.configPath = getDataPath('connections.json');
+    console.log(`[ConnectionService] configPath: ${this.configPath}`);
   }
 
   /**
@@ -27,8 +28,23 @@ export class ConnectionService {
    */
   async init() {
     const configDir = path.dirname(this.configPath);
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true });
+    console.log(`[ConnectionService] init: configDir=${configDir}`);
+    try {
+      if (!fs.existsSync(configDir)) {
+        fs.mkdirSync(configDir, { recursive: true });
+        console.log(`[ConnectionService] Created config directory: ${configDir}`);
+      }
+      // 检查目录是否可写
+      fs.accessSync(configDir, fs.constants.W_OK);
+      console.log(`[ConnectionService] Config directory is writable`);
+    } catch (e: any) {
+      console.error(`[ConnectionService] init failed: ${e.message}`);
+      console.error(`[ConnectionService] configDir exists: ${fs.existsSync(configDir)}`);
+      try {
+        const stats = fs.statSync(configDir);
+        console.error(`[ConnectionService] configDir mode: ${stats.mode.toString(8)}, uid: ${stats.uid}, gid: ${stats.gid}`);
+        console.error(`[ConnectionService] current uid: ${process.getuid?.()}, gid: ${process.getgid?.()}`);
+      } catch (_) {}
     }
   }
 
@@ -37,13 +53,17 @@ export class ConnectionService {
    */
   async getAllConnections(): Promise<ConnectionEntity[]> {
     try {
+      console.log(`[ConnectionService] getAllConnections: reading ${this.configPath}`);
       if (!fs.existsSync(this.configPath)) {
+        console.log(`[ConnectionService] Config file does not exist, returning empty`);
         return [];
       }
       const data = fs.readFileSync(this.configPath, 'utf8');
-      return JSON.parse(data) as ConnectionEntity[];
-    } catch (error) {
-      console.error('读取连接配置失败:', error);
+      const connections = JSON.parse(data) as ConnectionEntity[];
+      console.log(`[ConnectionService] Loaded ${connections.length} connections`);
+      return connections;
+    } catch (error: any) {
+      console.error(`[ConnectionService] Failed to read config: ${error.message}`);
       return [];
     }
   }
@@ -364,12 +384,23 @@ export class ConnectionService {
   private async saveConnections(connections: ConnectionEntity[]): Promise<void> {
     try {
       const dir = path.dirname(this.configPath);
+      console.log(`[ConnectionService] saveConnections: ${connections.length} items -> ${this.configPath}`);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
+        console.log(`[ConnectionService] Created directory: ${dir}`);
+      }
+      // 检查可写性
+      try {
+        fs.accessSync(dir, fs.constants.W_OK);
+      } catch (e: any) {
+        console.error(`[ConnectionService] Directory NOT writable: ${dir}, error: ${e.message}`);
       }
       fs.writeFileSync(this.configPath, JSON.stringify(connections, null, 2), 'utf8');
-    } catch (error) {
-      console.error('保存连接配置失败:', error);
+      console.log(`[ConnectionService] saveConnections: done`);
+    } catch (error: any) {
+      console.error(`[ConnectionService] saveConnections FAILED: ${error.message}`);
+      console.error(`[ConnectionService] configPath: ${this.configPath}`);
+      console.error(`[ConnectionService] stack: ${error.stack}`);
       throw error;
     }
   }
