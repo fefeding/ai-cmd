@@ -68,7 +68,7 @@
 
 ## 截图
 
-![AICmd Screenshot](./screenshot.png)
+![AICmd Screenshot](./screenshot.jpeg)
 
 ## 技术栈
 

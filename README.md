@@ -68,7 +68,7 @@ An AI-powered web SSH terminal that combines a full-featured terminal emulator w
 
 ## Screenshot
 
-![AICmd Screenshot](./screenshot.png)
+![AICmd Screenshot](./screenshot.jpeg)
 
 ## Tech Stack
 
