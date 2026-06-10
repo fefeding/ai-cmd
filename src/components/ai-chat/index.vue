@@ -203,6 +203,7 @@ import { useI18n } from 'vue-i18n';
 import * as aiService from '@/service/ai';
 import AuditPanel from '@/components/audit-panel/index.vue';
 import LogMonitor from '@/components/log-monitor/index.vue';
+import { escapeHtml, sanitizeHtml } from '@/utils/sanitize-html';
 
 const { t, locale } = useI18n();
 
@@ -689,11 +690,7 @@ function renderMarkdown(text: string): string {
   // 恢复代码块
   html = html.replace(/\x00CODEBLOCK(\d+)\x00/g, (_, idx) => codeBlocks[parseInt(idx)]);
 
-  return html;
-}
-
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return sanitizeHtml(html);
 }
 
 function scrollToBottom() {

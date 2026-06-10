@@ -100,6 +100,7 @@ import { ref, computed, nextTick, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { startMonitor, stopMonitor, getMonitorBatch, type MonitorAlert } from '@/service/monitor';
 import * as aiService from '@/service/ai';
+import { escapeHtml, sanitizeHtml } from '@/utils/sanitize-html';
 
 const { t, locale } = useI18n();
 
@@ -271,11 +272,18 @@ function scrollToBottom() {
 
 function renderSimpleMarkdown(text: string): string {
   if (!text) return '';
-  return text
-    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre class="code-block"><code>$2</code></pre>')
+  const codeBlocks: string[] = [];
+  let html = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, _lang, code) => {
+    const idx = codeBlocks.length;
+    codeBlocks.push(`<pre class="code-block"><code>${escapeHtml(code.trim())}</code></pre>`);
+    return `\x00CODEBLOCK${idx}\x00`;
+  });
+  html = escapeHtml(html)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
-    .replace(/\n/g, '<br>');
+    .replace(/\n/g, '<br>')
+    .replace(/\x00CODEBLOCK(\d+)\x00/g, (_match, idx) => codeBlocks[parseInt(idx)] || '');
+  return sanitizeHtml(html);
 }
 
 defineExpose({ handleMonitorEvent, stopMonitoring });

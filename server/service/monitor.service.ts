@@ -1,5 +1,7 @@
 import { Client, type ClientChannel } from 'ssh2';
 import { spawn, type ChildProcess } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 import { ConnectionService } from './connection.service';
 import { ConnectionEntity } from '../model/connection.entity';
 
@@ -80,9 +82,12 @@ export class MonitorService {
    * 启动日志监控
    */
   async startMonitor(sessionId: string, connectionId: string, logPath: string, pattern?: string): Promise<{ monitorId: string }> {
+    const isLocal = connectionId === 'local' || connectionId === '';
+    const safeLogPath = this.validateLogPath(logPath, isLocal);
+
     // 检查是否已有监控
     for (const [id, m] of this.monitors) {
-      if (m.sessionId === sessionId && m.logPath === logPath && m.running) {
+      if (m.sessionId === sessionId && m.logPath === safeLogPath && m.running) {
         return { monitorId: id };
       }
     }
@@ -92,7 +97,7 @@ export class MonitorService {
       id: monitorId,
       sessionId,
       connectionId,
-      logPath,
+      logPath: safeLogPath,
       pattern: pattern || '(ERROR|FATAL|CRITICAL|Exception|Traceback|panic|FAIL)',
       lineBuffer: [],
       alertBuffer: [],
@@ -103,7 +108,6 @@ export class MonitorService {
 
     try {
       // 判断连接类型
-      const isLocal = connectionId === 'local' || connectionId === '';
       if (isLocal) {
         await this.startLocalTail(monitor);
       } else {
@@ -452,6 +456,71 @@ export class MonitorService {
     const lines = monitor.lineBuffer.slice(-this.maxBatchLines);
     monitor.lastAnalyzedAt = Date.now();
     return lines;
+  }
+
+  /**
+   * 校验日志路径，避免读取敏感文件、特殊设备或通过远程 shell 元字符注入命令。
+   */
+  private validateLogPath(logPath: string, isLocal: boolean): string {
+    const normalized = String(logPath || '').trim();
+    if (!normalized) {
+      throw new Error('Log path is required');
+    }
+    if (normalized.length > 1024 || /[\0\r\n]/.test(normalized)) {
+      throw new Error('Invalid log path');
+    }
+    if (!path.isAbsolute(normalized)) {
+      throw new Error('Log path must be absolute');
+    }
+    if (this.isSensitiveLogPath(normalized)) {
+      throw new Error('Access to this log path is not allowed');
+    }
+
+    if (!isLocal) {
+      if (/[*?\[\]{}<>|;&`$()]/.test(normalized)) {
+        throw new Error('Remote log path contains unsafe shell characters');
+      }
+      return path.posix.normalize(normalized);
+    }
+
+    let realPath: string;
+    try {
+      realPath = fs.realpathSync(normalized);
+      const stat = fs.statSync(realPath);
+      if (!stat.isFile()) {
+        throw new Error('Log path must point to a regular file');
+      }
+    } catch (error: any) {
+      throw new Error(error?.message || 'Invalid log file');
+    }
+
+    if (this.isSensitiveLogPath(realPath)) {
+      throw new Error('Access to this log path is not allowed');
+    }
+    return realPath;
+  }
+
+  private isSensitiveLogPath(value: string): boolean {
+    const normalized = value.replace(/\\/g, '/').toLowerCase();
+    const sensitivePaths = [
+      '/dev/',
+      '/proc/',
+      '/sys/',
+      '/run/',
+      '/private/etc/',
+      '/etc/',
+      '/var/run/',
+      '/var/db/',
+      '/var/root/',
+      '/root/',
+      '/.ssh/',
+      '/.gnupg/',
+      '/keychain',
+      '/shadow',
+      '/passwd',
+      '/sudoers',
+    ];
+    return sensitivePaths.some((entry) => normalized === entry.slice(0, -1) || normalized.includes(entry));
   }
 
   /**

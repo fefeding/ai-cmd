@@ -7,6 +7,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getDataPath } from '../utils/data-dir';
+import { shellQuote } from '../utils/shell';
 
 // 尝试加载 node-pty，如果可用则使用 PTY 模式
 let nodePty: any = null;
@@ -1190,7 +1191,7 @@ Write-Output "__DOCKER__: $dockerVer"
 
             // 通过已有 shell stream 执行 mv（避免 exec channel 挂起）
             try {
-              const mvCmd = `mv -f '${tmpPath}' '${fullPath}'`;
+              const mvCmd = `mv -f ${shellQuote(tmpPath)} ${shellQuote(fullPath)}`;
               console.log(`[SSH] Shell exec: ${mvCmd}`);
               const mvMarker = `__AICmd_MV_${Date.now()}__`;
               const captureP = this.captureOutput(sessionId, 5000);
@@ -1208,7 +1209,7 @@ Write-Output "__DOCKER__: $dockerVer"
               console.log(`[SSH] mv failed, trying sudo mv...`);
               const sudoMarker = `__AICmd_SUDO_${Date.now()}__`;
               const sudoCaptureP = this.captureOutput(sessionId, 5000);
-              this.writeData(sessionId, `sudo mv -f '${tmpPath}' '${fullPath}' && echo ${sudoMarker}:OK || echo ${sudoMarker}:FAIL\n`);
+              this.writeData(sessionId, `sudo mv -f ${shellQuote(tmpPath)} ${shellQuote(fullPath)} && echo ${sudoMarker}:OK || echo ${sudoMarker}:FAIL\n`);
               const sudoOutput = await sudoCaptureP;
               console.log(`[SSH] sudo mv output: ${JSON.stringify(sudoOutput.substring(0, 200))}`);
 

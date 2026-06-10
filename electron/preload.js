@@ -1,16 +1,9 @@
 /**
  * @file Electron 预加载脚本
- * @description 向渲染进程暴露终端 IPC 通信接口（替代 WebSocket）
- *
- * 在 nodeIntegration: true + contextIsolation: false 下，
- * 直接挂载到 window 对象，渲染进程通过 window.electronAPI 访问
+ * @description 通过 contextBridge 向渲染进程暴露最小 IPC 通信接口
  */
 
-const { ipcRenderer } = require('electron');
-const path = require('path');
-
-// 服务端模块绝对路径（供渲染进程 require 使用）
-const serverModulePath = path.join(process.resourcesPath, 'app.asar', 'dist', 'server', 'index.js');
+const { contextBridge, ipcRenderer } = require('electron');
 
 // 终端 IPC 通道（替代 WebSocket）
 const terminalIPC = {
@@ -54,11 +47,17 @@ const updater = {
   },
 };
 
-window.electronAPI = {
+const api = {
+  request(pathname, body) {
+    return ipcRenderer.invoke('api:request', { pathname, body });
+  },
+};
+
+contextBridge.exposeInMainWorld('electronAPI', {
   isElectron: true,
   isPackaged: !process.env.ELECTRON_DEV,
   platform: process.platform,
-  serverModulePath,
+  api,
   terminalIPC,
   updater,
-};
+});

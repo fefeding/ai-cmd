@@ -8,7 +8,19 @@ const WebSocket = require('ws');
 
 // 统一数据目录管理（所有写入文件必须通过此模块获取路径）
 const { ensureDataDir, getDataPath } = require('./dist/server/utils/data-dir');
+const {
+  getAccessToken,
+  getCookieHeader,
+  extractTokenFromHeaders,
+  isValidToken,
+  isAllowedOrigin,
+  requiresToken,
+  normalizeUploadName,
+  maxUploadBytes,
+} = require('./dist/server/utils/security');
 const dataDir = ensureDataDir();
+const accessToken = getAccessToken();
+const uploadLimitBytes = maxUploadBytes();
 
 // 日志文件路径（写入数据目录，非安装目录）
 const logFilePath = getDataPath('server.log');
@@ -52,19 +64,54 @@ if (!fs.existsSync(serverIndexPath)) {
   process.exit(1);
 }
 
-// 设置 CORS 头
+// 访问控制：默认仅允许同源/本机来源，并要求本地 token
 app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  const host = req.headers.host;
+  if (!isAllowedOrigin(origin, host)) {
+    res.statusCode = 403;
+    res.end('Forbidden origin');
+    return;
+  }
+
+  if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Session-Id, X-File-Name');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Session-Id, X-File-Name, X-AICmd-Token, Authorization');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+  const requestUrl = new URL(req.url, `http://${host || 'localhost'}`);
+  const queryToken = requestUrl.searchParams.get('token');
+  if (queryToken && isValidToken(queryToken)) {
+    res.setHeader('Set-Cookie', getCookieHeader(queryToken, req.socket.encrypted === true));
+    if (requestUrl.pathname === '/') {
+      res.writeHead(302, { Location: '/' });
+      res.end();
+      return;
+    }
+  }
+
+  if ((requestUrl.pathname.startsWith('/api/') || requestUrl.pathname.startsWith('/ws/')) && requiresToken(req.headers.origin, req.headers.host) && !isValidToken(extractTokenFromHeaders(req.headers))) {
+    res.statusCode = 401;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ ret: 401, msg: 'Unauthorized' }));
+    return;
+  }
+
   next();
 });
 
 // HTTP 文件上传端点（绕过 WebSocket，支持大文件）
 app.post('/api/file-upload', async (req, res) => {
   const sessionId = req.headers['x-session-id'];
-  const fileName = req.headers['x-file-name'];
+  let fileName;
+  try {
+    fileName = normalizeUploadName(req.headers['x-file-name']);
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message || 'Invalid file name' });
+    return;
+  }
   if (!sessionId || !fileName) {
     res.status(400).json({ success: false, error: 'Missing X-Session-Id or X-File-Name header' });
     return;
@@ -75,7 +122,13 @@ app.post('/api/file-upload', async (req, res) => {
     // 收集原始请求体（文件二进制数据）
     console.log(`[HTTP-Upload] Receiving file: session=${sessionId}, file=${fileName}`);
     const chunks = [];
+    let received = 0;
     for await (const chunk of req) {
+      received += chunk.length;
+      if (received > uploadLimitBytes) {
+        res.status(413).json({ success: false, error: `File too large, limit ${uploadLimitBytes} bytes`, fileName });
+        return;
+      }
       chunks.push(chunk);
     }
     const fileBuffer = Buffer.concat(chunks);
@@ -94,7 +147,8 @@ app.use('/api/', async (req, res, next) => {
   if (req.method === 'POST') {
     try {
       const serverModule = require('./dist/server/index.js');
-      const result = await serverModule.handleRoutes(req.originalUrl, req.body);
+      const pathname = new URL(req.originalUrl, `http://${req.headers.host || 'localhost'}`).pathname;
+      const result = await serverModule.handleRoutes(pathname, req.body);
       res.status(200).json({ ret: 0, msg: 'success', data: result });
     } catch (error) {
       console.error('API Error:', error);
@@ -118,10 +172,9 @@ app.use((req, res) => {
   });
 });
 
-// ========== WebSocket 服务 ==========
-// maxPayload 设为 500MB，支持较大文件的 base64 传输（base64 比原文件大 ~33%）
-const wss = new WebSocket.Server({ server, path: '/ws/terminal', maxPayload: 500 * 1024 * 1024 });
-console.log(`[WS] WebSocket server created on path /ws/terminal (maxPayload: 500MB)`);
+// WebSocket 文件消息限制跟随上传限制，base64 约有 33% 膨胀
+const wss = new WebSocket.Server({ server, path: '/ws/terminal', maxPayload: Math.ceil(uploadLimitBytes * 1.4) });
+console.log(`[WS] WebSocket server created on path /ws/terminal (maxPayload: ${Math.ceil(uploadLimitBytes * 1.4)} bytes)`);
 
 // 分块上传缓冲区: uploadId -> { chunks: string[], totalChunks: number, fileName: string, sessionId: string }
 const pendingUploads = new Map();
@@ -145,6 +198,12 @@ try {
 }
 
 wss.on('connection', async (ws, req) => {
+  const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const wsToken = requestUrl.searchParams.get('token') || extractTokenFromHeaders(req.headers);
+  if (!isAllowedOrigin(req.headers.origin, req.headers.host) || (requiresToken(req.headers.origin, req.headers.host) && !isValidToken(wsToken))) {
+    ws.close(1008, 'Unauthorized');
+    return;
+  }
   let sessionId = null;
   console.log(`[WS] Client connected from ${req.socket.remoteAddress}`);
 
@@ -314,16 +373,28 @@ wss.on('connection', async (ws, req) => {
         }
 
         case 'file-upload': {
-          // SFTP 文件上传 - 单消息模式（小文件，<50MB base64）
-          const { fileName, data: fileData } = data || {};
+          // SFTP 文件上传 - 单消息模式（小文件，<上传限制）
+          let fileName;
+          const { data: fileData } = data || {};
+          try {
+            fileName = normalizeUploadName(data?.fileName);
+          } catch (err) {
+            ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: err.message || 'Invalid file name' }));
+            break;
+          }
           if (!sid || !fileName || !fileData) {
             console.error(`[WS] file-upload missing params: sid=${sid}, fileName=${fileName}, hasData=${!!fileData}`);
             ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: 'Missing params', fileName }));
             break;
           }
+          const fileBuffer = Buffer.from(fileData, 'base64');
+          if (fileBuffer.length > uploadLimitBytes) {
+            ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: `File too large, limit ${uploadLimitBytes} bytes`, fileName }));
+            break;
+          }
           try {
-            console.log(`[WS] SFTP upload START: session=${sid}, file=${fileName}, b64len=${fileData.length}, wsReady=${ws.readyState}`);
-            const bytes = await sshService.uploadFileViaSftp(sid, fileName, Buffer.from(fileData, 'base64'));
+            console.log(`[WS] SFTP upload START: session=${sid}, file=${fileName}, bytes=${fileBuffer.length}, wsReady=${ws.readyState}`);
+            const bytes = await sshService.uploadFileViaSftp(sid, fileName, fileBuffer);
             console.log(`[WS] SFTP upload DONE: ${fileName}, ${bytes} bytes, wsReady=${ws.readyState}`);
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'file-upload-result', success: true, bytes, fileName }));
@@ -341,13 +412,20 @@ wss.on('connection', async (ws, req) => {
 
         case 'file-upload-start': {
           // 分块上传 - 开始（大文件）
-          const { uploadId, fileName: startFileName, totalChunks } = data || {};
-          if (!uploadId || !startFileName || !totalChunks) {
-            ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: 'Missing params', fileName: startFileName }));
+          const { uploadId, totalChunks } = data || {};
+          let startFileName;
+          try {
+            startFileName = normalizeUploadName(data?.fileName);
+          } catch (err) {
+            ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: err.message || 'Invalid file name' }));
+            break;
+          }
+          if (!uploadId || !startFileName || !Number.isInteger(totalChunks) || totalChunks <= 0 || totalChunks > 10000) {
+            ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: 'Invalid upload params', fileName: startFileName }));
             break;
           }
           console.log(`[WS] Chunked upload start: id=${uploadId}, file=${startFileName}, chunks=${totalChunks}`);
-          pendingUploads.set(uploadId, { chunks: new Array(totalChunks), totalChunks, fileName: startFileName, sessionId: sid, receivedChunks: 0 });
+          pendingUploads.set(uploadId, { chunks: new Array(totalChunks), totalChunks, fileName: startFileName, sessionId: sid, receivedChunks: 0, receivedBytes: 0, createdAt: Date.now() });
           break;
         }
 
@@ -359,8 +437,21 @@ wss.on('connection', async (ws, req) => {
             ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: 'Upload session not found' }));
             break;
           }
+          if (!Number.isInteger(chunkIndex) || chunkIndex < 0 || chunkIndex >= upload.totalChunks || typeof chunkData !== 'string') {
+            pendingUploads.delete(chunkId);
+            ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: 'Invalid upload chunk', fileName: upload.fileName }));
+            break;
+          }
+          const chunkBytes = Buffer.byteLength(chunkData, 'base64');
+          const previousBytes = upload.chunks[chunkIndex] ? Buffer.byteLength(upload.chunks[chunkIndex], 'base64') : 0;
+          upload.receivedBytes += chunkBytes - previousBytes;
+          if (upload.receivedBytes > uploadLimitBytes) {
+            pendingUploads.delete(chunkId);
+            ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: `File too large, limit ${uploadLimitBytes} bytes`, fileName: upload.fileName }));
+            break;
+          }
+          if (upload.chunks[chunkIndex] === undefined) upload.receivedChunks++;
           upload.chunks[chunkIndex] = chunkData;
-          upload.receivedChunks++;
           // 每 10 个 chunk 反馈一次进度
           if (upload.receivedChunks % 10 === 0 || upload.receivedChunks === upload.totalChunks) {
             ws.send(JSON.stringify({ type: 'file-upload-progress', uploadId: chunkId, received: upload.receivedChunks, total: upload.totalChunks }));
@@ -469,11 +560,12 @@ function cleanupPid() {
 
 // 启动服务器
 const PORT = portFromArgs || process.env.PORT || 9802;
-server.listen(PORT, () => {
+const HOST = process.env.HOST || process.env.AICMD_HOST || '127.0.0.1';
+server.listen(PORT, HOST, () => {
   fs.writeFileSync(pidFilePath, process.pid.toString());
   console.log(`PID ${process.pid} written to ${pidFilePath}`);
-  console.log(`aicmd Server is running on port ${PORT}`);
-  console.log(`http://localhost:${PORT}`);
+  console.log(`aicmd Server is running on ${HOST}:${PORT}`);
+  console.log(`http://localhost:${PORT}/?token=${accessToken}`);
 });
 
 // 进程退出处理

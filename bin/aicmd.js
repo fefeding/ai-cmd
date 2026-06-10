@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+const crypto = require('crypto');
 const { exec, spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -64,6 +65,21 @@ function ensureDataDir() {
 const readPid = () => {
   const f = getDataPath('aicmd.server.pid');
   return fs.existsSync(f) ? parseInt(fs.readFileSync(f, 'utf8')) : null;
+};
+const getAccessToken = () => {
+  if (process.env.AICMD_ACCESS_TOKEN) return process.env.AICMD_ACCESS_TOKEN;
+  ensureDataDir();
+  const f = getDataPath('access-token');
+  try {
+    if (fs.existsSync(f)) {
+      const token = fs.readFileSync(f, 'utf8').trim();
+      if (token) return token;
+    }
+  } catch { /* ignore */ }
+  const token = crypto.randomBytes(32).toString('base64url');
+  fs.writeFileSync(f, token, { encoding: 'utf8', mode: 0o600 });
+  try { fs.chmodSync(f, 0o600); } catch { /* ignore */ }
+  return token;
 };
 const writePid = (pid) => {
   ensureDataDir();
@@ -151,9 +167,11 @@ async function startProject() {
   child.unref();
   writePid(child.pid);
 
+  const accessToken = getAccessToken();
+  const startUrl = `http://localhost:${port}/?token=${encodeURIComponent(accessToken)}`;
   console.log('Server started with PID:', child.pid);
   console.log(`aicmd is running at http://localhost:${port}`);
-  openBrowser(`http://localhost:${port}`);
+  openBrowser(startUrl);
 }
 
 function stopProject() {

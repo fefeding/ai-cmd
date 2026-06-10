@@ -390,7 +390,8 @@ function connectWebSocket() {
   } else {
     // Web 端：使用 WebSocket
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${location.host}/ws/terminal`;
+    const token = new URLSearchParams(location.search).get('token');
+    const wsUrl = `${protocol}//${location.host}/ws/terminal${token ? `?token=${encodeURIComponent(token)}` : ''}`;
     console.log(`[TerminalTab] Connecting to WebSocket: ${wsUrl}`);
     ws = new WebSocket(wsUrl);
   }

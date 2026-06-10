@@ -4,6 +4,10 @@ import * as os from 'os';
 import axios from 'axios';
 import { getDataDir, getDataPath, ensureDataDir, ensureDir } from '../utils/data-dir';
 import { AuditService, type AuditEntry } from './audit.service';
+import { assessDangerousCommand } from '../utils/shell';
+import * as crypto from 'crypto';
+
+const ENCRYPTED_PREFIX = 'enc:v1:';
 
 /**
  * AI 配置接口
@@ -276,7 +280,7 @@ Response format (important):
     try {
       if (fs.existsSync(this.configPath)) {
         const data = fs.readFileSync(this.configPath, 'utf-8');
-        const savedConfig = JSON.parse(data);
+        const savedConfig = this.decryptConfig(JSON.parse(data));
         this.config = { ...this.getDefaultConfig(), ...savedConfig };
       }
     } catch (error) {
@@ -289,10 +293,66 @@ Response format (important):
       if (!fs.existsSync(this.configDir)) {
         fs.mkdirSync(this.configDir, { recursive: true });
       }
-      fs.writeFileSync(this.configPath, JSON.stringify(this.config, null, 2));
+      fs.writeFileSync(this.configPath, JSON.stringify(this.encryptConfig(this.config), null, 2), { encoding: 'utf-8', mode: 0o600 });
+      try { fs.chmodSync(this.configPath, 0o600); } catch (_) { /* ignore */ }
     } catch (error) {
       console.error('[AIService] Failed to save config:', error);
       throw error;
+    }
+  }
+
+  private encryptConfig(config: AIConfig): AIConfig {
+    const encrypted = { ...config };
+    if (encrypted.apiKey && !encrypted.apiKey.startsWith(ENCRYPTED_PREFIX)) {
+      encrypted.apiKey = this.encryptSecret(encrypted.apiKey);
+    }
+    return encrypted;
+  }
+
+  private decryptConfig(config: Partial<AIConfig>): Partial<AIConfig> {
+    const decrypted = { ...config };
+    if (typeof decrypted.apiKey === 'string' && decrypted.apiKey.startsWith(ENCRYPTED_PREFIX)) {
+      decrypted.apiKey = this.decryptSecret(decrypted.apiKey);
+    }
+    return decrypted;
+  }
+
+  private getEncryptionKey(): Buffer {
+    const keyPath = getDataPath('ai-config.key');
+    try {
+      if (fs.existsSync(keyPath)) {
+        return crypto.createHash('sha256').update(fs.readFileSync(keyPath, 'utf8').trim()).digest();
+      }
+      const secret = crypto.randomBytes(32).toString('base64url');
+      fs.writeFileSync(keyPath, secret, { encoding: 'utf8', mode: 0o600 });
+      try { fs.chmodSync(keyPath, 0o600); } catch (_) { /* ignore */ }
+      return crypto.createHash('sha256').update(secret).digest();
+    } catch (error: any) {
+      console.warn(`[AIService] Failed to load encryption key: ${error.message}`);
+      return crypto.createHash('sha256').update(`${os.hostname()}:${os.homedir()}:aicmd-ai`).digest();
+    }
+  }
+
+  private encryptSecret(value: string): string {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', this.getEncryptionKey(), iv);
+    const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return `${ENCRYPTED_PREFIX}${Buffer.concat([iv, tag, encrypted]).toString('base64')}`;
+  }
+
+  private decryptSecret(value: string): string {
+    try {
+      const payload = Buffer.from(value.slice(ENCRYPTED_PREFIX.length), 'base64');
+      const iv = payload.subarray(0, 12);
+      const tag = payload.subarray(12, 28);
+      const encrypted = payload.subarray(28);
+      const decipher = crypto.createDecipheriv('aes-256-gcm', this.getEncryptionKey(), iv);
+      decipher.setAuthTag(tag);
+      return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+    } catch (error: any) {
+      console.warn(`[AIService] Failed to decrypt API key: ${error.message}`);
+      return '';
     }
   }
 
@@ -439,6 +499,10 @@ Response format (important):
    */
   private async sanitizeCommand(command: string, sessionId: string): Promise<{ safe: boolean; rewritten?: string; reason?: string }> {
     const trimmed = command.trim();
+    const risk = assessDangerousCommand(trimmed);
+    if (!risk.safe) {
+      return risk;
+    }
     const isWin = await this.isWindowsSession(sessionId);
 
     if (isWin) {

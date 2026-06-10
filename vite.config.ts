@@ -18,8 +18,10 @@ import { SkillService } from './server/service/skill.service';
 import { AuditService } from './server/service/audit.service';
 import { MonitorService } from './server/service/monitor.service';
 import { BatchService } from './server/service/batch.service';
+import { getAccessToken, getCookieHeader, extractTokenFromHeaders, isValidToken, isAllowedOrigin, requiresToken, normalizeUploadName, maxUploadBytes } from './server/utils/security';
 
 const urlPrefix = process.env.PREFIX ? `/${process.env.PREFIX}` : '';
+const devUploadLimitBytes = maxUploadBytes();
 
 // 共享服务实例（延迟初始化）
 let connectionService: ConnectionService | null = null;
@@ -152,6 +154,27 @@ const config = defineConfig({
                 // 只在开发服务器启动时初始化服务
                 initServices();
                 server.middlewares.use((req: Connect.IncomingMessage, res: http.ServerResponse, next: Connect.NextFunction) => {
+                    const requestUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+                    if (!isAllowedOrigin(req.headers.origin, req.headers.host)) {
+                        res.statusCode = 403;
+                        res.end('Forbidden origin');
+                        return;
+                    }
+                    const queryToken = requestUrl.searchParams.get('token');
+                    if (queryToken && isValidToken(queryToken)) {
+                        res.setHeader('Set-Cookie', getCookieHeader(queryToken, false));
+                        if (requestUrl.pathname === '/') {
+                            res.writeHead(302, { Location: '/' });
+                            res.end();
+                            return;
+                        }
+                    }
+                    if ((requestUrl.pathname.startsWith('/api/') || requestUrl.pathname.startsWith('/ws/')) && requiresToken(req.headers.origin, req.headers.host) && !isValidToken(extractTokenFromHeaders(req.headers))) {
+                        res.statusCode = 401;
+                        res.setHeader('Content-Type', 'application/json');
+                        res.end(JSON.stringify({ ret: 401, msg: 'Unauthorized' }));
+                        return;
+                    }
                     if (req.url?.startsWith('/api/')) {
                         if (!serverRoute(req, res, next)) {
                             res.statusCode = 404;
@@ -173,12 +196,19 @@ const config = defineConfig({
 
                     const WebSocket = require('ws');
                     // 使用 noServer: true 避免和 Vite 的 HMR WebSocket 冲突
-                    const wss = new WebSocket.Server({ noServer: true });
+                    const wss = new WebSocket.Server({ noServer: true, maxPayload: Math.ceil(devUploadLimitBytes * 1.4) });
                     console.log('[WS] WebSocket server (noServer) ready for /ws/terminal');
 
                     // 手动处理 upgrade，只拦截 /ws/terminal 路径
                     server.httpServer.on('upgrade', (req, socket, head) => {
-                        if (req.url === '/ws/terminal') {
+                        const requestUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+                        if (requestUrl.pathname === '/ws/terminal') {
+                            const upgradeToken = requestUrl.searchParams.get('token') || extractTokenFromHeaders(req.headers);
+                            if (!isAllowedOrigin(req.headers.origin, req.headers.host) || (requiresToken(req.headers.origin, req.headers.host) && !isValidToken(upgradeToken))) {
+                                socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+                                socket.destroy();
+                                return;
+                            }
                             wss.handleUpgrade(req, socket, head, (ws) => {
                                 wss.emit('connection', ws, req);
                             });
@@ -349,9 +379,9 @@ const config = defineConfig({
     },
     base: urlPrefix,
     server: {
-        host: '0.0.0.0',
+        host: process.env.HOST || process.env.AICMD_HOST || '127.0.0.1',
         port: +`${process.env.VITE_PORT}` || 9801,
-        cors: true,
+        cors: false,
     },
 });
 export default config;
@@ -381,15 +411,35 @@ async function serverRoute(req: Connect.IncomingMessage, res: http.ServerRespons
         // 文件上传端点：接收原始二进制数据，通过 SFTP 写入远程服务器
         if (pathname === '/api/file-upload') {
             const sessionId = req.headers['x-session-id'] as string;
-            const fileName = req.headers['x-file-name'] as string;
+            let fileName: string;
+            try {
+                fileName = normalizeUploadName(req.headers['x-file-name'] as string);
+            } catch (err: any) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, error: err.message || 'Invalid file name' }));
+                return true;
+            }
             if (!sessionId || !fileName) {
                 res.writeHead(400, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ success: false, error: 'Missing X-Session-Id or X-File-Name header' }));
                 return true;
             }
             const chunks: Buffer[] = [];
-            req.on('data', (chunk: Buffer) => chunks.push(chunk));
+            let receivedBytes = 0;
+            let aborted = false;
+            req.on('data', (chunk: Buffer) => {
+                receivedBytes += chunk.length;
+                if (receivedBytes > devUploadLimitBytes) {
+                    aborted = true;
+                    res.writeHead(413, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: false, error: `File too large, limit ${devUploadLimitBytes} bytes`, fileName }));
+                    req.destroy();
+                    return;
+                }
+                chunks.push(chunk);
+            });
             req.on('end', async () => {
+                if (aborted) return;
                 try {
                     const fileBuffer = Buffer.concat(chunks);
                     console.log(`[HTTP-Upload] Received ${fileBuffer.length} bytes, calling SFTP...`);

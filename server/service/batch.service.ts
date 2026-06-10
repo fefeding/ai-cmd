@@ -1,5 +1,6 @@
 import { SSHService } from './ssh.service';
 import { ConnectionService } from './connection.service';
+import { assessDangerousCommand } from '../utils/shell';
 
 /**
  * 批量操作结果
@@ -69,6 +70,10 @@ export class BatchService {
     command: string,
     timeout: number = 10000,
   ): Promise<BatchTask> {
+    const risk = assessDangerousCommand(command);
+    if (!risk.safe) {
+      throw new Error(risk.reason || 'Blocked high-risk command');
+    }
     const taskId = `batch_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const task: BatchTask = {
       id: taskId,

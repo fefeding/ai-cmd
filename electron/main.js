@@ -2,7 +2,7 @@
  * @file Electron 主进程入口
  * @description 创建桌面窗口，通过 IPC 直接处理终端通信（无需 HTTP/WebSocket 服务）
  *
- * 生产模式：加载本地 HTML，API 通过 nodeIntegration 直接 require，终端通过 IPC 通信
+ * 生产模式：加载本地 HTML，API 和终端都通过主进程 IPC 通信
  * 开发模式：连接 Vite 开发服务器（API 走 HTTP，终端走 WebSocket）
  */
 
@@ -44,7 +44,7 @@ console.log(`[Electron] __dirname: ${__dirname}, cwd: ${process.cwd()}`);
 // ========== 注册自定义协议（必须在 app.whenReady 之前） ==========
 // 解决 file:// 协议下绝对路径（/public/xxx.js）无法加载的问题
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: true } },
+  { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ]);
 
 // 解析命令行参数
@@ -86,6 +86,30 @@ function getServices() {
     console.error(e.stack);
     return null;
   }
+}
+
+// ========== API IPC 处理（替代渲染进程 require） ==========
+
+function setupApiIPC() {
+  ipcMain.handle('api:request', async (_event, payload) => {
+    const services = getServices();
+    if (!services) {
+      return { ret: 500, msg: 'Services not available' };
+    }
+    try {
+      const serverPath = path.join(__dirname, '..', 'dist', 'server', 'index.js');
+      const serverModule = require(serverPath);
+      const pathname = String(payload?.pathname || '');
+      if (!pathname.startsWith('/api/')) {
+        return { ret: 400, msg: 'Invalid API path' };
+      }
+      const data = await serverModule.handleRoutes(pathname, payload?.body || {});
+      return { ret: 0, msg: 'success', data };
+    } catch (err) {
+      console.error('[IPC] API request failed:', err);
+      return { ret: 500, msg: err.message || 'Internal error' };
+    }
+  });
 }
 
 // ========== 终端 IPC 处理（替代 WebSocket） ==========
@@ -318,9 +342,9 @@ function createWindow(loadTarget) {
     icon: path.join(__dirname, '..', 'public', process.platform === 'darwin' ? 'favicon.icns' : process.platform === 'win32' ? 'favicon.ico' : 'favicon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: true,
-      contextIsolation: false,
-      sandbox: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
     },
   });
 
@@ -426,6 +450,7 @@ app.whenReady().then(() => {
     return net.fetch('file://' + filePath);
   });
 
+  setupApiIPC();
   setupTerminalIPC();
   setupMenu();
 

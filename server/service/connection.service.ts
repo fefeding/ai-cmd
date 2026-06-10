@@ -6,6 +6,9 @@ import { ConnectionEntity } from '../model/connection.entity';
 import { getDataPath } from '../utils/data-dir';
 import { execSync } from 'child_process';
 
+const ENCRYPTED_PREFIX = 'enc:v1:';
+const SECRET_FIELDS: Array<keyof ConnectionEntity> = ['password', 'privateKey', 'passphrase'];
+
 /**
  * SSH 连接管理服务
  * 负责管理 SSH 连接配置的 CRUD，数据存储在本地 JSON 文件中
@@ -60,8 +63,9 @@ export class ConnectionService {
       }
       const data = fs.readFileSync(this.configPath, 'utf8');
       const connections = JSON.parse(data) as ConnectionEntity[];
-      console.log(`[ConnectionService] Loaded ${connections.length} connections`);
-      return connections;
+      const decryptedConnections = connections.map(conn => this.decryptConnection(conn));
+      console.log(`[ConnectionService] Loaded ${decryptedConnections.length} connections`);
+      return decryptedConnections;
     } catch (error: any) {
       console.error(`[ConnectionService] Failed to read config: ${error.message}`);
       return [];
@@ -395,13 +399,76 @@ export class ConnectionService {
       } catch (e: any) {
         console.error(`[ConnectionService] Directory NOT writable: ${dir}, error: ${e.message}`);
       }
-      fs.writeFileSync(this.configPath, JSON.stringify(connections, null, 2), 'utf8');
+      const encryptedConnections = connections.map(conn => this.encryptConnection(conn));
+      fs.writeFileSync(this.configPath, JSON.stringify(encryptedConnections, null, 2), { encoding: 'utf8', mode: 0o600 });
+      try { fs.chmodSync(this.configPath, 0o600); } catch (_) { /* ignore */ }
       console.log(`[ConnectionService] saveConnections: done`);
     } catch (error: any) {
       console.error(`[ConnectionService] saveConnections FAILED: ${error.message}`);
       console.error(`[ConnectionService] configPath: ${this.configPath}`);
       console.error(`[ConnectionService] stack: ${error.stack}`);
       throw error;
+    }
+  }
+
+  private encryptConnection(connection: ConnectionEntity): ConnectionEntity {
+    const encrypted: any = { ...connection };
+    for (const field of SECRET_FIELDS) {
+      const value = encrypted[field];
+      if (typeof value === 'string' && value && !value.startsWith(ENCRYPTED_PREFIX)) {
+        encrypted[field] = this.encryptSecret(value);
+      }
+    }
+    return encrypted as ConnectionEntity;
+  }
+
+  private decryptConnection(connection: ConnectionEntity): ConnectionEntity {
+    const decrypted: any = { ...connection };
+    for (const field of SECRET_FIELDS) {
+      const value = decrypted[field];
+      if (typeof value === 'string' && value.startsWith(ENCRYPTED_PREFIX)) {
+        decrypted[field] = this.decryptSecret(value);
+      }
+    }
+    return decrypted as ConnectionEntity;
+  }
+
+  private getEncryptionKey(): Buffer {
+    const keyPath = getDataPath('connections.key');
+    try {
+      if (fs.existsSync(keyPath)) {
+        return crypto.createHash('sha256').update(fs.readFileSync(keyPath, 'utf8').trim()).digest();
+      }
+      const secret = crypto.randomBytes(32).toString('base64url');
+      fs.writeFileSync(keyPath, secret, { encoding: 'utf8', mode: 0o600 });
+      try { fs.chmodSync(keyPath, 0o600); } catch (_) { /* ignore */ }
+      return crypto.createHash('sha256').update(secret).digest();
+    } catch (error: any) {
+      console.warn(`[ConnectionService] Failed to load encryption key: ${error.message}`);
+      return crypto.createHash('sha256').update(`${os.hostname()}:${os.homedir()}:aicmd`).digest();
+    }
+  }
+
+  private encryptSecret(value: string): string {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', this.getEncryptionKey(), iv);
+    const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return `${ENCRYPTED_PREFIX}${Buffer.concat([iv, tag, encrypted]).toString('base64')}`;
+  }
+
+  private decryptSecret(value: string): string {
+    try {
+      const payload = Buffer.from(value.slice(ENCRYPTED_PREFIX.length), 'base64');
+      const iv = payload.subarray(0, 12);
+      const tag = payload.subarray(12, 28);
+      const encrypted = payload.subarray(28);
+      const decipher = crypto.createDecipheriv('aes-256-gcm', this.getEncryptionKey(), iv);
+      decipher.setAuthTag(tag);
+      return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+    } catch (error: any) {
+      console.warn(`[ConnectionService] Failed to decrypt secret: ${error.message}`);
+      return '';
     }
   }
 
