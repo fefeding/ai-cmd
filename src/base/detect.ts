@@ -4,8 +4,9 @@ export const isNWjs = typeof process !== 'undefined' && process.__nwjs !== undef
 export const isVSCode = typeof acquireVsCodeApi !== 'undefined' || (typeof process !== 'undefined' && process.env.VSCODE_PID);
 // @ts-ignore
 export const isChromeExtension = !isNWjs && !isVSCode && (() => { try { return typeof chrome !== 'undefined' && Boolean(chrome?.runtime) && Boolean(chrome?.runtime?.id) } catch (e) { return false } })();
+// Electron 检测：sandbox 模式下 process 不可用，通过 preload 暴露的 window.electronAPI 判断
 // @ts-ignore
-export const isElectron = typeof process === 'object' && process.versions?.electron !== undefined;
+export const isElectron = (typeof process === 'object' && process.versions?.electron !== undefined) || Boolean(typeof window !== 'undefined' && window.electronAPI?.isElectron);
 export const isBrowser = typeof window !== 'undefined' && !isNWjs && !isVSCode && !isChromeExtension && !isElectron;
 export const isInIframe = isBrowser && window.top !== window;
 
