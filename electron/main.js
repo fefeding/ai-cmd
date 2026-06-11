@@ -436,8 +436,6 @@ function setupMenu() {
       submenu: [
         { label: 'About AICmd', click: () => shell.openExternal('https://aigcwhere.com/opensource/aicmd') },
         { type: 'separator' },
-        { role: 'services' },
-        { type: 'separator' },
         { role: 'hide' },
         { role: 'hideOthers' },
         { role: 'unhide' },
