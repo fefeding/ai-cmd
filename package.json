@@ -39,7 +39,6 @@
   },
   "dependencies": {
     "axios": "^1.16.1",
-    "cpu-features": "^0.0.10",
     "dayjs": "^1.11.21",
     "dotenv": "^17.4.2",
     "electron-updater": "^6.8.3",
@@ -49,6 +48,9 @@
     "uuid": "^13.0.2",
     "vue-i18n": "^11.4.4",
     "ws": "^8.21.0"
+  },
+  "optionalDependencies": {
+    "cpu-features": "^0.0.10"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.10.3",
