@@ -197,8 +197,10 @@ async function handleExport() {
   }
 }
 
+import { copy } from '@/utils/clipboard';
+
 function copyText(text: string) {
-  navigator.clipboard.writeText(text).catch(() => {});
+  copy(text);
 }
 
 /** 添加实时审计条目（从 WebSocket 调用） */

@@ -9,6 +9,10 @@ declare interface Window {
     api: {
       request(pathname: string, body?: any): Promise<any>;
     };
+    clipboard: {
+      writeText(text: string): void;
+      readText(): string;
+    };
     terminalIPC: {
       send(message: any): void;
       onMessage(callback: (msg: any) => void): () => void;

@@ -3,7 +3,7 @@
  * @description 通过 contextBridge 向渲染进程暴露最小 IPC 通信接口
  */
 
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, clipboard } = require('electron');
 
 // 终端 IPC 通道（替代 WebSocket）
 const terminalIPC = {
@@ -53,11 +53,22 @@ const api = {
   },
 };
 
+// 剪贴板操作（contextIsolation 下渲染进程无法直接访问 navigator.clipboard）
+const clip = {
+  writeText(text) {
+    clipboard.writeText(text);
+  },
+  readText() {
+    return clipboard.readText();
+  },
+};
+
 contextBridge.exposeInMainWorld('electronAPI', {
   isElectron: true,
   isPackaged: !process.env.ELECTRON_DEV,
   platform: process.platform,
   api,
+  clipboard: clip,
   terminalIPC,
   updater,
 });

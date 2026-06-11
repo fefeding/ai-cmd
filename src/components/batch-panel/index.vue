@@ -202,8 +202,10 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+import { copy } from '@/utils/clipboard';
+
 function copyText(text: string) {
-  navigator.clipboard.writeText(text).catch(() => {});
+  copy(text);
 }
 
 onMounted(async () => {

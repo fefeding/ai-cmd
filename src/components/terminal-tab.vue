@@ -184,6 +184,39 @@ function initTerminal() {
     sendToServer({ type: 'resize', sessionId: sessionId || undefined, data: { cols, rows } });
   });
 
+  // 拦截复制/粘贴快捷键（contextIsolation 下 navigator.clipboard 不可用，需通过 preload clipboard API）
+  terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+    const isMac = (window as any).electronAPI?.platform === 'darwin' || navigator.platform.includes('Mac');
+    const isCopy = (isMac && event.metaKey && event.key === 'c') ||
+                   (!isMac && event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c');
+    const isPaste = (isMac && event.metaKey && event.key === 'v') ||
+                    (!isMac && event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'v');
+
+    if (isCopy && terminal) {
+      const selection = terminal.getSelection();
+      if (selection) {
+        const clip = (window as any).electronAPI?.clipboard;
+        if (clip) {
+          clip.writeText(selection);
+        } else {
+          navigator.clipboard?.writeText(selection).catch(() => {});
+        }
+      }
+      return false; // 阻止 xterm.js 处理该按键
+    }
+
+    if (isPaste) {
+      const clip = (window as any).electronAPI?.clipboard;
+      const text = clip ? clip.readText() : '';
+      if (text && terminal) {
+        sendToServer({ type: 'terminal', sessionId: sessionId || undefined, data: text });
+      }
+      return false;
+    }
+
+    return true; // 其他按键正常处理
+  });
+
   // 初始化 ZMODEM Sentry
   initSentry();
 }
