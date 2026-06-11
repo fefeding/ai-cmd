@@ -401,6 +401,18 @@ function setupMenu() {
       ],
     },
     {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    },
+    {
       label: 'Help',
       submenu: [
         { label: 'Documentation', click: () => shell.openExternal('https://github.com/fefeding/ai-cmd') },
