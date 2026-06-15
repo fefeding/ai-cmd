@@ -16,9 +16,6 @@ importers:
       axios:
         specifier: ^1.16.1
         version: 1.16.1
-      cpu-features:
-        specifier: ^0.0.10
-        version: 0.0.10
       dayjs:
         specifier: ^1.11.21
         version: 1.11.21
@@ -176,6 +173,10 @@ importers:
       zmodem.js:
         specifier: ^0.1.10
         version: 0.1.10(patch_hash=dba85ba4b3429ef2b7cf7722dfd1424332618d438b27499a9bc194fae5594a6e)
+    optionalDependencies:
+      cpu-features:
+        specifier: ^0.0.10
+        version: 0.0.10
 
 packages:
 
@@ -4542,7 +4543,8 @@ snapshots:
       ieee754: 1.2.1
     optional: true
 
-  buildcheck@0.0.7: {}
+  buildcheck@0.0.7:
+    optional: true
 
   builder-util-runtime@9.5.1:
     dependencies:
@@ -4696,6 +4698,7 @@ snapshots:
     dependencies:
       buildcheck: 0.0.7
       nan: 2.27.0
+    optional: true
 
   crc-32@1.2.2: {}
 
@@ -5684,7 +5687,8 @@ snapshots:
       object-assign: 4.1.1
       thenify-all: 1.6.0
 
-  nan@2.27.0: {}
+  nan@2.27.0:
+    optional: true
 
   nanoid@3.3.12: {}
 
