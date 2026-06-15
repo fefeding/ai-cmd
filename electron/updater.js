@@ -17,6 +17,7 @@ const { BrowserWindow, ipcMain, app } = require('electron');
 let updateAvailable = null;
 let updateDownloaded = false;
 let downloadProgress = null;
+let lastProgressBroadcast = 0; // 进度广播节流
 
 /**
  * 向所有窗口广播更新事件
@@ -82,8 +83,10 @@ function initAutoUpdater(options = {}) {
       transferred: progress.transferred,
       total: progress.total,
     };
-    // 每 10% 广播一次，避免过于频繁
-    if (downloadProgress.percent % 10 === 0) {
+    // 节流：至少间隔 1 秒广播一次
+    const now = Date.now();
+    if (now - lastProgressBroadcast >= 1000 || downloadProgress.percent >= 100) {
+      lastProgressBroadcast = now;
       broadcastUpdate('progress', downloadProgress);
     }
   });
@@ -103,10 +106,7 @@ function initAutoUpdater(options = {}) {
     updateAvailable = null;
     updateDownloaded = false;
     downloadProgress = null;
-    // 静默处理网络错误，不打扰用户
-    if (!error.message.includes('net::') && !error.message.includes('ENOTFOUND')) {
-      broadcastUpdate('error', { message: error.message });
-    }
+    broadcastUpdate('error', { message: error.message });
   });
 
   // 注册 IPC 处理器

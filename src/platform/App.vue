@@ -91,6 +91,9 @@ onMounted(() => {
         break;
       case 'error':
         console.error('[Update] Error:', data?.message);
+        // 下载失败时重置状态，隐藏卡住的 banner
+        updateState.status = '';
+        updateState.showBanner = false;
         break;
     }
   });
