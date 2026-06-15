@@ -440,13 +440,30 @@ async function startUpload(files: File[]) {
 }
 
 /**
- * 通过 HTTP POST 上传文件到服务端
+ * 通过 HTTP POST 上传文件到服务端（Web 模式）
+ * 或 IPC 上传到主进程（Electron 模式，app:// 协议下 fetch 不可用）
  */
 async function httpFileUpload(
   file: File,
   remoteName: string,
   sessionId: string | null
 ): Promise<{ success: boolean; bytes?: number; error?: string }> {
+  // Electron 模式：通过 preload 暴露的 IPC API 上传
+  const electronApi = (window as any).electronAPI;
+  if (electronApi?.api?.uploadFile) {
+    try {
+      const buffer = await file.arrayBuffer();
+      console.log(`[FileTransfer] IPC upload: ${file.name} -> ${remoteName}, size=${file.size}`);
+      const result = await electronApi.api.uploadFile(sessionId || '', remoteName, buffer);
+      console.log(`[FileTransfer] IPC upload result:`, result);
+      return result;
+    } catch (err: any) {
+      console.error(`[FileTransfer] IPC upload error:`, err);
+      return { success: false, error: err.message || 'IPC upload failed' };
+    }
+  }
+
+  // Web 模式：通过 HTTP POST
   try {
     console.log(`[FileTransfer] POST /api/file-upload, size=${file.size}`);
     const resp = await fetch('/api/file-upload', {

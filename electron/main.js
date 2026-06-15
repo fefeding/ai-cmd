@@ -110,6 +110,27 @@ function setupApiIPC() {
       return { ret: 500, msg: err.message || 'Internal error' };
     }
   });
+
+  // 文件上传 IPC 处理（app:// 协议下 fetch 不可用）
+  ipcMain.handle('file:upload', async (_event, payload) => {
+    const services = getServices();
+    if (!services) {
+      return { success: false, error: 'Services not available' };
+    }
+    try {
+      const { sessionId, fileName, fileData } = payload;
+      if (!sessionId || !fileName || !fileData) {
+        return { success: false, error: 'Missing sessionId, fileName, or fileData' };
+      }
+      console.log(`[IPC] File upload: session=${sessionId}, file=${fileName}, size=${fileData.byteLength || fileData.length}`);
+      const buffer = Buffer.from(fileData);
+      const bytes = await services.sshService.uploadFileViaSftp(sessionId, fileName, buffer);
+      return { success: true, bytes, fileName };
+    } catch (err) {
+      console.error('[IPC] File upload error:', err);
+      return { success: false, error: err.message };
+    }
+  });
 }
 
 // ========== 终端 IPC 处理（替代 WebSocket） ==========

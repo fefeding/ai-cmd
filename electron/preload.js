@@ -51,6 +51,15 @@ const api = {
   request(pathname, body) {
     return ipcRenderer.invoke('api:request', { pathname, body });
   },
+  /**
+   * 文件上传（app:// 协议下 fetch 不可用，通过 IPC 上传到主进程）
+   * @param {string} sessionId
+   * @param {string} fileName
+   * @param {ArrayBuffer|Uint8Array} fileData
+   */
+  uploadFile(sessionId, fileName, fileData) {
+    return ipcRenderer.invoke('file:upload', { sessionId, fileName, fileData });
+  },
 };
 
 // 剪贴板操作（contextIsolation 下渲染进程无法直接访问 navigator.clipboard）

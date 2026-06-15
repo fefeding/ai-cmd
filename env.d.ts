@@ -8,6 +8,7 @@ declare interface Window {
     platform: string;
     api: {
       request(pathname: string, body?: any): Promise<any>;
+      uploadFile(sessionId: string, fileName: string, fileData: ArrayBuffer | Uint8Array): Promise<{ success: boolean; bytes?: number; fileName?: string; error?: string }>;
     };
     clipboard: {
       writeText(text: string): void;
