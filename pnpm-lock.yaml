@@ -14,8 +14,8 @@ importers:
   .:
     dependencies:
       '@cicctencent/agent-core':
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: ^0.1.4
+        version: 0.1.4
       axios:
         specifier: ^1.16.1
         version: 1.16.1
@@ -313,8 +313,8 @@ packages:
   '@borewit/text-codec@0.2.2':
     resolution: {integrity: sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ==}
 
-  '@cicctencent/agent-core@0.1.1':
-    resolution: {integrity: sha512-eRZ3e+5q2i7qFxXuPbXvnwaXBJM2VJXHsuWUN51mK41WfM1+FKVTjnNjIKp7ToPP3aAKSJ4a3hIrNgmdimAIWQ==}
+  '@cicctencent/agent-core@0.1.4':
+    resolution: {integrity: sha512-TkNnNycQbBnQEy5nmw3zqHq686oFxVkw9Kl0A/+4hV693J5e3Q+VIskj7KPScDAj+2Th+9PjGhi+zqxfwycAvw==}
     engines: {node: '>=18'}
 
   '@codemirror/commands@6.10.3':
@@ -3455,7 +3455,7 @@ snapshots:
 
   '@borewit/text-codec@0.2.2': {}
 
-  '@cicctencent/agent-core@0.1.1':
+  '@cicctencent/agent-core@0.1.4':
     dependencies:
       js-tiktoken: 1.0.21
       socks-proxy-agent: 10.1.0

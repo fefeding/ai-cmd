@@ -38,7 +38,7 @@
     "electron:build:linux": "node scripts/electron-build.js --platform=linux"
   },
   "dependencies": {
-    "@cicctencent/agent-core": "^0.1.1",
+    "@cicctencent/agent-core": "^0.1.4",
     "axios": "^1.16.1",
     "dayjs": "^1.11.21",
     "dotenv": "^17.4.2",

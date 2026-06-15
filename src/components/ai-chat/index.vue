@@ -717,17 +717,16 @@ watch(() => props.isOpen, (val) => {
   }
 });
 
-// sessionId 变化时重新加载历史
+// sessionId 变化时重新加载历史（immediate: true 覆盖首次挂载）
 watch(() => props.sessionId, () => {
   messages.value = [];
   currentAssistantIdx = -1;
   loadDisplayHistory();
-});
+}, { immediate: true });
 
 onMounted(() => {
   if (props.isOpen) inputRef.value?.focus();
   loadSkills();
-  loadDisplayHistory();
 });
 
 defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
