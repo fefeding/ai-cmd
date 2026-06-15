@@ -145,6 +145,7 @@
 <script lang="ts" setup>
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { subscribe, unsubscribe } from '@/base/eventBus';
 import { useTerminalStore } from '@/stores/terminal';
 import * as terminalService from '@/service/terminal';
 import TerminalSidebar from '@/components/terminal-sidebar.vue';
@@ -367,16 +368,24 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+let menuNewConnSubId: symbol | null = null;
+
 onMounted(async () => {
   await store.loadConnections();
   await restoreOrCreateTabs();
   document.addEventListener('keydown', handleKeydown);
   document.addEventListener('click', hideContextMenu);
+
+  // 监听 Electron 菜单 "New Connection" 动作
+  menuNewConnSubId = subscribe('MENU_NEW_CONNECTION', () => {
+    openEditor();
+  });
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydown);
   document.removeEventListener('click', hideContextMenu);
+  if (menuNewConnSubId) unsubscribe(menuNewConnSubId);
 });
 
 /**
