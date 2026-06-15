@@ -109,6 +109,8 @@ let fitAddon: FitAddon | null = null;
 let ws: WebSocket | null = null;
 let ipcCleanup: (() => void) | null = null;
 let sessionId: string | null = null;
+// 客户端预生成 sessionId，确保 IPC 模式下从一开始就能精确过滤消息
+const pendingSessionId = `ssh-${Date.now()}-${Math.random().toString(36).substr(2, 8)}`;
 let resizeObserver: ResizeObserver | null = null;
 let sentry: any = null;
 let zmodemSession: any = null;
@@ -171,17 +173,17 @@ function initTerminal() {
 
   // 监听用户输入
   terminal.onData((data) => {
-    sendToServer({ type: 'terminal', sessionId: sessionId || undefined, data });
+    sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data });
   });
 
   // 监听二进制数据
   terminal.onBinary((data) => {
-    sendToServer({ type: 'terminal', sessionId: sessionId || undefined, data });
+    sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data });
   });
 
   // 监听大小变化
   terminal.onResize(({ cols, rows }) => {
-    sendToServer({ type: 'resize', sessionId: sessionId || undefined, data: { cols, rows } });
+    sendToServer({ type: 'resize', sessionId: sessionId || pendingSessionId, data: { cols, rows } });
   });
 
   // 拦截复制/粘贴快捷键（contextIsolation 下 navigator.clipboard 不可用，需通过 preload clipboard API）
@@ -209,7 +211,7 @@ function initTerminal() {
       const clip = (window as any).electronAPI?.clipboard;
       const text = clip ? clip.readText() : '';
       if (text && terminal) {
-        sendToServer({ type: 'terminal', sessionId: sessionId || undefined, data: text });
+        sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data: text });
       }
       return false;
     }
@@ -246,7 +248,7 @@ function initSentry() {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
           type: 'terminal',
-          sessionId: sessionId || undefined,
+          sessionId: sessionId || pendingSessionId,
           data: b64,
           binary: true,
         }));
@@ -434,6 +436,7 @@ function connectWebSocket() {
     // 发送创建会话请求
     sendToServer({
       type: 'create',
+      sessionId: pendingSessionId,
       data: {
         connectionId: props.connection.id,
         cols: terminal?.cols || 80,
@@ -505,7 +508,7 @@ function reconnect() {
     // WebSocket 还活着，只是 SSH 断开了，发送重连请求
     sendToServer({
       type: 'reconnect',
-      sessionId: sessionId || undefined,
+      sessionId: sessionId || pendingSessionId,
       data: {
         connectionId: props.connection.id,
         cols: terminal?.cols || 80,
@@ -602,7 +605,7 @@ function createManualSession(type: 'ZRQINIT' | 'ZRINIT', frameOctets: number[]) 
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
         type: 'terminal',
-        sessionId: sessionId || undefined,
+        sessionId: sessionId || pendingSessionId,
         data: b64,
         binary: true,
       }));
@@ -665,6 +668,14 @@ function createManualSession(type: 'ZRQINIT' | 'ZRINIT', frameOctets: number[]) 
 
 // 处理服务端消息
 function handleServerMessage(msg: WSMessage) {
+  // 【关键修复】IPC 模式下所有 tab 共享 terminal:event 通道，
+  // 必须按 sessionId 过滤消息，否则一个 tab 的输出会写到其他 tab。
+  // 使用 pendingSessionId（发送 create 时预生成）或 sessionId（status 确认后）进行匹配。
+  const myId = sessionId || pendingSessionId;
+  if (msg.sessionId && myId && msg.sessionId !== myId) {
+    return; // 消息属于其他 session，忽略
+  }
+
   switch (msg.type) {
     case 'terminal':
       if (msg.data && sentry) {
@@ -921,7 +932,7 @@ function handleExecuteCommand(command: string) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     sendToServer({ 
       type: 'terminal', 
-      sessionId: sessionId || undefined, 
+      sessionId: sessionId || pendingSessionId, 
       data: command + '\n' 
     });
   }
