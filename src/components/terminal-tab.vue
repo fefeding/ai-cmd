@@ -186,37 +186,54 @@ function initTerminal() {
     sendToServer({ type: 'resize', sessionId: sessionId || pendingSessionId, data: { cols, rows } });
   });
 
-  // 拦截复制/粘贴快捷键（contextIsolation 下 navigator.clipboard 不可用，需通过 preload clipboard API）
+  // 拦截复制/粘贴快捷键
+  // contextIsolation 下 navigator.clipboard 不可用，需通过 preload clipboard API
+  // 支持两套快捷键：
+  //   1. 标准快捷键：Ctrl+C / Ctrl+V（有选中时复制，无选中时放行给终端作 SIGINT）
+  //   2. 终端传统：Ctrl+Shift+C / Ctrl+Shift+V（始终复制/粘贴）
   terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
     const isMac = (window as any).electronAPI?.platform === 'darwin' || navigator.platform.includes('Mac');
-    const isCopy = (isMac && event.metaKey && event.key === 'c') ||
-                   (!isMac && event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c');
-    const isPaste = (isMac && event.metaKey && event.key === 'v') ||
-                    (!isMac && event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'v');
+    const modKey = isMac ? event.metaKey : event.ctrlKey;
+    const key = event.key.toLowerCase();
 
-    if (isCopy && terminal) {
-      const selection = terminal.getSelection();
-      if (selection) {
-        const clip = (window as any).electronAPI?.clipboard;
+    // 判断是否为复制/粘贴触发键
+    const isCopyTrigger = modKey && key === 'c';
+    const isPasteTrigger = modKey && key === 'v';
+
+    if (!isCopyTrigger && !isPasteTrigger) return true; // 其他按键放行
+
+    const clip = (window as any).electronAPI?.clipboard;
+    const hasSelection = !!(terminal && terminal.getSelection());
+
+    // ===== 复制 =====
+    if (isCopyTrigger) {
+      if (hasSelection) {
+        // 有选中文本 → 执行复制（无论是否按了 Shift）
+        const text = terminal!.getSelection();
         if (clip) {
-          clip.writeText(selection);
+          clip.writeText(text);
         } else {
-          navigator.clipboard?.writeText(selection).catch(() => {});
+          navigator.clipboard?.writeText(text).catch(() => {});
         }
+        return false; // 阻止 xterm.js 处理
       }
-      return false; // 阻止 xterm.js 处理该按键
+      // 无选中文本：
+      // - 如果按了 Shift（Ctrl+Shift+C），显式复制空文本（无操作）
+      // - 如果没有 Shift（纯 Ctrl+C），放行给终端（发送 SIGINT）
+      if (event.shiftKey) return false;
+      return true; // 放行 Ctrl+C → SIGINT
     }
 
-    if (isPaste) {
-      const clip = (window as any).electronAPI?.clipboard;
+    // ===== 粘贴 =====
+    if (isPasteTrigger) {
       const text = clip ? clip.readText() : '';
       if (text && terminal) {
         sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data: text });
       }
-      return false;
+      return false; // 阻止 xterm.js 处理
     }
 
-    return true; // 其他按键正常处理
+    return true;
   });
 
   // 初始化 ZMODEM Sentry
