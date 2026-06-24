@@ -13,6 +13,7 @@ import type {
   LLMProvider, AgentEvent as CoreAgentEvent,
   Message, ToolContext, ToolDefinition,
 } from '@cicctencent/agent-core';
+import { extractTextFromContent } from '@cicctencent/agent-core';
 
 const ENCRYPTED_PREFIX = 'enc:v1:';
 
@@ -676,9 +677,10 @@ export class AIService {
       });
       const content = response.choices?.[0]?.message?.content;
       if (content) {
-        history.push({ role: 'assistant', content });
+        const textContent = extractTextFromContent(content);
+        history.push({ role: 'assistant', content: textContent });
         this.saveChatMessages(sessionId, history);
-        return content;
+        return textContent;
       }
       throw new Error('AI response is empty');
     } catch (error: any) {
@@ -711,7 +713,11 @@ export class AIService {
       });
       for await (const chunk of stream) {
         const content = chunk.delta?.content;
-        if (content) { fullResponse += content; yield content; }
+        if (content) {
+          const textContent = extractTextFromContent(content);
+          fullResponse += textContent;
+          yield textContent;
+        }
       }
       if (fullResponse) {
         history.push({ role: 'assistant', content: fullResponse });
