@@ -176,8 +176,9 @@ export class ConnectionService {
       port: connection.port || 22,
       username: connection.username,
       readyTimeout: 30000,
-      keepaliveInterval: 10000,
-      keepaliveCountMax: 3,
+      // 保活配置：优先使用连接配置中的设置，否则使用默认值
+      keepaliveInterval: connection.options?.keepaliveInterval ?? 10000,
+      keepaliveCountMax: connection.options?.keepaliveCountMax ?? 3,
     };
 
     if (connection.authType === 'privateKey' && connection.privateKey) {

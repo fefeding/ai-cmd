@@ -1,6 +1,6 @@
 {
   "name": "@fefeding/aicmd",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": false,
   "type": "commonjs",
   "description": "AI-powered web SSH terminal with autonomous agent, skills, and file transfer",
@@ -38,7 +38,7 @@
     "electron:build:linux": "node scripts/electron-build.js --platform=linux"
   },
   "dependencies": {
-    "@cicctencent/agent-core": "^0.1.4",
+    "@cicctencent/agent-core": "^0.1.24",
     "axios": "^1.16.1",
     "dayjs": "^1.11.21",
     "dotenv": "^17.4.2",

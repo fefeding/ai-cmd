@@ -20,6 +20,7 @@ const ENCRYPTED_PREFIX = 'enc:v1:';
 
 export interface AIConfig {
   enabled: boolean;
+  provider: string;
   apiKey: string;
   baseUrl: string;
   model: string;
@@ -224,7 +225,7 @@ export class AIService {
     if (!this.config.apiKey) return undefined;
     if (!this.llmProvider) {
       this.llmProvider = createLLMProvider({
-        provider: 'openai',
+        provider: this.config.provider || 'openai',
         model: this.config.model,
         apiKey: this.config.apiKey,
         baseUrl: this.config.baseUrl,
@@ -290,7 +291,7 @@ export class AIService {
 
   private getDefaultConfig(): AIConfig {
     return {
-      enabled: true, apiKey: '',
+      enabled: true, provider: 'openai', apiKey: '',
       baseUrl: 'https://api.openai.com/v1',
       model: 'gpt-4o-mini', maxTokens: 4000, temperature: 0.3,
     };
@@ -394,7 +395,7 @@ export class AIService {
     if (!testCfg.apiKey) return { success: false, message: 'API Key not configured' };
     try {
       const provider = createLLMProvider({
-        provider: 'openai', model: testCfg.model,
+        provider: testCfg.provider || 'openai', model: testCfg.model,
         apiKey: testCfg.apiKey, baseUrl: testCfg.baseUrl,
       });
       const ok = await provider.ping();

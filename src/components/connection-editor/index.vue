@@ -91,6 +91,37 @@
         </div>
       </div>
 
+      <!-- 保活配置 -->
+      <div class="card mb-3">
+        <div class="card-header" @click="showKeepaliveConfig = !showKeepaliveConfig" style="cursor: pointer;">
+          <i class="bi bi-heart-pulse me-1"></i>{{ t('connection.keepaliveConfig') }}
+          <i :class="showKeepaliveConfig ? 'bi bi-chevron-up float-end' : 'bi bi-chevron-down float-end'"></i>
+        </div>
+        <div class="card-body" v-show="showKeepaliveConfig">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" v-model="keepaliveEnabled" id="keepaliveEnabled">
+            <label class="form-check-label" for="keepaliveEnabled">
+              <i class="bi bi-toggle-on me-1"></i>{{ t('connection.keepaliveEnabled') }}
+            </label>
+            <small class="form-text text-muted d-block">
+              <i class="bi bi-info-circle me-1"></i>{{ t('connection.keepaliveEnabledHint') }}
+            </small>
+          </div>
+          <div v-if="keepaliveEnabled" class="row mb-2">
+            <div class="col-6">
+              <label class="form-label">{{ t('connection.keepaliveInterval') }}</label>
+              <input type="number" class="form-control form-control-sm" v-model.number="keepaliveInterval" min="1000" max="300000" :placeholder="t('connection.keepaliveIntervalPlaceholder')">
+              <small class="form-text text-muted">{{ t('connection.keepaliveIntervalHint') }}</small>
+            </div>
+            <div class="col-6">
+              <label class="form-label">{{ t('connection.keepaliveCountMax') }}</label>
+              <input type="number" class="form-control form-control-sm" v-model.number="keepaliveCountMax" min="1" max="10" :placeholder="t('connection.keepaliveCountMaxPlaceholder')">
+              <small class="form-text text-muted">{{ t('connection.keepaliveCountMaxHint') }}</small>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 终端配置 -->
       <div class="card mb-3">
         <div class="card-header" @click="showTerminalConfig = !showTerminalConfig" style="cursor: pointer;">
@@ -160,8 +191,14 @@ const connectionModal = ref();
 const editingConnection = ref<string | null>(null);
 const showTerminalConfig = ref(false);
 const showStartupScript = ref(false);
+const showKeepaliveConfig = ref(false);
 const testing = ref(false);
 const saving = ref(false);
+
+// 保活配置（从 form.options 中提取）
+const keepaliveEnabled = ref(true);
+const keepaliveInterval = ref(10000);
+const keepaliveCountMax = ref(3);
 
 const defaultForm = () => ({
   name: '',
@@ -194,10 +231,28 @@ function open(connection?: any) {
     editingConnection.value = connection.id;
     Object.assign(form, defaultForm(), connection);
     showStartupScript.value = !!connection.startupScript || !!connection.forwardAgent;
+    // 从 options 中提取保活配置
+    if (connection.options?.keepaliveInterval !== undefined) {
+      keepaliveInterval.value = connection.options.keepaliveInterval;
+    } else {
+      keepaliveInterval.value = 10000;
+    }
+    if (connection.options?.keepaliveCountMax !== undefined) {
+      keepaliveCountMax.value = connection.options.keepaliveCountMax;
+    } else {
+      keepaliveCountMax.value = 3;
+    }
+    // 保活启用状态：如果 options 中有保活配置，则认为已启用
+    keepaliveEnabled.value = connection.options?.keepaliveInterval !== undefined || connection.options?.keepaliveCountMax !== undefined;
+    showKeepaliveConfig.value = keepaliveEnabled.value;
   } else {
     editingConnection.value = null;
     Object.assign(form, defaultForm());
     showStartupScript.value = false;
+    showKeepaliveConfig.value = false;
+    keepaliveEnabled.value = true;
+    keepaliveInterval.value = 10000;
+    keepaliveCountMax.value = 3;
   }
   connectionModal.value?.show();
 }
@@ -221,6 +276,21 @@ async function saveConnection() {
   }
   saving.value = true;
   try {
+    // 将保活配置写入 options
+    if (keepaliveEnabled.value) {
+      form.options = {
+        ...form.options,
+        keepaliveInterval: keepaliveInterval.value,
+        keepaliveCountMax: keepaliveCountMax.value,
+      };
+    } else {
+      // 禁用保活：设置 keepaliveInterval 为 0 表示不发送心跳
+      form.options = {
+        ...form.options,
+        keepaliveInterval: 0,
+        keepaliveCountMax: 0,
+      };
+    }
     if (editingConnection.value) {
       await connectionService.updateConnection(editingConnection.value, { ...form });
     } else {

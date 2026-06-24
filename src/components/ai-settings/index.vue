@@ -11,6 +11,20 @@
       <!-- API 配置 -->
       <div class="mb-3">
           <label class="form-label fw-bold">
+            <i class="bi bi-cloud me-1"></i>{{ t('ai.provider') }} <span class="text-danger">*</span>
+          </label>
+          <select class="form-select" v-model="form.provider" @change="onProviderChange">
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="tencent">腾讯云</option>
+            <option value="azure">Azure OpenAI</option>
+            <option value="custom">自定义</option>
+          </select>
+          <small class="form-text text-muted">{{ t('ai.providerHint') }}</small>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-bold">
             <i class="bi bi-key me-1"></i>{{ t('ai.apiKey') }} <span class="text-danger">*</span>
           </label>
           <div class="input-group">
@@ -106,6 +120,7 @@ const saving = ref(false);
 
 interface AIConfigForm {
   enabled: boolean;
+  provider: string;
   apiKey: string;
   baseUrl: string;
   model: string;
@@ -115,6 +130,7 @@ interface AIConfigForm {
 
 const defaultForm = (): AIConfigForm => ({
   enabled: true,
+  provider: 'openai',
   apiKey: '',
   baseUrl: 'https://api.openai.com/v1',
   model: 'gpt-4o-mini',
@@ -180,6 +196,23 @@ async function testConnection() {
 }
 
 const emit = defineEmits(['saved']);
+
+// Provider 预设配置
+const providerPresets: Record<string, { baseUrl: string; model: string }> = {
+  openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  anthropic: { baseUrl: 'https://api.anthropic.com', model: 'claude-3-5-sonnet-20241022' },
+  tencent: { baseUrl: 'https://api.hunyuan.cloud.tencent.com/v1', model: 'hunyuan-lite' },
+  azure: { baseUrl: '', model: 'gpt-4o-mini' },
+  custom: { baseUrl: '', model: '' },
+};
+
+function onProviderChange() {
+  const preset = providerPresets[form.provider];
+  if (preset) {
+    form.baseUrl = preset.baseUrl;
+    form.model = preset.model;
+  }
+}
 
 defineExpose({ open, close });
 </script>
