@@ -1,13 +1,12 @@
 /**
  * @file Electron 自动更新模块
- * @description 使用 electron-updater 检测、下载和安装应用更新
+ * @description 使用 electron-updater 仅检测是否有新版本
  *
- * 更新流程：
+ * 更新策略（仅提示，不自动更新）：
  * 1. 应用启动时自动检查更新
- * 2. 发现新版本 → 通知渲染进程显示提示
- * 3. 后台下载更新（利用 blockmap 增量下载）
- * 4. 下载完成 → 通知渲染进程显示"重启安装"按钮
- * 5. 用户确认后重启并安装
+ * 2. 发现新版本 → 通知渲染进程在顶部显示条幅提示
+ * 3. 用户点击条幅跳转到下载页自行下载安装
+ * 4. 不自动下载、不自动安装；所有更新错误静默忽略，不再报错
  */
 
 const { autoUpdater } = require('electron-updater');
@@ -15,9 +14,6 @@ const { BrowserWindow, ipcMain, app } = require('electron');
 
 // 更新状态
 let updateAvailable = null;
-let updateDownloaded = false;
-let downloadProgress = null;
-let lastProgressBroadcast = 0; // 进度广播节流
 
 /**
  * 向所有窗口广播更新事件
@@ -48,20 +44,18 @@ function initAutoUpdater(options = {}) {
     return;
   }
 
-  // 配置 autoUpdater
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // 仅检查更新，不自动下载，不自动安装
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
 
   // 事件监听
   autoUpdater.on('checking-for-update', () => {
     console.log('[Updater] Checking for updates...');
-    broadcastUpdate('checking', null);
   });
 
   autoUpdater.on('update-available', (info) => {
     console.log(`[Updater] Update available: v${info.version}`);
     updateAvailable = info;
-    updateDownloaded = false;
     broadcastUpdate('available', {
       version: info.version,
       releaseDate: info.releaseDate,
@@ -72,41 +66,11 @@ function initAutoUpdater(options = {}) {
   autoUpdater.on('update-not-available', (info) => {
     console.log(`[Updater] Already up to date: v${info.version}`);
     updateAvailable = null;
-    updateDownloaded = false;
-    broadcastUpdate('not-available', { version: info.version });
   });
 
-  autoUpdater.on('download-progress', (progress) => {
-    downloadProgress = {
-      percent: Math.round(progress.percent),
-      bytesPerSecond: progress.bytesPerSecond,
-      transferred: progress.transferred,
-      total: progress.total,
-    };
-    // 节流：至少间隔 1 秒广播一次
-    const now = Date.now();
-    if (now - lastProgressBroadcast >= 1000 || downloadProgress.percent >= 100) {
-      lastProgressBroadcast = now;
-      broadcastUpdate('progress', downloadProgress);
-    }
-  });
-
-  autoUpdater.on('update-downloaded', (info) => {
-    console.log(`[Updater] Update downloaded: v${info.version}`);
-    updateDownloaded = true;
-    broadcastUpdate('downloaded', {
-      version: info.version,
-      releaseDate: info.releaseDate,
-      releaseNotes: info.releaseNotes,
-    });
-  });
-
+  // 所有错误静默忽略，不再向渲染进程广播，避免报错打扰用户
   autoUpdater.on('error', (error) => {
-    console.error('[Updater] Error:', error.message);
-    updateAvailable = null;
-    updateDownloaded = false;
-    downloadProgress = null;
-    broadcastUpdate('error', { message: error.message });
+    console.log('[Updater] Error (ignored):', error?.message || error);
   });
 
   // 注册 IPC 处理器
@@ -124,22 +88,13 @@ function initAutoUpdater(options = {}) {
 }
 
 /**
- * 检查更新
+ * 检查更新（错误静默忽略）
  */
 async function checkForUpdates() {
   try {
     await autoUpdater.checkForUpdates();
   } catch (err) {
-    console.error('[Updater] Check failed:', err.message);
-  }
-}
-
-/**
- * 安装更新并重启
- */
-function quitAndInstall() {
-  if (updateDownloaded) {
-    autoUpdater.quitAndInstall();
+    console.log('[Updater] Check failed (ignored):', err?.message || err);
   }
 }
 
@@ -162,20 +117,11 @@ function setupUpdateIPC() {
             releaseDate: updateAvailable.releaseDate,
           }
         : null,
-      updateDownloaded,
-      downloadProgress,
     };
-  });
-
-  // 渲染进程请求安装更新
-  ipcMain.handle('update:install', () => {
-    quitAndInstall();
-    return { installing: true };
   });
 }
 
 module.exports = {
   initAutoUpdater,
   checkForUpdates,
-  quitAndInstall,
 };
