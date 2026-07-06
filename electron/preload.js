@@ -3,7 +3,7 @@
  * @description 通过 contextBridge 向渲染进程暴露最小 IPC 通信接口
  */
 
-const { contextBridge, ipcRenderer, clipboard } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
 // 终端 IPC 通道（替代 WebSocket）
 const terminalIPC = {
@@ -63,32 +63,18 @@ const api = {
 };
 
 // 剪贴板操作
-// 在 sandbox 模式下，clipboard 模块的 writeText/readText 可能受限，
-// 通过 IPC 委托主进程操作剪贴板作为兜底方案
+// sandbox 模式下 clipboard 模块不可用，全部通过 IPC 委托主进程操作
 const clip = {
   writeText(text) {
-    try {
-      clipboard.writeText(text);
-    } catch {
-      // sandbox 模式下 clipboard 直接调用可能失败，通过 IPC 兜底
-      ipcRenderer.send('clipboard:write', text);
-    }
+    ipcRenderer.send('clipboard:write', text);
   },
   readText() {
-    try {
-      return clipboard.readText();
-    } catch {
-      // 同步读取失败时返回空字符串，异步读取通过 IPC
-      return '';
-    }
+    // 同步读取在 sandbox 下不可用，返回空，粘贴走 readTextAsync
+    return '';
   },
-  /** 异步读取剪贴板（通过 IPC，适用于 sandbox 模式） */
+  /** 异步读取剪贴板（通过 IPC） */
   async readTextAsync() {
-    try {
-      return clipboard.readText();
-    } catch {
-      return ipcRenderer.invoke('clipboard:read');
-    }
+    return ipcRenderer.invoke('clipboard:read');
   },
 };
 

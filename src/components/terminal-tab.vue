@@ -110,13 +110,32 @@ const aiChatRef = ref<InstanceType<typeof AIChat>>();
 function showFileTransfer(info?: any) {
   const termRef = {
     sessionId: sessionId,
-    sendToServer: (msg: WSMessage) => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(msg));
-      }
-    },
+    sendToServer,
+    getCurrentCwd: inferCurrentCwdFromTerminal,
   };
   fileTransferRef.value?.show(props.tabId, termRef, info);
+}
+
+function inferCurrentCwdFromTerminal(): string {
+  if (!terminal) return '';
+  const buffer = terminal.buffer.active;
+  const lines: string[] = [];
+  const start = Math.max(0, buffer.baseY + buffer.cursorY - 80);
+  const end = buffer.baseY + buffer.cursorY;
+  for (let i = start; i <= end; i++) {
+    const line = buffer.getLine(i)?.translateToString(true).trim();
+    if (line) lines.push(line);
+  }
+
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    const userHostPath = line.match(/(?:^|\s)[^\s@]+@[^\s:]+:(\/[^\s#$]+)\s*[#$]\s*$/);
+    if (userHostPath?.[1]) return userHostPath[1];
+
+    const plainPath = line.match(/(?:^|\s)(\/[^\s#$]+)\s*[#$]\s*$/);
+    if (plainPath?.[1]) return plainPath[1];
+  }
+  return '';
 }
 
 let terminal: Terminal | null = null;
@@ -247,9 +266,24 @@ function initTerminal() {
 
     // ===== 粘贴 =====
     if (isPasteTrigger) {
-      const text = clip ? clip.readText() : '';
-      if (text && terminal) {
-        sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data: text });
+      // sandbox 模式下同步读取不可用，使用异步读取
+      if (clip) {
+        const syncText = clip.readText();
+        if (syncText) {
+          sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data: syncText });
+        } else if (clip.readTextAsync) {
+          clip.readTextAsync().then((text: string) => {
+            if (text && terminal) {
+              sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data: text });
+            }
+          });
+        }
+      } else {
+        navigator.clipboard?.readText().then((text: string) => {
+          if (text && terminal) {
+            sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data: text });
+          }
+        }).catch(() => {});
       }
       return false; // 阻止 xterm.js 处理
     }

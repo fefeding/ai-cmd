@@ -977,8 +977,12 @@ Write-Output "__DOCKER__: $dockerVer"
         if (streamHandler && session?.stream) {
           session.stream.removeListener('data', streamHandler);
         }
-        // 去除 ANSI 转义序列
-        resolve(output.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1B\].*?\x07/g, ''));
+        // 去除 ANSI 转义序列（更彻底的清理）
+        resolve(output
+          .replace(/\x1B\][^\x07]*\x07/g, '')   // OSC 序列
+          .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '') // CSI 序列
+          .replace(/\x1B[^\x1B]*[a-zA-Z]/g, '')  // 其他转义序列
+        );
       }, timeoutMs);
     });
   }
@@ -1040,23 +1044,39 @@ Write-Output "__DOCKER__: $dockerVer"
   async getSessionCwd(sessionId: string): Promise<string> {
     const marker = `__AICmd_CWD_${Date.now()}__`;
     // 前加空格避免 shell 回显（HISTCONTROL=ignorespace），先启动捕获再发命令
-    const outputPromise = this.captureOutput(sessionId, 1500);
-    this.writeData(sessionId, ` echo ${marker}:$(pwd)\n`);
+    // 增加超时到 3000ms，确保慢速 SSH 连接也能捕获到输出
+    const outputPromise = this.captureOutput(sessionId, 3000);
+    // 使用 printf + $PWD，避免 echo/命令替换在不同 shell 下产生不可控输出
+    this.writeData(sessionId, ` printf '\\n${marker}:%s\\n' "$PWD"\n`);
     const output = await outputPromise;
-    console.log(`[SSH] getSessionCwd: raw output: ${JSON.stringify(output.substring(0, 300))}`);
-    const cleaned = output.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').replace(/\r/g, '');
+    console.log(`[SSH] getSessionCwd: raw output: ${JSON.stringify(output.substring(0, 500))}`);
+    // 更彻底的 ANSI 清理：包括 OSC 序列、CSI 序列、以及各种控制字符
+    const cleaned = output
+      .replace(/\x1B\][^\x07]*\x07/g, '')  // OSC 序列
+      .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '') // CSI 序列
+      .replace(/\x1B[^\x1B]*[a-zA-Z]/g, '')  // 其他转义序列
+      .replace(/\r/g, '');
     for (const line of cleaned.split('\n')) {
       const trimmed = line.trim();
-      // 只匹配以 marker 开头的行（实际输出），跳过 echo 回显行（以 echo 开头）
+      // 匹配 marker 开头的行，跳过 echo 回显行
       if (trimmed.startsWith(marker + ':')) {
         const cwd = trimmed.substring(marker.length + 1).trim();
-        if (cwd && !cwd.includes('$(pwd)')) {
+        if (cwd && !cwd.includes('$(pwd)') && !cwd.includes('echo')) {
           console.log(`[SSH] getSessionCwd parsed: '${cwd}' from line: '${trimmed}'`);
           return cwd;
         }
       }
+      // 兜底：如果 marker 被 ANSI 序列打断，尝试用 includes 匹配
+      if (trimmed.includes(marker + ':') && !trimmed.startsWith('echo')) {
+        const idx = trimmed.indexOf(marker + ':');
+        const cwd = trimmed.substring(idx + marker.length + 1).trim();
+        if (cwd && !cwd.includes('$(pwd)') && !cwd.includes('echo')) {
+          console.log(`[SSH] getSessionCwd parsed (fallback): '${cwd}' from line: '${trimmed}'`);
+          return cwd;
+        }
+      }
     }
-    console.log(`[SSH] getSessionCwd: no marker found in cleaned output: ${JSON.stringify(cleaned.substring(0, 300))}`);
+    console.log(`[SSH] getSessionCwd: no marker found in cleaned output: ${JSON.stringify(cleaned.substring(0, 500))}`);
     return '';
   }
 
@@ -1076,30 +1096,17 @@ Write-Output "__DOCKER__: $dockerVer"
 
     console.log(`[SSH] SFTP upload: ${fileBuffer.length} bytes`);
 
-    // 解析相对路径：先通过 shell 获取交互式 CWD（而非 SFTP 默认的 home 目录）
+    // 解析相对路径：必须通过交互式 shell 获取当前 CWD。
+    // 注意：不能 fallback 到 SFTP realpath('.')，它通常是登录 home 目录，会导致文件传错位置。
     let fullPath = remotePath;
     if (!remotePath.startsWith('/')) {
-      try {
-        console.log(`[SSH] Getting shell CWD...`);
-        const cwd = await this.getSessionCwd(sessionId);
-        console.log(`[SSH] Shell CWD: '${cwd}'`);
-        if (cwd) {
-          fullPath = `${cwd}/${remotePath}`;
-        } else {
-          console.warn(`[SSH] Shell CWD empty, falling back to SFTP realpath`);
-          // fallback: 用 SFTP realpath（默认 home 目录）
-          fullPath = await new Promise<string>((resolve) => {
-            session.client!.sftp((err: Error | undefined, sftp: any) => {
-              if (err) { resolve(remotePath); return; }
-              sftp.realpath('.', (rpErr: Error | undefined, absCwd: string) => {
-                resolve(rpErr ? remotePath : `${absCwd}/${remotePath}`);
-              });
-            });
-          });
-        }
-      } catch (cwdErr: any) {
-        console.warn(`[SSH] getSessionCwd failed: ${cwdErr.message}, using relative path`);
+      console.log(`[SSH] Getting shell CWD...`);
+      const cwd = await this.getSessionCwd(sessionId);
+      console.log(`[SSH] Shell CWD: '${cwd}'`);
+      if (!cwd || !cwd.startsWith('/')) {
+        throw new Error('无法获取当前终端目录，请确认终端处于正常 Shell 提示符状态后重试');
       }
+      fullPath = `${cwd.replace(/\/$/, '')}/${remotePath}`;
     }
     console.log(`[SSH] SFTP upload path: ${remotePath} -> ${fullPath}`);
 

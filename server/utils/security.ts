@@ -112,9 +112,10 @@ export function getCookieHeader(token: string, secure = false): string {
 
 export function normalizeUploadName(name: string): string {
   const normalized = String(name || '').replace(/\\/g, '/').replace(/\0/g, '');
+  const isAbsolute = normalized.startsWith('/');
   const parts = normalized.split('/').filter(part => part && part !== '.' && part !== '..');
   if (!parts.length) throw new Error('Invalid file name');
-  return parts.join('/');
+  return `${isAbsolute ? '/' : ''}${parts.join('/')}`;
 }
 
 export function maxUploadBytes(): number {

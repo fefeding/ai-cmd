@@ -379,8 +379,10 @@ async function startUpload(files: File[]) {
 
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
       const sid = activeTermRef.sessionId;
+      const cwd = activeTermRef.getCurrentCwd?.() || '';
+      const remoteName = cwd && cwd.startsWith('/') ? `${cwd.replace(/\/$/, '')}/${safeName}` : safeName;
 
-      console.log(`[FileTransfer] HTTP upload: ${file.name} -> ${safeName}, size=${file.size}, sessionId=${sid}`);
+      console.log(`[FileTransfer] HTTP upload: ${file.name} -> ${remoteName}, size=${file.size}, sessionId=${sid}`);
 
       currentProgress.value = {
         direction: 'upload',
@@ -391,7 +393,7 @@ async function startUpload(files: File[]) {
         state: 'transferring',
       };
 
-      const result = await httpFileUpload(file, safeName, sid);
+      const result = await httpFileUpload(file, remoteName, sid);
 
       if (result.success) {
         currentProgress.value = {
