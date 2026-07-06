@@ -1,6 +1,6 @@
 {
   "name": "@fefeding/aicmd",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "private": false,
   "type": "commonjs",
   "description": "AI-powered web SSH terminal with autonomous agent, skills, and file transfer",
@@ -42,7 +42,6 @@
     "axios": "^1.16.1",
     "dayjs": "^1.11.21",
     "dotenv": "^17.4.2",
-    "electron-updater": "^6.8.3",
     "express": "^5.2.1",
     "node-pty": "1.2.0-beta.13",
     "ssh2": "^1.17.0",
@@ -81,7 +80,6 @@
     "bootstrap-icons": "^1.13.1",
     "electron": "^35.5.1",
     "electron-builder": "^26.0.12",
-    "electron-updater": "^6.8.3",
     "jimp": "^1.6.1",
     "js-cookie": "^3.0.7",
     "jsdom": "^26.1.0",

@@ -248,8 +248,10 @@ export default {
   },
   update: {
     newVersion: 'New Version Available',
-    available: 'New version v{version} is available.',
-    downloadNow: 'Download',
-    later: 'Later',
+    available: 'New version v{version} is available. Please download from GitHub.',
+  },
+  context: {
+    copy: 'Copy',
+    paste: 'Paste',
   },
 };

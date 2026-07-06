@@ -52,6 +52,21 @@
       <div class="spinner-border spinner-border-sm text-warning me-2"></div>
       {{ t('tab.reconnecting') }}
     </div>
+
+    <!-- 终端右键上下文菜单 -->
+    <div 
+      v-if="contextMenuVisible" 
+      class="terminal-context-menu"
+      :style="{ left: contextMenuX + 'px', top: contextMenuY + 'px' }"
+      @click.stop
+    >
+      <div class="context-menu-item" @click="handleContextCopy">
+        <i class="bi bi-clipboard"></i>{{ t('context.copy') || 'Copy' }}
+      </div>
+      <div class="context-menu-item" @click="handleContextPaste">
+        <i class="bi bi-clipboard-check"></i>{{ t('context.paste') || 'Paste' }}
+      </div>
+    </div>
   </div>
 </template>
 
@@ -165,6 +180,12 @@ function initTerminal() {
   terminal.loadAddon(new WebLinksAddon());
 
   terminal.open(terminalContainer.value);
+
+  // 绑定终端右键上下文菜单
+  const termElement = terminalContainer.value?.querySelector('.xterm') as HTMLElement;
+  if (termElement) {
+    termElement.addEventListener('contextmenu', showTerminalContextMenu);
+  }
 
   // 自适应大小
   nextTick(() => {
@@ -872,6 +893,9 @@ watch(() => props.active, (val) => {
 onMounted(() => {
   initTerminal();
 
+  // 全局点击关闭右键菜单
+  document.addEventListener('click', onDocumentClick);
+
   // ResizeObserver 监听容器大小变化（监听 terminal-container，因为 flex 布局下它会随 AI 面板开合而变化）
   if (terminalContainer.value) {
     resizeObserver = new ResizeObserver(() => {
@@ -887,6 +911,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   resizeObserver?.disconnect();
+  document.removeEventListener('click', onDocumentClick);
   ws?.close();
   ipcCleanup?.();
   terminal?.dispose();
@@ -958,6 +983,67 @@ function handleExecuteCommand(command: string) {
 // AI Agent WebSocket 发送
 function handleAISend(msg: any) {
   sendToServer(msg);
+}
+
+// ========== 终端右键上下文菜单 ==========
+const contextMenuVisible = ref(false);
+const contextMenuX = ref(0);
+const contextMenuY = ref(0);
+
+function showTerminalContextMenu(event: MouseEvent) {
+  event.preventDefault();
+  event.stopPropagation();
+  contextMenuX.value = event.clientX;
+  contextMenuY.value = event.clientY;
+  contextMenuVisible.value = true;
+}
+
+function hideTerminalContextMenu() {
+  contextMenuVisible.value = false;
+}
+
+function handleContextCopy() {
+  hideTerminalContextMenu();
+  if (!terminal) return;
+  const selection = terminal.getSelection();
+  if (selection) {
+    const clip = (window as any).electronAPI?.clipboard;
+    if (clip) {
+      clip.writeText(selection);
+    } else {
+      navigator.clipboard?.writeText(selection).catch(() => {});
+    }
+  }
+}
+
+async function handleContextPaste() {
+  hideTerminalContextMenu();
+  if (!terminal) return;
+  const clip = (window as any).electronAPI?.clipboard;
+  let text = '';
+  if (clip) {
+    text = clip.readText();
+    // sandbox 模式下同步读取可能失败，尝试异步读取
+    if (!text && clip.readTextAsync) {
+      text = await clip.readTextAsync();
+    }
+  } else {
+    try {
+      text = await navigator.clipboard.readText();
+    } catch {
+      // 降级：通过 paste 事件获取
+    }
+  }
+  if (text) {
+    sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data: text });
+  }
+}
+
+// 全局点击关闭右键菜单
+function onDocumentClick() {
+  if (contextMenuVisible.value) {
+    hideTerminalContextMenu();
+  }
 }
 </script>
 
@@ -1052,5 +1138,40 @@ function handleAISend(msg: any) {
 .ai-resize-handle:active {
   background: var(--accent, #89b4fa);
   opacity: 0.6;
+}
+
+/* 终端右键上下文菜单 */
+.terminal-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  background: #2b2d3e;
+  border: 1px solid #45475a;
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #cdd6f4;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.context-menu-item:hover {
+  background: #45475a;
+}
+
+.context-menu-item i {
+  font-size: 14px;
+  width: 16px;
+  text-align: center;
 }
 </style>

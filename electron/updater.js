@@ -1,16 +1,22 @@
 /**
- * @file Electron 自动更新模块
- * @description 使用 electron-updater 仅检测是否有新版本
+ * @file 版本更新检查模块
+ * @description 通过 GitHub Releases API 检查是否有新版本，仅 toast 提示，不自动下载
  *
- * 更新策略（仅提示，不自动更新）：
- * 1. 应用启动时自动检查更新
- * 2. 发现新版本 → 通知渲染进程在顶部显示条幅提示
- * 3. 用户点击条幅跳转到下载页自行下载安装
- * 4. 不自动下载、不自动安装；所有更新错误静默忽略，不再报错
+ * 更新策略：
+ * 1. 应用启动时自动检查 GitHub 最新 release 版本
+ * 2. 发现新版本 → 通知渲染进程显示 toast 提示
+ * 3. 用户点击 toast 跳转到下载页自行下载安装
+ * 4. 不自动下载、不自动安装；所有错误静默忽略
  */
 
-const { autoUpdater } = require('electron-updater');
-const { BrowserWindow, ipcMain, app } = require('electron');
+const { BrowserWindow, ipcMain, app, net } = require('electron');
+
+// GitHub Releases API
+const GITHUB_API = 'https://api.github.com/repos/fefeding/ai-cmd/releases/latest';
+const DOWNLOAD_URL = 'https://github.com/fefeding/ai-cmd/releases/latest';
+
+// 当前版本
+const currentVersion = app.getVersion();
 
 // 更新状态
 let updateAvailable = null;
@@ -27,75 +33,69 @@ function broadcastUpdate(event, data) {
 }
 
 /**
- * 初始化自动更新
- * @param {object} options - 配置选项
- * @param {boolean} options.isDev - 是否开发模式
- */
-function initAutoUpdater(options = {}) {
-  // 开发模式下禁用自动更新
-  if (options.isDev) {
-    console.log('[Updater] Disabled in dev mode');
-    return;
-  }
-
-  // 未打包时禁用（如通过 npm start 运行的 Web 模式）
-  if (!app.isPackaged) {
-    console.log('[Updater] Disabled: app is not packaged');
-    return;
-  }
-
-  // 仅检查更新，不自动下载，不自动安装
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = false;
-
-  // 事件监听
-  autoUpdater.on('checking-for-update', () => {
-    console.log('[Updater] Checking for updates...');
-  });
-
-  autoUpdater.on('update-available', (info) => {
-    console.log(`[Updater] Update available: v${info.version}`);
-    updateAvailable = info;
-    broadcastUpdate('available', {
-      version: info.version,
-      releaseDate: info.releaseDate,
-      releaseNotes: info.releaseNotes,
-    });
-  });
-
-  autoUpdater.on('update-not-available', (info) => {
-    console.log(`[Updater] Already up to date: v${info.version}`);
-    updateAvailable = null;
-  });
-
-  // 所有错误静默忽略，不再向渲染进程广播，避免报错打扰用户
-  autoUpdater.on('error', (error) => {
-    console.log('[Updater] Error (ignored):', error?.message || error);
-  });
-
-  // 注册 IPC 处理器
-  setupUpdateIPC();
-
-  // 延迟 3 秒后检查更新（避免启动时太卡）
-  setTimeout(() => {
-    checkForUpdates();
-  }, 3000);
-
-  // 每小时检查一次更新
-  setInterval(() => {
-    checkForUpdates();
-  }, 60 * 60 * 1000);
-}
-
-/**
- * 检查更新（错误静默忽略）
+ * 通过 GitHub API 检查最新版本
  */
 async function checkForUpdates() {
   try {
-    await autoUpdater.checkForUpdates();
+    const response = await net.fetch(GITHUB_API, {
+      headers: {
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'AICmd-Updater',
+      },
+    });
+
+    if (!response.ok) {
+      console.log(`[Updater] GitHub API returned ${response.status}`);
+      return;
+    }
+
+    const release = await response.json();
+    const latestVersion = release.tag_name?.replace(/^v/, '') || '';
+
+    if (!latestVersion) {
+      console.log('[Updater] Could not parse latest version');
+      return;
+    }
+
+    console.log(`[Updater] Current: v${currentVersion}, Latest: v${latestVersion}`);
+
+    if (compareVersions(latestVersion, currentVersion) > 0) {
+      console.log(`[Updater] New version available: v${latestVersion}`);
+      updateAvailable = {
+        version: latestVersion,
+        releaseDate: release.published_at,
+        releaseNotes: release.body,
+        downloadUrl: release.html_url || DOWNLOAD_URL,
+      };
+      broadcastUpdate('available', {
+        version: latestVersion,
+        downloadUrl: release.html_url || DOWNLOAD_URL,
+      });
+    } else {
+      console.log('[Updater] Already up to date');
+      updateAvailable = null;
+    }
   } catch (err) {
     console.log('[Updater] Check failed (ignored):', err?.message || err);
   }
+}
+
+/**
+ * 简单的语义化版本比较
+ * @returns {number} 正数表示 v1 > v2，负数表示 v1 < v2，0 表示相等
+ */
+function compareVersions(v1, v2) {
+  const parts1 = v1.split('.').map(Number);
+  const parts2 = v2.split('.').map(Number);
+  const len = Math.max(parts1.length, parts2.length);
+
+  for (let i = 0; i < len; i++) {
+    const a = parts1[i] || 0;
+    const b = parts2[i] || 0;
+    if (a > b) return 1;
+    if (a < b) return -1;
+  }
+  return 0;
 }
 
 /**
@@ -114,11 +114,45 @@ function setupUpdateIPC() {
       updateAvailable: updateAvailable
         ? {
             version: updateAvailable.version,
-            releaseDate: updateAvailable.releaseDate,
+            downloadUrl: updateAvailable.downloadUrl,
           }
         : null,
     };
   });
+}
+
+/**
+ * 初始化更新检查
+ * @param {object} options - 配置选项
+ * @param {boolean} options.isDev - 是否开发模式
+ */
+function initAutoUpdater(options = {}) {
+  // 开发模式下禁用
+  if (options.isDev) {
+    console.log('[Updater] Disabled in dev mode');
+    return;
+  }
+
+  // 未打包时禁用
+  if (!app.isPackaged) {
+    console.log('[Updater] Disabled: app is not packaged');
+    return;
+  }
+
+  console.log(`[Updater] Initialized, current version: v${currentVersion}`);
+
+  // 注册 IPC 处理器
+  setupUpdateIPC();
+
+  // 延迟 5 秒后检查更新（避免启动时太卡）
+  setTimeout(() => {
+    checkForUpdates();
+  }, 5000);
+
+  // 每 4 小时检查一次更新
+  setInterval(() => {
+    checkForUpdates();
+  }, 4 * 60 * 60 * 1000);
 }
 
 module.exports = {

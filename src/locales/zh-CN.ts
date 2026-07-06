@@ -248,8 +248,10 @@ export default {
   },
   update: {
     newVersion: '发现新版本',
-    available: '发现新版本 v{version}，点击下载更新。',
-    downloadNow: '下载',
-    later: '稍后',
+    available: '发现新版本 v{version}，请前往 GitHub 下载更新。',
+  },
+  context: {
+    copy: '复制',
+    paste: '粘贴',
   },
 };

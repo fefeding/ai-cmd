@@ -62,13 +62,33 @@ const api = {
   },
 };
 
-// 剪贴板操作（contextIsolation 下渲染进程无法直接访问 navigator.clipboard）
+// 剪贴板操作
+// 在 sandbox 模式下，clipboard 模块的 writeText/readText 可能受限，
+// 通过 IPC 委托主进程操作剪贴板作为兜底方案
 const clip = {
   writeText(text) {
-    clipboard.writeText(text);
+    try {
+      clipboard.writeText(text);
+    } catch {
+      // sandbox 模式下 clipboard 直接调用可能失败，通过 IPC 兜底
+      ipcRenderer.send('clipboard:write', text);
+    }
   },
   readText() {
-    return clipboard.readText();
+    try {
+      return clipboard.readText();
+    } catch {
+      // 同步读取失败时返回空字符串，异步读取通过 IPC
+      return '';
+    }
+  },
+  /** 异步读取剪贴板（通过 IPC，适用于 sandbox 模式） */
+  async readTextAsync() {
+    try {
+      return clipboard.readText();
+    } catch {
+      return ipcRenderer.invoke('clipboard:read');
+    }
   },
 };
 

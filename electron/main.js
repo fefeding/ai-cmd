@@ -133,6 +133,18 @@ function setupApiIPC() {
   });
 }
 
+// ========== 剪贴板 IPC 处理（sandbox 模式兜底） ==========
+
+function setupClipboardIPC() {
+  const { clipboard } = require('electron');
+  ipcMain.on('clipboard:write', (_event, text) => {
+    clipboard.writeText(text);
+  });
+  ipcMain.handle('clipboard:read', () => {
+    return clipboard.readText();
+  });
+}
+
 // ========== 终端 IPC 处理（替代 WebSocket） ==========
 
 // 跟踪每个窗口的 sessionId 列表（用于窗口关闭时清理）
@@ -408,7 +420,21 @@ function createWindow(loadTarget) {
 // ========== 应用菜单 ==========
 
 function setupMenu() {
+  const isMac = process.platform === 'darwin';
+
   const template = [
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { label: 'About AICmd', click: () => shell.openExternal('https://aigcwhere.com/opensource/aicmd') },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    }] : []),
     {
       label: 'File',
       submenu: [
@@ -419,6 +445,18 @@ function setupMenu() {
         }},
         { type: 'separator' },
         { role: 'quit', label: 'Quit' },
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
       ],
     },
     {
@@ -438,22 +476,6 @@ function setupMenu() {
     },
   ];
 
-  // macOS 需要添加 app 菜单
-  if (process.platform === 'darwin') {
-    template.unshift({
-      label: app.name,
-      submenu: [
-        { label: 'About AICmd', click: () => shell.openExternal('https://aigcwhere.com/opensource/aicmd') },
-        { type: 'separator' },
-        { role: 'hide' },
-        { role: 'hideOthers' },
-        { role: 'unhide' },
-        { type: 'separator' },
-        { role: 'quit' },
-      ],
-    });
-  }
-
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
 }
@@ -471,6 +493,7 @@ app.whenReady().then(() => {
 
   setupApiIPC();
   setupTerminalIPC();
+  setupClipboardIPC();
   setupMenu();
 
   // 初始化服务（仅生产模式加载模块，开发模式由 Vite 提供）
