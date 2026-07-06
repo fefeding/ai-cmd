@@ -385,6 +385,10 @@ export class AIService {
   getFullConfig(): AIConfig { return { ...this.config }; }
 
   updateConfig(updates: Partial<AIConfig>): AIConfig {
+    // 如果传入的 apiKey 是掩码值（包含 ****），则保留原有的真实 apiKey
+    if (updates.apiKey && updates.apiKey.includes('****')) {
+      delete updates.apiKey;
+    }
     this.config = { ...this.config, ...updates };
     this.saveConfig();
     this.resetProviderAndEngine();
