@@ -604,7 +604,7 @@ export class SSHService {
       // Start capture, then send the command
       // Use longer timeout (5s) to account for slow SSH connections and MOTD output
       const outputPromise = this.captureOutput(sessionId, 5000);
-      this.writeData(sessionId, cmd + '\n');
+      this.writeData(sessionId, cmd + '\r');
       const output = await outputPromise;
       // Clean ANSI escape codes for more reliable marker matching
       const cleaned = output.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1B\].*?\x07/g, '').replace(/\r/g, '');
@@ -954,34 +954,30 @@ Write-Output "__DOCKER__: $dockerVer"
   captureOutput(sessionId: string, timeoutMs: number = 2000): Promise<string> {
     return new Promise((resolve) => {
       let output = '';
-      const listener = (data: string) => {
-        output += data;
-      };
-      // 方式1: 通过 notifyOutput 机制捕获
-      this.addOutputListener(sessionId, listener);
-
-      // 方式2: 直接在 SSH stream 上监听（绕过 hasBinary 检查）
+      // 直接在 SSH stream 上监听（避免 notifyOutput 重复捕获导致数据翻倍）
       const session = this.sessions.get(sessionId);
       let streamHandler: ((chunk: Buffer) => void) | null = null;
       if (session?.stream) {
         streamHandler = (chunk: Buffer) => {
-          // 只捕获可打印文本部分
-          const text = chunk.toString('utf-8');
-          output += text;
+          output += chunk.toString('utf-8');
         };
         session.stream.on('data', streamHandler);
+      } else {
+        // 本地 shell fallback：通过 notifyOutput 机制
+        const listener = (data: string) => { output += data; };
+        this.addOutputListener(sessionId, listener);
       }
 
       setTimeout(() => {
-        this.removeOutputListener(sessionId);
         if (streamHandler && session?.stream) {
           session.stream.removeListener('data', streamHandler);
+        } else {
+          this.removeOutputListener(sessionId);
         }
-        // 去除 ANSI 转义序列（更彻底的清理）
         resolve(output
-          .replace(/\x1B\][^\x07]*\x07/g, '')   // OSC 序列
-          .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '') // CSI 序列
-          .replace(/\x1B[^\x1B]*[a-zA-Z]/g, '')  // 其他转义序列
+          .replace(/\x1B\][^\x07]*\x07/g, '')
+          .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
+          .replace(/\x1B[^\x1B]*[a-zA-Z]/g, '')
         );
       }, timeoutMs);
     });
@@ -1042,42 +1038,127 @@ Write-Output "__DOCKER__: $dockerVer"
    * 获取 SSH 会话的当前工作目录（通过 shell stream 执行 pwd）
    */
   async getSessionCwd(sessionId: string): Promise<string> {
-    const marker = `__AICmd_CWD_${Date.now()}__`;
-    // 前加空格避免 shell 回显（HISTCONTROL=ignorespace），先启动捕获再发命令
-    // 增加超时到 3000ms，确保慢速 SSH 连接也能捕获到输出
-    const outputPromise = this.captureOutput(sessionId, 3000);
-    // 使用 printf + $PWD，避免 echo/命令替换在不同 shell 下产生不可控输出
-    this.writeData(sessionId, ` printf '\\n${marker}:%s\\n' "$PWD"\n`);
-    const output = await outputPromise;
-    console.log(`[SSH] getSessionCwd: raw output: ${JSON.stringify(output.substring(0, 500))}`);
-    // 更彻底的 ANSI 清理：包括 OSC 序列、CSI 序列、以及各种控制字符
-    const cleaned = output
-      .replace(/\x1B\][^\x07]*\x07/g, '')  // OSC 序列
-      .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '') // CSI 序列
-      .replace(/\x1B[^\x1B]*[a-zA-Z]/g, '')  // 其他转义序列
-      .replace(/\r/g, '');
-    for (const line of cleaned.split('\n')) {
-      const trimmed = line.trim();
-      // 匹配 marker 开头的行，跳过 echo 回显行
-      if (trimmed.startsWith(marker + ':')) {
-        const cwd = trimmed.substring(marker.length + 1).trim();
-        if (cwd && !cwd.includes('$(pwd)') && !cwd.includes('echo')) {
-          console.log(`[SSH] getSessionCwd parsed: '${cwd}' from line: '${trimmed}'`);
-          return cwd;
+    const tryGetCwd = async (): Promise<string> => {
+      const marker = `__AICmd_CWD_${Date.now()}__`;
+      // 先发送 Ctrl+C 中断可能正在运行的前台进程（如 rz、vim、top 等），
+      // 否则 printf 命令会被前台进程吞掉，shell 不会执行
+      this.writeData(sessionId, '\x03');
+      await new Promise(r => setTimeout(r, 200));
+
+      // 启动捕获后发送命令
+      const outputPromise = this.captureOutput(sessionId, 3000);
+      this.writeData(sessionId, ` printf '\\n${marker}:%s\\n' "$PWD"\r`);
+      const output = await outputPromise;
+      console.log(`[SSH] getSessionCwd: raw output: ${JSON.stringify(output.substring(0, 500))}`);
+      // 更彻底的 ANSI 清理：包括 OSC 序列、CSI 序列、以及各种控制字符
+      const cleaned = output
+        .replace(/\x1B\][^\x07]*\x07/g, '')  // OSC 序列
+        .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '') // CSI 序列
+        .replace(/\x1B[^\x1B]*[a-zA-Z]/g, '')  // 其他转义序列
+        .replace(/\r/g, '');
+      const isCommandEcho = (text: string) => (
+        text.includes('printf') ||
+        text.includes('$PWD') ||
+        text.includes('%s') ||
+        text.includes('echo') ||
+        text.includes('$(pwd)')
+      );
+      const isValidCwd = (cwd: string) => cwd.startsWith('/') && !isCommandEcho(cwd);
+
+      for (const line of cleaned.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || isCommandEcho(trimmed)) continue;
+
+        // 匹配 marker 开头的真实输出行，跳过命令回显行
+        if (trimmed.startsWith(marker + ':')) {
+          const cwd = trimmed.substring(marker.length + 1).trim();
+          if (isValidCwd(cwd)) {
+            console.log(`[SSH] getSessionCwd parsed: '${cwd}' from line: '${trimmed}'`);
+            return cwd;
+          }
+        }
+        // 兜底：如果 marker 被 ANSI 序列打断，尝试用 includes 匹配
+        if (trimmed.includes(marker + ':')) {
+          const idx = trimmed.indexOf(marker + ':');
+          const cwd = trimmed.substring(idx + marker.length + 1).trim();
+          if (isValidCwd(cwd)) {
+            console.log(`[SSH] getSessionCwd parsed (fallback): '${cwd}' from line: '${trimmed}'`);
+            return cwd;
+          }
         }
       }
-      // 兜底：如果 marker 被 ANSI 序列打断，尝试用 includes 匹配
-      if (trimmed.includes(marker + ':') && !trimmed.startsWith('echo')) {
-        const idx = trimmed.indexOf(marker + ':');
-        const cwd = trimmed.substring(idx + marker.length + 1).trim();
-        if (cwd && !cwd.includes('$(pwd)') && !cwd.includes('echo')) {
-          console.log(`[SSH] getSessionCwd parsed (fallback): '${cwd}' from line: '${trimmed}'`);
-          return cwd;
-        }
-      }
+      console.log(`[SSH] getSessionCwd: no marker found in cleaned output: ${JSON.stringify(cleaned.substring(0, 500))}`);
+      return '';
+    };
+
+    // 尝试获取 CWD，失败则重试一次（Ctrl+C 可能需要时间生效）
+    let cwd = await tryGetCwd();
+    if (!cwd) {
+      console.log('[SSH] getSessionCwd: first attempt failed, retrying...');
+      cwd = await tryGetCwd();
     }
-    console.log(`[SSH] getSessionCwd: no marker found in cleaned output: ${JSON.stringify(cleaned.substring(0, 500))}`);
-    return '';
+    if (!cwd) {
+      console.log('[SSH] getSessionCwd: shell approach failed, trying exec...');
+      cwd = await this.getSessionCwdViaExec(sessionId);
+    }
+    return cwd;
+  }
+
+  /**
+   * 通过 SSH exec 独立通道获取交互式 shell 的工作目录
+   * 不依赖交互式 shell 状态，即使 shell 卡在 rz/vim/异常状态也能工作
+   */
+  private getSessionCwdViaExec(sessionId: string): Promise<string> {
+    return new Promise((resolve) => {
+      const session = this.sessions.get(sessionId);
+      if (!session?.client) {
+        resolve('');
+        return;
+      }
+
+      // 通过 /proc 查找交互式 shell 进程的 CWD（使用换行符避免分号语法问题）
+      const cmd = [
+        'for pid in $(ls -t /proc 2>/dev/null | grep "^[0-9]*$"); do',
+        '  exe=$(readlink "/proc/$pid/exe" 2>/dev/null)',
+        '  case "$exe" in',
+        '    *bash*|*sh*|*zsh*|*dash*)',
+        '      cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null)',
+        '      if [ -n "$cwd" ]; then echo "$cwd"; exit 0; fi',
+        '      ;;',
+        '  esac',
+        'done',
+        'pwd'
+      ].join('\n');
+
+      let stdout = '';
+      let stderr = '';
+      const timeout = setTimeout(() => {
+        console.log('[SSH] getSessionCwdViaExec: timeout');
+        resolve('');
+      }, 5000);
+
+      session.client.exec(cmd, (err: Error | undefined, stream: ClientChannel) => {
+        if (err) {
+          clearTimeout(timeout);
+          console.log('[SSH] getSessionCwdViaExec error:', err.message);
+          resolve('');
+          return;
+        }
+        stream.on('data', (data: Buffer) => { stdout += data.toString('utf-8'); });
+        stream.stderr.on('data', (data: Buffer) => { stderr += data.toString('utf-8'); });
+        stream.on('close', () => {
+          clearTimeout(timeout);
+          const cwd = stdout.trim().split('\n')[0].trim();
+          if (cwd && cwd.startsWith('/')) {
+            console.log(`[SSH] getSessionCwdViaExec: '${cwd}'`);
+            resolve(cwd);
+          } else {
+            console.log(`[SSH] getSessionCwdViaExec: no valid cwd, stdout: ${JSON.stringify(stdout.substring(0, 200))}, stderr: ${JSON.stringify(stderr.substring(0, 200))}`);
+            resolve('');
+          }
+        });
+      });
+    });
   }
 
   /**
@@ -1202,7 +1283,7 @@ Write-Output "__DOCKER__: $dockerVer"
               console.log(`[SSH] Shell exec: ${mvCmd}`);
               const mvMarker = `__AICmd_MV_${Date.now()}__`;
               const captureP = this.captureOutput(sessionId, 5000);
-              this.writeData(sessionId, `${mvCmd} && echo ${mvMarker}:OK || echo ${mvMarker}:FAIL\n`);
+              this.writeData(sessionId, `${mvCmd} && echo ${mvMarker}:OK || echo ${mvMarker}:FAIL\r`);
               const mvOutput = await captureP;
               console.log(`[SSH] mv output: ${JSON.stringify(mvOutput.substring(0, 200))}`);
 
@@ -1216,7 +1297,7 @@ Write-Output "__DOCKER__: $dockerVer"
               console.log(`[SSH] mv failed, trying sudo mv...`);
               const sudoMarker = `__AICmd_SUDO_${Date.now()}__`;
               const sudoCaptureP = this.captureOutput(sessionId, 5000);
-              this.writeData(sessionId, `sudo mv -f ${shellQuote(tmpPath)} ${shellQuote(fullPath)} && echo ${sudoMarker}:OK || echo ${sudoMarker}:FAIL\n`);
+              this.writeData(sessionId, `sudo mv -f ${shellQuote(tmpPath)} ${shellQuote(fullPath)} && echo ${sudoMarker}:OK || echo ${sudoMarker}:FAIL\r`);
               const sudoOutput = await sudoCaptureP;
               console.log(`[SSH] sudo mv output: ${JSON.stringify(sudoOutput.substring(0, 200))}`);
 
