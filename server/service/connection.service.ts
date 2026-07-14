@@ -20,6 +20,7 @@ export class ConnectionService {
    * 优先使用环境变量 AICMD_DATA_DIR，否则使用用户主目录下的 .aicmd 目录
    */
   private readonly configPath: string;
+  private cachedKey: Buffer | null = null;
 
   constructor() {
     this.configPath = getDataPath('connections.json');
@@ -117,6 +118,14 @@ export class ConnectionService {
     // 检查名称重复
     if (updates.name && connections.find((conn, idx) => conn.name === updates.name && idx !== index)) {
       throw new Error('连接名称已存在');
+    }
+
+    // 保护敏感字段：如果更新中密码/私钥为空，不覆盖已有值
+    // 避免因解密失败（密钥文件权限问题等）导致密码被空值覆盖而永久丢失
+    for (const field of SECRET_FIELDS) {
+      if (!updates[field]) {
+        delete (updates as any)[field];
+      }
     }
 
     connections[index] = { ...connections[index], ...updates, updatedAt: new Date() } as ConnectionEntity;
@@ -435,18 +444,48 @@ export class ConnectionService {
   }
 
   private getEncryptionKey(): Buffer {
+    if (this.cachedKey) return this.cachedKey;
+
     const keyPath = getDataPath('connections.key');
     try {
       if (fs.existsSync(keyPath)) {
-        return crypto.createHash('sha256').update(fs.readFileSync(keyPath, 'utf8').trim()).digest();
+        const content = fs.readFileSync(keyPath, 'utf8').trim();
+        this.cachedKey = crypto.createHash('sha256').update(content).digest();
+        return this.cachedKey;
       }
+      // 密钥文件不存在，创建新密钥
       const secret = crypto.randomBytes(32).toString('base64url');
       fs.writeFileSync(keyPath, secret, { encoding: 'utf8', mode: 0o600 });
       try { fs.chmodSync(keyPath, 0o600); } catch (_) { /* ignore */ }
-      return crypto.createHash('sha256').update(secret).digest();
+      this.cachedKey = crypto.createHash('sha256').update(secret).digest();
+      console.log(`[ConnectionService] Created new encryption key at ${keyPath}`);
+      return this.cachedKey;
     } catch (error: any) {
+      // 密钥文件存在但无法读取（如权限问题），尝试修复
       console.warn(`[ConnectionService] Failed to load encryption key: ${error.message}`);
-      return crypto.createHash('sha256').update(`${os.hostname()}:${os.homedir()}:aicmd`).digest();
+      try {
+        // 尝试修复权限
+        fs.chmodSync(keyPath, 0o600);
+        const content = fs.readFileSync(keyPath, 'utf8').trim();
+        this.cachedKey = crypto.createHash('sha256').update(content).digest();
+        console.log(`[ConnectionService] Fixed key file permissions and loaded key`);
+        return this.cachedKey;
+      } catch (_) {
+        // 权限修复失败，尝试删除并重建密钥文件
+        try {
+          fs.unlinkSync(keyPath);
+          const secret = crypto.randomBytes(32).toString('base64url');
+          fs.writeFileSync(keyPath, secret, { encoding: 'utf8', mode: 0o600 });
+          this.cachedKey = crypto.createHash('sha256').update(secret).digest();
+          console.warn(`[ConnectionService] Recreated encryption key file (old encrypted data will be lost)`);
+          return this.cachedKey;
+        } catch (_) {
+          // 完全无法操作密钥文件，使用回退密钥
+          this.cachedKey = crypto.createHash('sha256').update(`${os.hostname()}:${os.homedir()}:aicmd`).digest();
+          console.warn(`[ConnectionService] Using fallback encryption key`);
+          return this.cachedKey;
+        }
+      }
     }
   }
 
