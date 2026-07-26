@@ -131,6 +131,25 @@ function setupApiIPC() {
       return { success: false, error: err.message };
     }
   });
+
+  // 查询当前终端所在目录（Electron 模式：上传前由前端拉取，确保文件落到当前目录）
+  ipcMain.handle('terminal:get-cwd', async (_event, payload) => {
+    const services = getServices();
+    if (!services) {
+      return { cwd: '', error: 'Services not available' };
+    }
+    try {
+      const { sessionId } = payload || {};
+      if (!sessionId) {
+        return { cwd: '', error: 'Missing sessionId' };
+      }
+      const cwd = await services.sshService.getSessionCwd(sessionId);
+      return { cwd };
+    } catch (err) {
+      console.error('[IPC] get-cwd error:', err);
+      return { cwd: '', error: err.message };
+    }
+  });
 }
 
 // ========== 剪贴板 IPC 处理（sandbox 模式兜底） ==========

@@ -60,6 +60,9 @@ const api = {
   uploadFile(sessionId, fileName, fileData) {
     return ipcRenderer.invoke('file:upload', { sessionId, fileName, fileData });
   },
+  getCwd(sessionId) {
+    return ipcRenderer.invoke('terminal:get-cwd', { sessionId });
+  },
 };
 
 // 剪贴板操作

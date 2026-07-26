@@ -64,6 +64,37 @@
           style="display: none;"
           @change="handleFileSelect"
         >
+        <div class="dest-dir-hint mt-2 px-2 py-1" v-if="mode === 'upload'">
+          <!-- rz 触发的 ZMODEM 上传：远端 rz 自行决定写入目录，这里仅作提示 -->
+          <template v-if="isZmodemSend">
+            <i class="bi bi-folder2 me-1 text-info"></i>
+            <span class="text-secondary">远端 rz 将写入当前目录：</span>
+            <code class="text-info">{{ destDir || '（解析中…）' }}</code>
+          </template>
+          <!-- 普通上传：目标目录可编辑，检测失败也可手动指定 -->
+          <template v-else>
+            <div class="d-flex align-items-center gap-2">
+              <label class="text-secondary mb-0 text-nowrap"><i class="bi bi-folder2 me-1 text-info"></i>目标目录</label>
+              <input
+                v-model="destDir"
+                type="text"
+                class="form-control form-control-sm"
+                placeholder="/当前/目录（可手动修改）"
+                spellcheck="false"
+              >
+              <button class="btn btn-sm btn-outline-secondary" :disabled="destDirLoading" @click="queryCwd" title="重新检测当前目录">
+                <i class="bi" :class="destDirLoading ? 'bi-hourglass-split' : 'bi-arrow-clockwise'"></i>
+              </button>
+            </div>
+            <div v-if="destDir && !destDir.startsWith('/')" class="text-danger mt-1" style="font-size: 12px;">
+              <i class="bi bi-exclamation-triangle me-1"></i>目录必须是绝对路径（以 / 开头），否则将回退到家目录。
+            </div>
+            <div v-else-if="!destDir" class="text-warning mt-1" style="font-size: 12px;">
+              <i class="bi bi-exclamation-triangle me-1"></i>
+              未能自动检测当前目录{{ destDirError ? '：' + destDirError : '' }}，请手动填写目标目录（绝对路径），否则文件会传到家目录。
+            </div>
+          </template>
+        </div>
       </div>
 
       <!-- 下载模式 -->
@@ -217,6 +248,41 @@ let zmodemAutoMode = ref(false);
 let activeTermRef: any = null;
 let activeTabId: string | null = null;
 
+// 上传目标目录：由服务端可靠解析当前终端所在目录后展示，并用于构造绝对远程路径
+const destDir = ref('');
+const destDirLoading = ref(false);
+const destDirError = ref('');
+// 是否为 rz 触发的 ZMODEM 上传（远端 rz 自行决定写入目录，目标目录不可编辑）
+const isZmodemSend = ref(false);
+
+async function queryCwd(): Promise<string> {
+  const sid = activeTermRef?.sessionId;
+  if (!sid) return '';
+  destDirLoading.value = true;
+  destDirError.value = '';
+  try {
+    const electronApi = (window as any).electronAPI;
+    let cwd = '';
+    if (electronApi?.api?.getCwd) {
+      const res = await electronApi.api.getCwd(sid);
+      cwd = res?.cwd || '';
+      if (!cwd && res?.error) destDirError.value = res.error;
+    } else {
+      const resp = await fetch(`/api/cwd?sessionId=${encodeURIComponent(sid)}`);
+      const data = await resp.json();
+      cwd = data?.cwd || '';
+      if (!cwd && data?.error) destDirError.value = data.error;
+    }
+    destDir.value = cwd;
+    return cwd;
+  } catch (e: any) {
+    destDirError.value = e?.message || String(e);
+    return '';
+  } finally {
+    destDirLoading.value = false;
+  }
+}
+
 /**
  * 向终端发送数据（自动附带正确的 sessionId）
  */
@@ -296,6 +362,14 @@ function show(tabId: string, termRef: any, info?: any) {
   } else {
     zmodemSession = null;
     mode.value = 'upload';
+  }
+
+  // 上传模式：提前向服务端解析当前终端目录，用于展示目标目录并构造绝对上传路径
+  if (mode.value === 'upload') {
+    isZmodemSend.value = !!(activeTermRef as any)?.zmodemSender;
+    queryCwd();
+  } else {
+    isZmodemSend.value = false;
   }
 }
 
@@ -379,8 +453,10 @@ async function startUpload(files: File[]) {
 
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
       const sid = activeTermRef.sessionId;
-      const cwd = activeTermRef.getCurrentCwd?.() || '';
-      const remoteName = cwd && cwd.startsWith('/') ? `${cwd.replace(/\/$/, '')}/${safeName}` : safeName;
+      // 优先使用服务端可靠解析出的当前目录构造绝对路径；未解析到时退回相对文件名，
+      // 由服务端 uploadFileViaSftp 再次基于当前终端目录解析，确保文件落到当前目录而非家目录。
+      const cwd = destDir.value && destDir.value.startsWith('/') ? destDir.value : '';
+      const remoteName = cwd ? `${cwd.replace(/\/$/, '')}/${safeName}` : safeName;
 
       console.log(`[FileTransfer] HTTP upload: ${file.name} -> ${remoteName}, size=${file.size}, sessionId=${sid}`);
 

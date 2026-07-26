@@ -142,6 +142,23 @@ app.post('/api/file-upload', async (req, res) => {
   }
 });
 
+// 查询当前终端所在目录（Web 模式：上传前由前端拉取，确保文件落到当前目录）
+app.get('/api/cwd', async (req, res) => {
+  const sessionId = req.headers['x-session-id'] || req.query.sessionId;
+  if (!sessionId) {
+    res.status(400).json({ success: false, error: 'Missing sessionId' });
+    return;
+  }
+  try {
+    const serverModule = require('./dist/server/index.js');
+    const { sshService } = serverModule;
+    const cwd = await sshService.getSessionCwd(String(sessionId));
+    res.json({ success: true, cwd });
+  } catch (err) {
+    res.status(200).json({ success: false, cwd: '', error: err.message || String(err) });
+  }
+});
+
 // 处理 API 请求
 app.use('/api/', async (req, res, next) => {
   if (req.method === 'POST') {
@@ -406,6 +423,17 @@ wss.on('connection', async (ws, req) => {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'file-upload-result', success: false, error: err.message, fileName }));
             }
+          }
+          break;
+        }
+
+        case 'get-cwd': {
+          // 查询当前终端所在目录（由服务端可靠解析，避免依赖前端提示符解析）
+          try {
+            const cwd = await sshService.getSessionCwd(sid);
+            ws.send(JSON.stringify({ type: 'cwd', sessionId: sid, cwd }));
+          } catch (err) {
+            ws.send(JSON.stringify({ type: 'cwd', sessionId: sid, cwd: '', error: err.message || String(err) }));
           }
           break;
         }

@@ -33,6 +33,8 @@ interface TerminalSession {
   // 本地 shell 降级: child_process
   childProcess?: ChildProcess;
   createdAt: Date;
+  /** 实时跟踪的当前工作目录（通过解析 cd 命令维护，最可靠） */
+  cwd?: string;
 }
 
 /** Session 元数据（用于在 server 端持久化 tab 信息） */
@@ -199,6 +201,7 @@ export class SSHService {
               name: sessionName,
               pty: ptyProcess,
               createdAt: new Date(),
+              cwd: homeDir,
             };
 
             this.sessions.set(sessionId, session);
@@ -240,6 +243,7 @@ export class SSHService {
           name: sessionName,
           childProcess: child,
           createdAt: new Date(),
+          cwd: homeDir,
         };
 
         this.sessions.set(sessionId, session);
@@ -305,6 +309,11 @@ export class SSHService {
           };
 
           this.sessions.set(sessionId, session);
+
+          // 连接后后台探测初始 CWD（在 shell 初始化完成后），用于上传时定位当前目录
+          setTimeout(() => {
+            if (this.sessions.has(sessionId)) this.seedCwd(sessionId);
+          }, 1500);
 
           stream.on('close', () => {
             this.sessions.delete(sessionId);
@@ -901,6 +910,11 @@ Write-Output "__DOCKER__: $dockerVer"
     const session = this.sessions.get(sessionId);
     if (!session) return false;
 
+    // 通过解析用户发出的 cd/pushd/popd 命令，实时维护当前工作目录
+    if (typeof data === 'string') {
+      this.updateCwdFromInput(session, data);
+    }
+
     try {
       if (session.pty) {
         session.pty.write(data);
@@ -913,6 +927,60 @@ Write-Output "__DOCKER__: $dockerVer"
     } catch (error) {
       console.error(`写入会话 ${sessionId} 失败:`, error);
       return false;
+    }
+  }
+
+  /**
+   * 根据用户输入的命令实时更新跟踪的 CWD。
+   * 只处理简单形式的 cd/pushd/popd；遇到复杂结构（变量、管道、subshell 等）则重置为未知，
+   * 由上传时的探测逻辑兜底。这是获取当前目录最可靠、零延迟的方式。
+   */
+  private updateCwdFromInput(session: TerminalSession, data: string): void {
+    if (!/[\r\n]/.test(data)) return; // 只有回车提交的命令才处理
+    const lines = data.split(/[\r\n]+/);
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line) continue;
+      const m = line.match(/^(?:cd|pushd|popd)\b(.*)$/);
+      if (!m) continue;
+      const rest = m[1].trim();
+      // 含 ; | && || $ ( ) ` ' " 等无法可靠解析的结构 -> 重置为未知
+      if (/[;|&$()`'"]/.test(rest) || rest.includes('~')) {
+        session.cwd = undefined;
+        continue;
+      }
+      const target = rest.trim();
+      if (!target || target === '-') {
+        // cd 无参数回到 home，或 cd - 回到上一个目录：无法可靠跟踪，重置
+        session.cwd = undefined;
+        continue;
+      }
+      if (target.startsWith('/')) {
+        session.cwd = target;
+      } else if (session.cwd && session.cwd.startsWith('/')) {
+        session.cwd = path.posix.resolve(session.cwd, target);
+      } else {
+        // 当前目录未知，无法拼接相对路径，重置为未知
+        session.cwd = undefined;
+      }
+    }
+  }
+
+  /** 连接后后台探测一次初始 CWD 并缓存（不阻塞，失败忽略） */
+  private async seedCwd(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session || (session.cwd && session.cwd.startsWith('/'))) return;
+    try {
+      let cwd = '';
+      if (session.client) cwd = await this.getSessionCwdViaExec(sessionId);
+      if (!cwd) cwd = await this.probeCwdViaShell(sessionId);
+      if (!cwd) cwd = await this.probeCwdViaShell(sessionId);
+      if (cwd && cwd.startsWith('/') && !session.cwd) {
+        session.cwd = cwd;
+        console.log(`[SSH] seeded cwd for ${sessionId}: ${cwd}`);
+      }
+    } catch {
+      // 忽略，上传时再探测
     }
   }
 
@@ -1035,73 +1103,90 @@ Write-Output "__DOCKER__: $dockerVer"
   }
 
   /**
-   * 获取 SSH 会话的当前工作目录（通过 shell stream 执行 pwd）
+   * 获取 SSH 会话的当前工作目录。
+   * 优先级：
+   *   1) 实时跟踪的 session.cwd（解析 cd 命令维护，最可靠、零延迟）
+   *   2) /proc 扫描（仅匹配交互式 shell，不依赖交互式 shell 状态）
+   *   3) 向交互式 shell 注入 printf $PWD（会先 Ctrl+C 打断前台进程）
    */
   async getSessionCwd(sessionId: string): Promise<string> {
-    const tryGetCwd = async (): Promise<string> => {
-      const marker = `__AICmd_CWD_${Date.now()}__`;
-      // 先发送 Ctrl+C 中断可能正在运行的前台进程（如 rz、vim、top 等），
-      // 否则 printf 命令会被前台进程吞掉，shell 不会执行
-      this.writeData(sessionId, '\x03');
-      await new Promise(r => setTimeout(r, 200));
+    const session = this.sessions.get(sessionId);
+    // 优先使用实时跟踪到的目录
+    if (session?.cwd && session.cwd.startsWith('/')) {
+      return session.cwd;
+    }
+    let cwd = '';
+    if (session?.client) {
+      try {
+        cwd = await this.getSessionCwdViaExec(sessionId);
+      } catch (e) {
+        console.warn('[SSH] getSessionCwd exec failed, fallback to shell:', (e as Error)?.message);
+      }
+    }
+    if (!cwd) {
+      cwd = await this.probeCwdViaShell(sessionId);
+      if (!cwd) cwd = await this.probeCwdViaShell(sessionId);
+    }
+    if (cwd && cwd.startsWith('/')) {
+      if (session && !session.cwd) session.cwd = cwd; // 缓存探测结果
+      return cwd;
+    }
+    console.log(`[SSH] getSessionCwd: all probes failed for ${sessionId}`);
+    return '';
+  }
 
-      // 启动捕获后发送命令
-      const outputPromise = this.captureOutput(sessionId, 3000);
-      this.writeData(sessionId, ` printf '\\n${marker}:%s\\n' "$PWD"\r`);
-      const output = await outputPromise;
-      console.log(`[SSH] getSessionCwd: raw output: ${JSON.stringify(output.substring(0, 500))}`);
-      // 更彻底的 ANSI 清理：包括 OSC 序列、CSI 序列、以及各种控制字符
-      const cleaned = output
-        .replace(/\x1B\][^\x07]*\x07/g, '')  // OSC 序列
-        .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '') // CSI 序列
-        .replace(/\x1B[^\x1B]*[a-zA-Z]/g, '')  // 其他转义序列
-        .replace(/\r/g, '');
-      const isCommandEcho = (text: string) => (
-        text.includes('printf') ||
-        text.includes('$PWD') ||
-        text.includes('%s') ||
-        text.includes('echo') ||
-        text.includes('$(pwd)')
-      );
-      const isValidCwd = (cwd: string) => cwd.startsWith('/') && !isCommandEcho(cwd);
+  /** 向交互式 shell 注入 printf $PWD 探测 CWD（会先 Ctrl+C 打断前台进程） */
+  private async probeCwdViaShell(sessionId: string): Promise<string> {
+    const marker = `__AICmd_CWD_${Date.now()}__`;
+    // 先发送 Ctrl+C 中断可能正在运行的前台进程（如 rz、vim、top 等），
+    // 否则 printf 命令会被前台进程吞掉，shell 不会执行
+    this.writeData(sessionId, '\x03');
+    await new Promise(r => setTimeout(r, 200));
 
-      for (const line of cleaned.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed || isCommandEcho(trimmed)) continue;
+    // 启动捕获后发送命令
+    const outputPromise = this.captureOutput(sessionId, 3000);
+    this.writeData(sessionId, ` printf '\\n${marker}:%s\\n' "$PWD"\r`);
+    const output = await outputPromise;
+    console.log(`[SSH] probeCwdViaShell: raw output: ${JSON.stringify(output.substring(0, 500))}`);
+    // 更彻底的 ANSI 清理：包括 OSC 序列、CSI 序列、以及各种控制字符
+    const cleaned = output
+      .replace(/\x1B\][^\x07]*\x07/g, '')  // OSC 序列
+      .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '') // CSI 序列
+      .replace(/\x1B[^\x1B]*[a-zA-Z]/g, '')  // 其他转义序列
+      .replace(/\r/g, '');
+    const isCommandEcho = (text: string) => (
+      text.includes('printf') ||
+      text.includes('$PWD') ||
+      text.includes('%s') ||
+      text.includes('echo') ||
+      text.includes('$(pwd)')
+    );
+    const isValidCwd = (cwd: string) => cwd.startsWith('/') && !isCommandEcho(cwd);
 
-        // 匹配 marker 开头的真实输出行，跳过命令回显行
-        if (trimmed.startsWith(marker + ':')) {
-          const cwd = trimmed.substring(marker.length + 1).trim();
-          if (isValidCwd(cwd)) {
-            console.log(`[SSH] getSessionCwd parsed: '${cwd}' from line: '${trimmed}'`);
-            return cwd;
-          }
-        }
-        // 兜底：如果 marker 被 ANSI 序列打断，尝试用 includes 匹配
-        if (trimmed.includes(marker + ':')) {
-          const idx = trimmed.indexOf(marker + ':');
-          const cwd = trimmed.substring(idx + marker.length + 1).trim();
-          if (isValidCwd(cwd)) {
-            console.log(`[SSH] getSessionCwd parsed (fallback): '${cwd}' from line: '${trimmed}'`);
-            return cwd;
-          }
+    for (const line of cleaned.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || isCommandEcho(trimmed)) continue;
+
+      // 匹配 marker 开头的真实输出行，跳过命令回显行
+      if (trimmed.startsWith(marker + ':')) {
+        const cwd = trimmed.substring(marker.length + 1).trim();
+        if (isValidCwd(cwd)) {
+          console.log(`[SSH] probeCwdViaShell parsed: '${cwd}'`);
+          return cwd;
         }
       }
-      console.log(`[SSH] getSessionCwd: no marker found in cleaned output: ${JSON.stringify(cleaned.substring(0, 500))}`);
-      return '';
-    };
-
-    // 尝试获取 CWD，失败则重试一次（Ctrl+C 可能需要时间生效）
-    let cwd = await tryGetCwd();
-    if (!cwd) {
-      console.log('[SSH] getSessionCwd: first attempt failed, retrying...');
-      cwd = await tryGetCwd();
+      // 兜底：如果 marker 被 ANSI 序列打断，尝试用 includes 匹配
+      if (trimmed.includes(marker + ':')) {
+        const idx = trimmed.indexOf(marker + ':');
+        const cwd = trimmed.substring(idx + marker.length + 1).trim();
+        if (isValidCwd(cwd)) {
+          console.log(`[SSH] probeCwdViaShell parsed (fallback): '${cwd}'`);
+          return cwd;
+        }
+      }
     }
-    if (!cwd) {
-      console.log('[SSH] getSessionCwd: shell approach failed, trying exec...');
-      cwd = await this.getSessionCwdViaExec(sessionId);
-    }
-    return cwd;
+    console.log(`[SSH] probeCwdViaShell: no marker found: ${JSON.stringify(cleaned.substring(0, 500))}`);
+    return '';
   }
 
   /**
@@ -1116,14 +1201,21 @@ Write-Output "__DOCKER__: $dockerVer"
         return;
       }
 
-      // 通过 /proc 查找交互式 shell 进程的 CWD（使用换行符避免分号语法问题）
+      // 通过 /proc 查找交互式 shell 进程的 CWD。
+      // 关键：必须只匹配「stdin 是 tty（/dev/pts）」的 shell，排除本 exec 通道自己启动的
+      // shell（它的 stdin 是管道、CWD 是 $HOME），否则会错误地返回家目录。
       const cmd = [
-        'for pid in $(ls -t /proc 2>/dev/null | grep "^[0-9]*$"); do',
+        'for pid in $(ls /proc 2>/dev/null | grep "^[0-9]*$"); do',
         '  exe=$(readlink "/proc/$pid/exe" 2>/dev/null)',
         '  case "$exe" in',
-        '    *bash*|*sh*|*zsh*|*dash*)',
-        '      cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null)',
-        '      if [ -n "$cwd" ]; then echo "$cwd"; exit 0; fi',
+        '    *bash*|*sh*|*zsh*|*dash*|*fish*|*tcsh*|*csh*)',
+        '      tty=$(readlink "/proc/$pid/fd/0" 2>/dev/null)',
+        '      case "$tty" in',
+        '        /dev/pts/*|/dev/tty*|/dev/console)',
+        '          cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null)',
+        '          if [ -n "$cwd" ]; then echo "$cwd"; exit 0; fi',
+        '          ;;',
+        '      esac',
         '      ;;',
         '  esac',
         'done',
