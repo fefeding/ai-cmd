@@ -63,6 +63,9 @@ const api = {
   getCwd(sessionId) {
     return ipcRenderer.invoke('terminal:get-cwd', { sessionId });
   },
+  downloadFile(sessionId, remotePath, fileName) {
+    return ipcRenderer.invoke('file:download', { sessionId, remotePath, fileName });
+  },
 };
 
 // 剪贴板操作

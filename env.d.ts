@@ -10,6 +10,23 @@ declare interface Window {
       request(pathname: string, body?: any): Promise<any>;
       uploadFile(sessionId: string, fileName: string, fileData: ArrayBuffer | Uint8Array): Promise<{ success: boolean; bytes?: number; fileName?: string; error?: string }>;
       getCwd(sessionId: string): Promise<{ cwd?: string; error?: string }>;
+      downloadFile(sessionId: string, remotePath: string, fileName?: string): Promise<{ success: boolean; canceled?: boolean; filePath?: string; size?: number; error?: string }>;
+    };
+
+    /** 远程文件信息（文件管理面板） */
+    fileInfo?: {
+      name: string;
+      path: string;
+      size: number;
+      mtime: number;
+      atime: number;
+      isDirectory: boolean;
+      isFile: boolean;
+      isSymbolicLink: boolean;
+      mode: number;
+      permissions: string;
+      owner: string;
+      group: string;
     };
     clipboard: {
       writeText(text: string): void;

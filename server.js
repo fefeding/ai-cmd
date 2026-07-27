@@ -159,6 +159,27 @@ app.get('/api/cwd', async (req, res) => {
   }
 });
 
+// 文件下载端点：通过 SFTP 读取远程文件并以二进制流返回
+app.get('/api/file/download', async (req, res) => {
+  const sessionId = req.headers['x-session-id'] || req.query.sessionId;
+  const filePath = req.query.path;
+  if (!sessionId || !filePath) {
+    return res.status(400).json({ success: false, error: 'Missing sessionId or path' });
+  }
+  try {
+    const serverModule = require('./dist/server/index.js');
+    const { sshService } = serverModule;
+    const buf = await sshService.downloadFile(String(sessionId), String(filePath));
+    const baseName = path.basename(String(filePath)) || 'download';
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(baseName)}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', buf.length);
+    res.end(buf);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message || String(err) });
+  }
+});
+
 // 处理 API 请求
 app.use('/api/', async (req, res, next) => {
   if (req.method === 'POST') {

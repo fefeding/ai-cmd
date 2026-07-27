@@ -57,6 +57,26 @@ export interface SessionInfo {
   systemContext?: string;
 }
 
+/** 远程文件信息（用于文件管理面板） */
+export interface RemoteFileInfo {
+  name: string;
+  /** 完整路径 */
+  path: string;
+  size: number;
+  /** 修改时间（毫秒时间戳） */
+  mtime: number;
+  atime: number;
+  isDirectory: boolean;
+  isFile: boolean;
+  isSymbolicLink: boolean;
+  /** 数字权限位（如 0o755） */
+  mode: number;
+  /** ls -l 风格权限字符串（如 'rwxr-xr-x'） */
+  permissions: string;
+  owner: string;
+  group: string;
+}
+
 /**
  * 终端会话管理服务
  * 支持 SSH 远程连接和本地 Shell
@@ -1263,8 +1283,22 @@ Write-Output "__DOCKER__: $dockerVer"
   async uploadFileViaSftp(sessionId: string, remotePath: string, fileBuffer: Buffer): Promise<number> {
     const session = this.sessions.get(sessionId);
     if (!session) throw new Error('Session not found: ' + sessionId);
+
+    // 本地会话：直接写文件
+    if (session.type === 'local') {
+      let fullPath = remotePath;
+      if (!remotePath.startsWith('/')) {
+        const cwd = process.cwd();
+        fullPath = path.resolve(cwd, remotePath);
+      }
+      const buf = Buffer.isBuffer(fileBuffer) ? fileBuffer : Buffer.from(fileBuffer);
+      await fs.promises.writeFile(fullPath, buf);
+      console.log(`[SSH] Local upload: ${buf.length} bytes -> ${fullPath}`);
+      return buf.length;
+    }
+
     if (session.type !== 'ssh' || !session.client) {
-      throw new Error('SFTP upload only supported for SSH sessions');
+      throw new Error('File upload is only supported for SSH / local sessions');
     }
 
     console.log(`[SSH] SFTP upload: ${fileBuffer.length} bytes`);
@@ -1484,4 +1518,272 @@ Write-Output "__DOCKER__: $dockerVer"
   getActiveSessionIds(): string[] {
     return Array.from(this.sessions.keys());
   }
+
+  // ========== 文件管理（SFTP / 本地 fs） ==========
+
+  /**
+   * 获取 SFTP 客户端（ssh2 的 sftp 子系统）
+   */
+  private getSftp(sessionId: string): Promise<any> {
+    const session = this.sessions.get(sessionId);
+    if (!session || !session.client) {
+      return Promise.reject(new Error('SFTP is only available for SSH sessions'));
+    }
+    return new Promise((resolve, reject) => {
+      session.client!.sftp((err: Error | undefined, sftp: any) => {
+        if (err) return reject(err);
+        resolve(sftp);
+      });
+    });
+  }
+
+  /**
+   * 列出远程（或本地）目录内容
+   */
+  async listDirectory(sessionId: string, remotePath: string): Promise<RemoteFileInfo[]> {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error('Session not found: ' + sessionId);
+
+    if (session.type === 'ssh' && session.client) {
+      return this.listViaSftp(sessionId, remotePath);
+    }
+    if (session.type === 'local') {
+      return this.listViaLocal(remotePath);
+    }
+    throw new Error('File management is only supported for SSH / local sessions');
+  }
+
+  /**
+   * 创建远程目录
+   */
+  async makeDirectory(sessionId: string, remotePath: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error('Session not found: ' + sessionId);
+    if (session.type === 'ssh' && session.client) {
+      const sftp = await this.getSftp(sessionId);
+      await new Promise<void>((resolve, reject) => {
+        sftp.mkdir(remotePath, (err: Error | undefined) => err ? reject(err) : resolve());
+      });
+      return;
+    }
+    if (session.type === 'local') {
+      await fs.promises.mkdir(remotePath, { recursive: true });
+      return;
+    }
+    throw new Error('File management is only supported for SSH / local sessions');
+  }
+
+  /**
+   * 删除远程文件或目录（目录递归删除）
+   */
+  async removePath(sessionId: string, remotePath: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error('Session not found: ' + sessionId);
+    if (session.type === 'ssh' && session.client) {
+      const sftp = await this.getSftp(sessionId);
+      await this.removeRecursive(sftp, remotePath);
+      return;
+    }
+    if (session.type === 'local') {
+      await fs.promises.rm(remotePath, { recursive: true, force: true });
+      return;
+    }
+    throw new Error('File management is only supported for SSH / local sessions');
+  }
+
+  /**
+   * 重命名 / 移动远程文件或目录
+   */
+  async renamePath(sessionId: string, oldPath: string, newPath: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error('Session not found: ' + sessionId);
+    if (session.type === 'ssh' && session.client) {
+      const sftp = await this.getSftp(sessionId);
+      await new Promise<void>((resolve, reject) => {
+        sftp.rename(oldPath, newPath, (err: Error | undefined) => err ? reject(err) : resolve());
+      });
+      return;
+    }
+    if (session.type === 'local') {
+      await fs.promises.rename(oldPath, newPath);
+      return;
+    }
+    throw new Error('File management is only supported for SSH / local sessions');
+  }
+
+  /**
+   * 下载远程文件，返回 Buffer
+   */
+  async downloadFile(sessionId: string, remotePath: string): Promise<Buffer> {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error('Session not found: ' + sessionId);
+
+    const MAX_DOWNLOAD_SIZE = 200 * 1024 * 1024; // 200MB
+
+    if (session.type === 'ssh' && session.client) {
+      const sftp = await this.getSftp(sessionId);
+      // 预检查文件大小，防止大文件 OOM
+      const stat = await new Promise<any>((resolve, reject) => {
+        sftp.stat(remotePath, (err: Error | undefined, attrs: any) => err ? reject(err) : resolve(attrs));
+      }).catch(() => null);
+      if (stat && typeof stat.size === 'number' && stat.size > MAX_DOWNLOAD_SIZE) {
+        throw new Error(`文件过大 (${(stat.size / 1024 / 1024).toFixed(1)}MB)，超过 200MB 限制，请使用终端 scp/sz 下载`);
+      }
+      return new Promise<Buffer>((resolve, reject) => {
+        const chunks: Buffer[] = [];
+        const stream = sftp.createReadStream(remotePath);
+        stream.on('data', (c: Buffer) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+        stream.on('end', () => resolve(Buffer.concat(chunks)));
+        stream.on('error', (e: Error) => reject(e));
+      });
+    }
+    if (session.type === 'local') {
+      // 预检查本地文件大小
+      const localStat = await fs.promises.stat(remotePath).catch(() => null);
+      if (localStat && localStat.size > MAX_DOWNLOAD_SIZE) {
+        throw new Error(`文件过大 (${(localStat.size / 1024 / 1024).toFixed(1)}MB)，超过 200MB 限制，请使用终端 scp/sz 下载`);
+      }
+      return fs.promises.readFile(remotePath);
+    }
+    throw new Error('File management is only supported for SSH / local sessions');
+  }
+
+  /**
+   * 获取会话默认目录（SSH: SFTP 起始目录 / 本地: 用户家目录）
+   */
+  async getDefaultDirectory(sessionId: string): Promise<string> {
+    const session = this.sessions.get(sessionId);
+    if (!session) throw new Error('Session not found: ' + sessionId);
+    if (session.type === 'ssh' && session.client) {
+      const sftp = await this.getSftp(sessionId);
+      return new Promise<string>((resolve, reject) => {
+        sftp.realpath('.', (err: Error | undefined, p: string) => err ? reject(err) : resolve(p));
+      });
+    }
+    if (session.type === 'local') {
+      return process.env.HOME || require('os').homedir();
+    }
+    throw new Error('File management is only supported for SSH / local sessions');
+  }
+
+  private async listViaSftp(sessionId: string, remotePath: string): Promise<RemoteFileInfo[]> {
+    const sftp = await this.getSftp(sessionId);
+    const list = await new Promise<any[]>((resolve, reject) => {
+      sftp.readdir(remotePath, (err: Error | undefined, entries: any[]) => err ? reject(err) : resolve(entries));
+    });
+    const result: RemoteFileInfo[] = list
+      .filter((e) => e.filename !== '.' && e.filename !== '..')
+      .map((entry) => this.entryToInfo(entry, remotePath));
+    return this.sortFileList(result);
+  }
+
+  private async listViaLocal(localPath: string): Promise<RemoteFileInfo[]> {
+    const base = localPath || process.env.HOME || require('os').homedir();
+    const names = await fs.promises.readdir(base);
+    const result: RemoteFileInfo[] = [];
+    for (const name of names) {
+      const full = path.join(base, name);
+      let stats;
+      try {
+        stats = await fs.promises.lstat(full);
+      } catch {
+        continue;
+      }
+      result.push(this.statToInfo(name, full, stats));
+    }
+    return this.sortFileList(result);
+  }
+
+  private entryToInfo(entry: any, parentPath: string): RemoteFileInfo {
+    const attrs = entry.attrs || {};
+    const mode = attrs.mode || 0;
+    const isDirectory = (mode & 0o170000) === 0o040000;
+    const isSymbolicLink = (mode & 0o170000) === 0o120000;
+    return {
+      name: entry.filename,
+      path: parentPath.replace(/\/$/, '') + '/' + entry.filename,
+      size: attrs.size ?? 0,
+      mtime: (attrs.mtime ?? 0) * 1000,
+      atime: (attrs.atime ?? 0) * 1000,
+      isDirectory,
+      isFile: (mode & 0o170000) === 0o100000,
+      isSymbolicLink,
+      mode,
+      permissions: modeToPermissions(mode),
+      owner: String(attrs.uid ?? ''),
+      group: String(attrs.gid ?? ''),
+    };
+  }
+
+  private statToInfo(name: string, full: string, stats: fs.Stats): RemoteFileInfo {
+    const mode = stats.mode;
+    const isDirectory = stats.isDirectory();
+    const isSymbolicLink = stats.isSymbolicLink();
+    return {
+      name,
+      path: full,
+      size: stats.size,
+      mtime: stats.mtimeMs,
+      atime: stats.atimeMs,
+      isDirectory,
+      isFile: stats.isFile(),
+      isSymbolicLink,
+      mode,
+      permissions: modeToPermissions(mode),
+      owner: String(stats.uid),
+      group: String(stats.gid),
+    };
+  }
+
+  private sortFileList(list: RemoteFileInfo[]): RemoteFileInfo[] {
+    return list.sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  private async removeRecursive(sftp: any, p: string): Promise<void> {
+    const stat = await new Promise<any>((resolve, reject) => {
+      sftp.lstat(p, (err: Error | undefined, attrs: any) => err ? reject(err) : resolve(attrs));
+    }).catch((e) => { console.warn(`[SSH] removeRecursive: lstat failed for ${p}:`, e?.message || e); return null; });
+    if (!stat) {
+      console.warn(`[SSH] removeRecursive: skipping ${p} (unable to stat)`);
+      return;
+    }
+    const mode = stat.mode || 0;
+    if ((mode & 0o170000) === 0o040000) {
+      const list = await new Promise<any[]>((resolve, reject) => {
+        sftp.readdir(p, (err: Error | undefined, entries: any[]) => err ? reject(err) : resolve(entries));
+      });
+      for (const item of list) {
+        if (item.filename === '.' || item.filename === '..') continue;
+        await this.removeRecursive(sftp, p.replace(/\/$/, '') + '/' + item.filename);
+      }
+      await new Promise<void>((resolve, reject) => {
+        sftp.rmdir(p, (err: Error | undefined) => err ? reject(err) : resolve());
+      });
+    } else {
+      await new Promise<void>((resolve, reject) => {
+        sftp.unlink(p, (err: Error | undefined) => err ? reject(err) : resolve());
+      });
+    }
+  }
+}
+
+/** 将数字权限位转换为 ls -l 风格的字符串（如 'rwxr-xr-x'），处理 setuid/setgid/sticky 位 */
+export function modeToPermissions(mode: number): string {
+  const typeChar =
+    (mode & 0o170000) === 0o040000 ? 'd'
+    : (mode & 0o170000) === 0o120000 ? 'l'
+    : '-';
+  const symbols = 'rwxrwxrwx';
+  let str = '';
+  for (let i = 0; i < 9; i++) {
+    str += (mode & (1 << (8 - i))) ? symbols[i] : '-';
+  }
+  // 处理特殊权限位：setuid(4)、setgid(2)、sticky(1)
+  if (mode & 0o4000) str = str.slice(0, 2) + (str[2] === 'x' ? 's' : 'S') + str.slice(3);
+  if (mode & 0o2000) str = str.slice(0, 5) + (str[5] === 'x' ? 's' : 'S') + str.slice(6);
+  if (mode & 0o1000) str = str.slice(0, 8) + (str[8] === 'x' ? 't' : 'T');
+  return typeChar + str;
 }

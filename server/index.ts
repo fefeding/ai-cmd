@@ -291,6 +291,46 @@ export async function handleRoutes(pathname: string, body: any) {
       return batchService.getTasks();
     }
 
+    // ========== 文件管理（SFTP / 本地 fs） ==========
+
+    // 列出目录内容
+    if (pathname === '/api/file/list') {
+      const { sessionId, path: remotePath } = body;
+      if (!sessionId) throw Error('Missing parameter: sessionId');
+      return await sshService.listDirectory(sessionId, remotePath || '/');
+    }
+
+    // 创建目录
+    if (pathname === '/api/file/mkdir') {
+      const { sessionId, path: remotePath } = body;
+      if (!sessionId || !remotePath) throw Error('Missing parameter: sessionId, path');
+      await sshService.makeDirectory(sessionId, remotePath);
+      return true;
+    }
+
+    // 删除文件或目录
+    if (pathname === '/api/file/remove') {
+      const { sessionId, path: remotePath } = body;
+      if (!sessionId || !remotePath) throw Error('Missing parameter: sessionId, path');
+      await sshService.removePath(sessionId, remotePath);
+      return true;
+    }
+
+    // 重命名 / 移动
+    if (pathname === '/api/file/rename') {
+      const { sessionId, oldPath, newPath } = body;
+      if (!sessionId || !oldPath || !newPath) throw Error('Missing parameter: sessionId, oldPath, newPath');
+      await sshService.renamePath(sessionId, oldPath, newPath);
+      return true;
+    }
+
+    // 获取会话默认目录（home）
+    if (pathname === '/api/file/defaultDir') {
+      const { sessionId } = body;
+      if (!sessionId) throw Error('Missing parameter: sessionId');
+      return await sshService.getDefaultDirectory(sessionId);
+    }
+
     throw Error('API endpoint not found');
   } catch (error: any) {
     if (error?.detail) error.message += ' ' + error.detail;

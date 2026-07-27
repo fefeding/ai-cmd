@@ -143,7 +143,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { subscribe, unsubscribe } from '@/base/eventBus';
 import { useTerminalStore } from '@/stores/terminal';

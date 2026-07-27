@@ -1,20 +1,41 @@
 <template>
   <div class="terminal-wrapper" ref="terminalWrapper">
+    <!-- 文件管理器面板（左侧） -->
+    <div v-if="showFileManager && status === 'connected'" class="file-manager-wrapper" :style="{ width: fmWidth + 'px' }">
+      <div class="fm-resize-handle" @mousedown="startFmResize"></div>
+      <FileManager
+        :sessionId="sessionId || tabId"
+        @close="showFileManager = false"
+      />
+    </div>
+
     <div class="terminal-container" ref="terminalContainer"></div>
-    
+
     <!-- 文件传输浮动面板 -->
     <FileTransfer ref="fileTransferRef" />
 
     <!-- AI 按钮 -->
-    <button 
-      v-if="status === 'connected'" 
-      class="ai-toggle-btn" 
+    <button
+      v-if="status === 'connected'"
+      class="ai-toggle-btn"
       :class="{ active: showAIChat }"
       :style="showAIChat ? { right: (aiChatWidth + 12) + 'px' } : {}"
       @click="toggleAIChat"
       :title="t('ai.chat')"
     >
       <i class="bi bi-robot"></i>
+    </button>
+
+    <!-- 文件管理器按钮 -->
+    <button
+      v-if="status === 'connected'"
+      class="ai-toggle-btn"
+      :class="{ active: showFileManager }"
+      :style="showAIChat ? { right: (aiChatWidth + 52) + 'px' } : { right: '52px' }"
+      @click="showFileManager = !showFileManager"
+      :title="t('fileManager.title')"
+    >
+      <i class="bi bi-folder2-open"></i>
     </button>
 
     <!-- AI 对话面板 -->
@@ -81,6 +102,7 @@ import type { ConnectionEntity, WSMessage } from '@/typings/connection';
 import { createSentry, base64ToOctets, stringToOctets, octetsToBase64, Zmodem } from '@/utils/zmodem';
 import AIChat from '@/components/ai-chat/index.vue';
 import FileTransfer from '@/components/file-transfer.vue';
+import FileManager from '@/components/file-manager.vue';
 
 const { t } = useI18n();
 
@@ -105,6 +127,38 @@ const errorMessage = ref('');
 // AI 聊天相关
 const showAIChat = ref(false);
 const aiChatRef = ref<InstanceType<typeof AIChat>>();
+
+// 文件管理器相关
+const showFileManager = ref(false);
+const fmWidth = ref(360);
+const FM_MIN_WIDTH = 280;
+const FM_MAX_WIDTH_RATIO = 0.5;
+
+function startFmResize(e: MouseEvent) {
+  e.preventDefault();
+  const startX = e.clientX;
+  const startWidth = fmWidth.value;
+  const containerWidth = terminalWrapper.value?.clientWidth || 800;
+  const maxWidth = containerWidth * FM_MAX_WIDTH_RATIO;
+
+  const onMouseMove = (ev: MouseEvent) => {
+    const delta = ev.clientX - startX; // 向右拖 = 宽度增加
+    const newWidth = Math.min(Math.max(startWidth + delta, FM_MIN_WIDTH), maxWidth);
+    fmWidth.value = newWidth;
+  };
+
+  const onMouseUp = () => {
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  };
+
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+}
 
 /** 显示文件传输浮动面板 */
 function showFileTransfer(info?: any) {
@@ -1142,6 +1196,35 @@ function onDocumentClick() {
 .ai-toggle-btn.active {
   background: var(--accent);
   color: white;
+}
+
+/* 文件管理器按钮定位在左上角 */
+/* 文件管理器面板包装器 */
+.file-manager-wrapper {
+  position: relative;
+  min-width: 280px;
+  max-width: 50%;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.file-manager-wrapper .fm-resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 20;
+  background: transparent;
+  transition: background 0.2s;
+}
+.file-manager-wrapper .fm-resize-handle:hover,
+.file-manager-wrapper .fm-resize-handle:active {
+  background: var(--accent, #89b4fa);
+  opacity: 0.6;
 }
 
 /* AI 对话面板包装器 */

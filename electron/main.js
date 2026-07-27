@@ -132,6 +132,35 @@ function setupApiIPC() {
     }
   });
 
+  // 文件下载 IPC 处理（app:// 协议下 fetch 不可用；直接在主进程保存到用户选择路径）
+  ipcMain.handle('file:download', async (_event, payload) => {
+    const services = getServices();
+    if (!services) {
+      return { success: false, error: 'Services not available' };
+    }
+    try {
+      const { sessionId, remotePath, fileName } = payload || {};
+      if (!sessionId || !remotePath) {
+        return { success: false, error: 'Missing sessionId or remotePath' };
+      }
+      const buffer = await services.sshService.downloadFile(sessionId, remotePath);
+      const { dialog } = require('electron');
+      const defaultName = fileName || path.basename(remotePath) || 'download';
+      const { canceled, filePath } = await dialog.showSaveDialog({
+        title: 'Save file as',
+        defaultPath: path.join(os.homedir(), defaultName),
+      });
+      if (canceled || !filePath) {
+        return { success: false, canceled: true };
+      }
+      fs.writeFileSync(filePath, buffer);
+      return { success: true, filePath, size: buffer.length };
+    } catch (err) {
+      console.error('[IPC] File download error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
   // 查询当前终端所在目录（Electron 模式：上传前由前端拉取，确保文件落到当前目录）
   ipcMain.handle('terminal:get-cwd', async (_event, payload) => {
     const services = getServices();

@@ -466,7 +466,7 @@ async function serverRoute(req: Connect.IncomingMessage, res: http.ServerRespons
             return true;
         }
         const body = await getRequestBody(req);
-        if (pathname.startsWith('/api/connection/') || pathname.startsWith('/api/terminal/') || pathname.startsWith('/api/ai/') || pathname.startsWith('/api/audit/') || pathname.startsWith('/api/monitor/') || pathname.startsWith('/api/batch/')) {
+        if (pathname.startsWith('/api/connection/') || pathname.startsWith('/api/terminal/') || pathname.startsWith('/api/ai/') || pathname.startsWith('/api/audit/') || pathname.startsWith('/api/monitor/') || pathname.startsWith('/api/batch/') || pathname.startsWith('/api/file/')) {
             try {
                 const data = await handleRoute(pathname, body);
                 res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -696,6 +696,42 @@ async function handleRoute(pathname: string, body: any) {
   }
   if (pathname === '/api/batch/tasks') {
     return batchService!.getTasks();
+  }
+
+  // ========== 文件管理（SFTP / 本地 fs） ==========
+
+  // 列出目录内容
+  if (pathname === '/api/file/list') {
+    const { sessionId, path: remotePath } = body;
+    if (!sessionId) throw new Error('Missing parameter: sessionId');
+    return await sshService!.listDirectory(sessionId, remotePath || '/');
+  }
+  // 创建目录
+  if (pathname === '/api/file/mkdir') {
+    const { sessionId, path: remotePath } = body;
+    if (!sessionId || !remotePath) throw new Error('Missing parameter: sessionId, path');
+    await sshService!.makeDirectory(sessionId, remotePath);
+    return true;
+  }
+  // 删除文件或目录
+  if (pathname === '/api/file/remove') {
+    const { sessionId, path: remotePath } = body;
+    if (!sessionId || !remotePath) throw new Error('Missing parameter: sessionId, path');
+    await sshService!.removePath(sessionId, remotePath);
+    return true;
+  }
+  // 重命名 / 移动
+  if (pathname === '/api/file/rename') {
+    const { sessionId, oldPath, newPath } = body;
+    if (!sessionId || !oldPath || !newPath) throw new Error('Missing parameter: sessionId, oldPath, newPath');
+    await sshService!.renamePath(sessionId, oldPath, newPath);
+    return true;
+  }
+  // 获取会话默认目录（home）
+  if (pathname === '/api/file/defaultDir') {
+    const { sessionId } = body;
+    if (!sessionId) throw new Error('Missing parameter: sessionId');
+    return await sshService!.getDefaultDirectory(sessionId);
   }
 
   throw new Error('API endpoint not found');
