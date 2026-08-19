@@ -54,26 +54,6 @@
       />
     </div>
 
-    <div v-if="status === 'connecting'" class="terminal-status">
-      <div class="spinner-border spinner-border-sm text-warning me-2"></div>
-      {{ t('tab.connecting') }}
-    </div>
-    <div v-if="status === 'error'" class="terminal-status text-danger">
-      <i class="bi bi-exclamation-triangle me-2"></i>
-      {{ t('tab.connectionFailed') }}: {{ errorMessage }}
-    </div>
-    <div v-if="status === 'disconnected'" class="terminal-status text-secondary">
-      <i class="bi bi-wifi-off me-2"></i>
-      {{ t('tab.disconnected') }}
-      <button class="btn btn-sm btn-outline-light ms-3" @click="reconnect">
-        <i class="bi bi-arrow-clockwise me-1"></i>{{ t('tab.reconnect') }}
-      </button>
-    </div>
-    <div v-if="status === 'reconnecting'" class="terminal-status text-warning">
-      <div class="spinner-border spinner-border-sm text-warning me-2"></div>
-      {{ t('tab.reconnecting') }}
-    </div>
-
     <!-- 终端右键上下文菜单 -->
     <div 
       v-if="contextMenuVisible" 
@@ -607,6 +587,9 @@ const RECONNECT_BASE_DELAY = 2000; // 基础延迟 2 秒
 function scheduleReconnect() {
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
     console.log('[TerminalTab] Max reconnect attempts reached');
+    if (terminal) {
+      terminal.writeln(`\x1b[31m✗ ${t('tab.maxReconnectReached')}\x1b[0m`);
+    }
     return;
   }
   const delay = RECONNECT_BASE_DELAY * Math.pow(1.5, reconnectAttempts);
@@ -894,6 +877,13 @@ function handleServerMessage(msg: WSMessage) {
       setStatus('error', msg.data || '连接失败');
       break;
 
+    case 'conn-log':
+      // SSH 连接过程日志，直接写入终端（绕过 ZMODEM sentry）
+      if (terminal && msg.data) {
+        terminal.writeln(`\r\n\x1b[36m[SSH] ${msg.data}\x1b[0m`);
+      }
+      break;
+
     case 'ai-agent-event':
       // 转发 Agent 事件到 AIChat 组件
       if (aiChatRef.value && msg.event) {
@@ -924,10 +914,34 @@ function sendToServer(msg: WSMessage) {
   }
 }
 
+// 将状态信息写入终端信息流
+function writeStatusToTerminal(s: typeof status.value, detail?: string) {
+  if (!terminal) return;
+  const host = props.connection.host || '';
+  switch (s) {
+    case 'connecting':
+      terminal.writeln(`\r\n\x1b[33m⚡ ${t('tab.connectingTo', { host })}\x1b[0m`);
+      break;
+    case 'connected':
+      // 连接成功的详细信息已由服务端推送，此处不再重复输出
+      break;
+    case 'error':
+      terminal.writeln(`\x1b[31m✗ ${t('tab.connectionFailed')}: ${detail || errorMessage.value}\x1b[0m`);
+      break;
+    case 'disconnected':
+      terminal.writeln(`\x1b[90m⚠ ${t('tab.disconnected')}\x1b[0m`);
+      break;
+    case 'reconnecting':
+      terminal.writeln(`\x1b[33m⟳ ${t('tab.reconnecting')} (${reconnectAttempts + 1}/${MAX_RECONNECT_ATTEMPTS})\x1b[0m`);
+      break;
+  }
+}
+
 // 更新状态
 function setStatus(s: typeof status.value, detail?: string) {
   status.value = s;
   if (s === 'error' && detail) errorMessage.value = detail;
+  writeStatusToTerminal(s, detail);
   emit('status-change', s, sessionId || undefined);
 }
 
@@ -980,6 +994,7 @@ watch(() => props.active, (val) => {
 
 onMounted(() => {
   initTerminal();
+  writeStatusToTerminal('connecting');
 
   // 全局点击关闭右键菜单
   document.addEventListener('click', onDocumentClick);
@@ -1150,20 +1165,6 @@ function onDocumentClick() {
   padding: 4px;
   min-width: 0;
   overflow: hidden;
-}
-
-.terminal-status {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  display: flex;
-  align-items: center;
-  font-size: 14px;
-  padding: 12px 24px;
-  background-color: rgba(0, 0, 0, 0.6);
-  border-radius: 8px;
-  z-index: 10;
 }
 
 /* AI 按钮 */

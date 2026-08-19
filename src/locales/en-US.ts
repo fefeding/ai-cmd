@@ -56,6 +56,9 @@ export default {
     wsFailed: 'WebSocket connection failed',
     reconnect: 'Reconnect',
     reconnecting: 'Reconnecting...',
+    connectingTo: 'Connecting to {host}...',
+    connectionEstablished: 'Connection established',
+    maxReconnectReached: 'Max reconnect attempts reached. Please close and reopen the tab.',
   },
   connection: {
     addTitle: 'New Connection',

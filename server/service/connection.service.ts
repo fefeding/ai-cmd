@@ -178,8 +178,11 @@ export class ConnectionService {
 
   /**
    * 从连接实体提取 ssh2 连接配置
+   * @param onLog 可选的日志回调，用于将连接过程信息推送到前端终端
    */
-  getSSHConfig(connection: ConnectionEntity): any {
+  getSSHConfig(connection: ConnectionEntity, onLog?: (msg: string) => void): any {
+    const log = (msg: string) => { console.log(`[SSH] ${msg}`); onLog?.(msg); };
+
     const config: any = {
       host: connection.host,
       port: connection.port || 22,
@@ -191,35 +194,43 @@ export class ConnectionService {
     };
 
     if (connection.authType === 'privateKey' && connection.privateKey) {
-      config.privateKey = this.convertToPEM(connection.privateKey);
+      log(`使用私钥认证`);
+      config.privateKey = this.convertToPEM(connection.privateKey, undefined, onLog);
       if (connection.passphrase) {
+        log(`使用密钥口令保护`);
         config.passphrase = connection.passphrase;
       }
     } else if (connection.password) {
+      log(`使用密码认证`);
       config.password = connection.password;
     } else {
       // 没有配置密码和证书，尝试使用本机 SSH 密钥
-      const localKeyResult = this.getLocalSSHKey();
+      log(`未配置密码或私钥，尝试使用本机 SSH 密钥`);
+      const localKeyResult = this.getLocalSSHKey(onLog);
       if (localKeyResult) {
         config.privateKey = localKeyResult.key;
+      } else {
+        log(`未找到可用的认证方式`);
       }
     }
 
     // SSH Agent forwarding (for jump host scenarios)
     if (connection.forwardAgent) {
-      const agentSock = this.getSSHAgentSocket();
+      const agentSock = this.getSSHAgentSocket(onLog);
       if (agentSock) {
         config.agent = agentSock;
-        console.log(`[SSH] Agent forwarding enabled: ${agentSock}`);
+        log(`Agent forwarding 已启用: ${agentSock}`);
       } else {
-        console.warn('[SSH] Agent forwarding requested but no SSH agent detected');
+        log(`Agent forwarding 已请求但未检测到 SSH agent`);
       }
     }
 
     // 添加 debug 以查看服务器支持的认证方式
     config.debug = (msg: string) => {
-      if (msg.includes('AUTH') || msg.includes('auth')) {
-        console.log(`[SSH Debug] ${msg}`);
+      console.log(`[SSH Debug] ${msg}`);
+      // 将认证相关的 debug 信息推送到前端
+      if (onLog && (msg.includes('AUTH') || msg.includes('auth'))) {
+        onLog(`[debug] ${msg.trim()}`);
       }
     };
 
@@ -229,17 +240,19 @@ export class ConnectionService {
   /**
    * 获取本机 SSH 密钥（自动扫描 ~/.ssh 目录下的私钥文件）
    */
-  private getLocalSSHKey(): { key: string; keyPath: string } | null {
+  private getLocalSSHKey(onLog?: (msg: string) => void): { key: string; keyPath: string } | null {
+    const log = (msg: string) => { console.log(`[SSH] ${msg}`); onLog?.(msg); };
     const sshDir = path.join(os.homedir(), '.ssh');
     
     try {
       if (!fs.existsSync(sshDir)) {
-        console.warn(`[SSH] SSH 目录不存在: ${sshDir}`);
+        log(`SSH 目录不存在: ${sshDir}`);
         return null;
       }
 
       // 读取 ~/.ssh 目录下所有文件
       const files = fs.readdirSync(sshDir);
+      log(`扫描 SSH 目录: ${sshDir} (${files.length} 个文件)`);
       
       // 过滤出可能的私钥文件（排除 .pub、known_hosts、config、authorized_keys 等）
       const privateKeyFiles = files.filter(f => 
@@ -249,9 +262,11 @@ export class ConnectionService {
       );
 
       if (privateKeyFiles.length === 0) {
-        console.warn('[SSH] ~/.ssh 目录下未找到私钥文件');
+        log(`~/.ssh 目录下未找到私钥文件`);
         return null;
       }
+
+      log(`候选私钥文件: ${privateKeyFiles.join(', ')}`);
 
       // 尝试每个私钥文件
       for (const keyFile of privateKeyFiles) {
@@ -263,19 +278,19 @@ export class ConnectionService {
           const key = fs.readFileSync(keyPath, 'utf8');
           // 简单验证是否是有效的私钥文件（包含 BEGIN ... PRIVATE KEY）
           if (key.includes('BEGIN') && key.includes('PRIVATE KEY')) {
-            console.log(`[SSH] 使用本机密钥: ${keyPath}`);
-            const convertedKey = this.convertToPEM(key, keyPath);
+            log(`使用本机密钥: ${keyPath}`);
+            const convertedKey = this.convertToPEM(key, keyPath, onLog);
             return { key: convertedKey, keyPath };
           }
         } catch (e) {
-          console.warn(`[SSH] 读取密钥文件失败 ${keyPath}:`, (e as Error).message);
+          log(`读取密钥文件失败 ${keyPath}: ${(e as Error).message}`);
         }
       }
 
-      console.warn('[SSH] 未找到可用的本机 SSH 私钥');
+      log(`未找到可用的本机 SSH 私钥`);
       return null;
     } catch (e) {
-      console.error(`[SSH] 扫描 SSH 目录失败:`, (e as Error).message);
+      log(`扫描 SSH 目录失败: ${(e as Error).message}`);
       return null;
     }
   }
@@ -285,23 +300,24 @@ export class ConnectionService {
    * - Linux/macOS: SSH_AUTH_SOCK environment variable
    * - Windows: OpenSSH agent pipe
    */
-  private getSSHAgentSocket(): string | null {
+  private getSSHAgentSocket(onLog?: (msg: string) => void): string | null {
+    const log = (msg: string) => { console.log(`[SSH] ${msg}`); onLog?.(msg); };
     // Standard Unix SSH agent
     if (process.env.SSH_AUTH_SOCK) {
-      console.log(`[SSH] Agent socket found: ${process.env.SSH_AUTH_SOCK}`);
+      log(`Agent socket found: ${process.env.SSH_AUTH_SOCK}`);
       return process.env.SSH_AUTH_SOCK;
     }
     // Windows OpenSSH agent - return pipe path directly, let ssh2 handle connection
     if (process.platform === 'win32') {
       const pipe = '\\\\.\\pipe\\openssh-ssh-agent';
-      console.log(`[SSH] Windows: using OpenSSH agent pipe: ${pipe}`);
-      console.log(`[SSH] If agent is not running, execute in PowerShell (Admin):`);
-      console.log(`[SSH]   Start-Service ssh-agent; Set-Service ssh-agent -StartupType Automatic`);
-      console.log(`[SSH]   ssh-add ~\\.ssh\\id_rsa`);
+      log(`Windows: using OpenSSH agent pipe: ${pipe}`);
+      log(`If agent is not running, execute in PowerShell (Admin):`);
+      log(`  Start-Service ssh-agent; Set-Service ssh-agent -StartupType Automatic`);
+      log(`  ssh-add ~\\.ssh\\id_rsa`);
       return pipe;
     }
-    console.warn('[SSH] No SSH agent detected. Agent forwarding will not work.');
-    console.warn('[SSH] Linux/macOS: eval $(ssh-agent) && ssh-add ~/.ssh/id_rsa');
+    log(`No SSH agent detected. Agent forwarding will not work.`);
+    log(`Linux/macOS: eval $(ssh-agent) && ssh-add ~/.ssh/id_rsa`);
     return null;
   }
 
@@ -309,39 +325,46 @@ export class ConnectionService {
    * 处理私钥格式
    * ssh2 库对 OpenSSH 格式支持不完善，需要转换为 PEM 格式
    */
-  private convertToPEM(privateKey: string, keyPath?: string): string {
+  private convertToPEM(privateKey: string, keyPath?: string, onLog?: (msg: string) => void): string {
+    const log = (msg: string) => { console.log(`[SSH] ${msg}`); onLog?.(msg); };
     // 如果已经是 PEM 格式（PKCS#1 或 PKCS#8），直接返回
     if (privateKey.includes('BEGIN RSA PRIVATE KEY') || privateKey.includes('BEGIN PRIVATE KEY')) {
+      log(`私钥已是 PEM 格式，无需转换`);
       return privateKey;
     }
     
     // OpenSSH 格式：尝试多种方式转换
     if (privateKey.includes('BEGIN OPENSSH PRIVATE KEY')) {
+      log(`检测到 OpenSSH 格式私钥，需要转换为 PEM 格式`);
       // 方式1: 使用 ssh-keygen 转换（最可靠，不修改原文件）
       if (keyPath) {
-        const converted = this.convertWithSSHKeygen(keyPath);
+        const converted = this.convertWithSSHKeygen(keyPath, onLog);
         if (converted) return converted;
       }
       
       // 方式2: 使用 Node.js crypto（部分版本支持）
       try {
         const keyObject = crypto.createPrivateKey(privateKey);
-        return keyObject.export({ type: 'pkcs1', format: 'pem' }).toString();
+        const result = keyObject.export({ type: 'pkcs1', format: 'pem' }).toString();
+        log(`使用 Node.js crypto 成功转换私钥格式为 PEM`);
+        return result;
       } catch (e) {
-        console.warn('[SSH] crypto.createPrivateKey 转换失败:', (e as Error).message);
+        log(`crypto.createPrivateKey 转换失败: ${(e as Error).message}`);
       }
       
       // 方式3: 直接返回，让 ssh2 尝试解析
-      console.warn('[SSH] 无法转换 OpenSSH 格式私钥，尝试直接传递给 ssh2');
+      log(`无法转换 OpenSSH 格式私钥，尝试直接传递给 ssh2`);
       return privateKey;
     }
     
     // 其他未知格式：尝试用 Node.js crypto 解析并导出为 PEM
     try {
       const keyObject = crypto.createPrivateKey(privateKey);
-      return keyObject.export({ type: 'pkcs8', format: 'pem' }).toString();
+      const result = keyObject.export({ type: 'pkcs8', format: 'pem' }).toString();
+      log(`使用 Node.js crypto 成功转换未知格式私钥为 PEM`);
+      return result;
     } catch (e) {
-      console.warn('[SSH] 转换私钥格式失败，使用原始私钥:', (e as Error).message);
+      log(`转换私钥格式失败，使用原始私钥: ${(e as Error).message}`);
       return privateKey;
     }
   }
@@ -350,8 +373,10 @@ export class ConnectionService {
    * 使用 ssh-keygen 将 OpenSSH 格式私钥转换为 PEM 格式
    * 通过复制到临时文件来避免修改原始密钥
    */
-  private convertWithSSHKeygen(keyPath: string): string | null {
+  private convertWithSSHKeygen(keyPath: string, onLog?: (msg: string) => void): string | null {
+    const log = (msg: string) => { console.log(`[SSH] ${msg}`); onLog?.(msg); };
     try {
+      log(`使用 ssh-keygen 转换私钥: ${keyPath}`);
       const tmpDir = path.join(os.tmpdir(), 'aicmd-ssh-key-convert');
       if (!fs.existsSync(tmpDir)) {
         fs.mkdirSync(tmpDir, { recursive: true });
@@ -381,13 +406,14 @@ export class ConnectionService {
       }
       
       if (convertedKey.includes('BEGIN RSA PRIVATE KEY') || convertedKey.includes('BEGIN PRIVATE KEY')) {
-        console.log('[SSH] 使用 ssh-keygen 成功转换私钥格式为 PEM');
+        log(`使用 ssh-keygen 成功转换私钥格式为 PEM`);
         return convertedKey;
       }
       
+      log(`ssh-keygen 转换后未得到 PEM 格式密钥`);
       return null;
     } catch (e) {
-      console.warn('[SSH] ssh-keygen 转换失败:', (e as Error).message);
+      log(`ssh-keygen 转换失败: ${(e as Error).message}`);
       return null;
     }
   }

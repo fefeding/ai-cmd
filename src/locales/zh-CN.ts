@@ -56,6 +56,9 @@ export default {
     wsFailed: 'WebSocket 连接失败',
     reconnect: '重连',
     reconnecting: '正在重连...',
+    connectingTo: '正在连接到 {host}...',
+    connectionEstablished: '连接已建立',
+    maxReconnectReached: '已达最大重连次数，请关闭标签后重新打开',
   },
   connection: {
     addTitle: '新增连接',

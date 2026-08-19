@@ -105,7 +105,7 @@ export class SSHService {
   /**
    * 创建会话（自动判断 SSH 或本地 shell）
    */
-  async createSession(sessionId: string, connectionId: string, cols: number = 80, rows: number = 24, name?: string): Promise<TerminalSession> {
+  async createSession(sessionId: string, connectionId: string, cols: number = 80, rows: number = 24, name?: string, onLog?: (msg: string) => void): Promise<TerminalSession> {
     // 标记本实例曾创建过 session（用于定时清理判断）
     this.hasCreatedSession = true;
     // 如果已存在同 ID 的会话，先关闭
@@ -130,7 +130,7 @@ export class SSHService {
         createdAt: new Date(),
         updatedAt: new Date(),
       };
-      const localSession = await this.createLocalSession(sessionId, connectionId, localConn, cols, rows, name);
+      const localSession = await this.createLocalSession(sessionId, connectionId, localConn, cols, rows, name, onLog);
       // 保存 session 元数据到 server 端
       this.sessionMetadata.set(sessionId, {
         sessionId,
@@ -151,9 +151,9 @@ export class SSHService {
 
     let session: TerminalSession;
     if (connection.type === 'local') {
-      session = await this.createLocalSession(sessionId, connectionId, connection, cols, rows, name);
+      session = await this.createLocalSession(sessionId, connectionId, connection, cols, rows, name, onLog);
     } else {
-      session = await this.createSSHSession(sessionId, connectionId, connection, cols, rows, name);
+      session = await this.createSSHSession(sessionId, connectionId, connection, cols, rows, name, onLog);
     }
 
     // 保存 session 元数据（SSH 会话的 systemContext 通过 MOTD 自动采集）
@@ -183,12 +183,14 @@ export class SSHService {
   /**
    * 创建本地 Shell 会话（优先使用 node-pty，降级使用 child_process.spawn）
    */
-  private createLocalSession(sessionId: string, connectionId: string, connection: ConnectionEntity, cols: number, rows: number, name?: string): Promise<TerminalSession> {
+  private createLocalSession(sessionId: string, connectionId: string, connection: ConnectionEntity, cols: number, rows: number, name?: string, onLog?: (msg: string) => void): Promise<TerminalSession> {
+    const log = (msg: string) => { console.log(`[SSH] ${msg}`); onLog?.(msg); };
     return new Promise<TerminalSession>((resolve, reject) => {
       try {
         const sessionName = name || connection.name || '本地 Shell';
         const shell = connection.shell || this.getDefaultShell();
         const homeDir = os.homedir();
+        log(`启动本地 Shell: ${shell}`);
 
         // 构建干净的 Shell 环境（过滤掉 Node.js / npm 相关变量，避免 nvm 等工具警告）
         const cleanEnv = this.buildShellEnv(cols, rows);
@@ -287,19 +289,24 @@ export class SSHService {
   /**
    * 创建 SSH 会话
    */
-  private createSSHSession(sessionId: string, connectionId: string, connection: ConnectionEntity, cols: number, rows: number, name?: string): Promise<TerminalSession> {
+  private createSSHSession(sessionId: string, connectionId: string, connection: ConnectionEntity, cols: number, rows: number, name?: string, onLog?: (msg: string) => void): Promise<TerminalSession> {
+    const log = (msg: string) => { console.log(`[SSH] ${msg}`); onLog?.(msg); };
     return new Promise<TerminalSession>((resolve, reject) => {
-      const sshConfig = this.connectionService.getSSHConfig(connection);
+      const sshConfig = this.connectionService.getSSHConfig(connection, onLog);
       const client = new Client();
       const sessionName = name || connection.name || 'SSH';
 
+      log(`正在连接到 ${connection.host}:${connection.port || 22} (用户: ${connection.username})`);
+
       const timeout = setTimeout(() => {
         client.end();
+        log(`连接超时 (30s)`);
         reject(new Error('SSH 连接超时'));
       }, 30000);
 
       client.on('ready', () => {
         clearTimeout(timeout);
+        log(`SSH 认证成功，正在打开 shell...`);
 
         const shellOpts: any = {
           term: 'xterm-256color',
@@ -313,10 +320,13 @@ export class SSHService {
 
         client.shell(shellOpts, (err: Error | undefined, stream: ClientChannel) => {
           if (err) {
+            log(`打开 shell 失败: ${err.message}`);
             client.end();
             reject(err);
             return;
           }
+
+          log(`Shell 会话已建立`);
 
           const session: TerminalSession = {
             id: sessionId,
@@ -336,13 +346,14 @@ export class SSHService {
           }, 1500);
 
           stream.on('close', () => {
+            log(`Shell 流已关闭`);
             this.sessions.delete(sessionId);
           });
 
           // Execute startup script if configured (e.g. jump host SSH hop)
           if (connection.startupScript && connection.startupScript.trim()) {
             const script = connection.startupScript.trim();
-            console.log(`[SSH] Executing startup script for session ${sessionId}: ${script.substring(0, 80)}`);
+            log(`执行启动脚本: ${script.substring(0, 80)}`);
             // Delay slightly to let the remote shell fully initialize
             setTimeout(() => {
               if (this.sessions.has(sessionId)) {
@@ -355,6 +366,7 @@ export class SSHService {
         });
       }).on('error', (err: Error) => {
         clearTimeout(timeout);
+        log(`连接错误: ${err.message}`);
         reject(err);
       }).connect(sshConfig);
     });

@@ -227,7 +227,8 @@ try {
     serverModule.monitorService.onEvent((sid, event) => {
       const targetWs = wsBySessionId.get(sid);
       if (targetWs && targetWs.readyState === WebSocket.OPEN) {
-        targetWs.send(JSON.stringify({ type: 'monitor-event', sessionId: sid, event }));
+        try { targetWs.send(JSON.stringify({ type: 'monitor-event', sessionId: sid, event })); }
+        catch(e) { console.warn('[WS] monitor-event send error:', e.code, e.message); }
       }
     });
   }
@@ -245,6 +246,23 @@ wss.on('connection', async (ws, req) => {
   let sessionId = null;
   console.log(`[WS] Client connected from ${req.socket.remoteAddress}`);
 
+  // 安全发送 WebSocket 消息：捕获 EAGAIN 等写入异常，防止未处理的 'error' 事件导致进程崩溃
+  // highFreq=true 时启用背压检测，缓冲区超过阈值则丢弃该消息（终端输出可丢帧，不影响连接）
+  const WS_BACKPRESSURE_LIMIT = 4 * 1024 * 1024; // 4MB
+  function safeSend(data, highFreq = false) {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    if (highFreq && ws.bufferedAmount > WS_BACKPRESSURE_LIMIT) {
+      console.warn(`[WS] Backpressure: dropping message (buffered: ${ws.bufferedAmount} bytes)`);
+      return;
+    }
+    try {
+      ws.send(data);
+    } catch (err) {
+      // EAGAIN / ECONNRESET / EPIPE 等 — 记录但不崩溃
+      console.warn(`[WS] safeSend error (code=${err.code}): ${err.message}`);
+    }
+  }
+
   // 提取会话创建逻辑，供 create 和 reconnect 复用
   async function createSSHSession(sid, data) {
     const serverModule = require('./dist/server/index.js');
@@ -258,30 +276,32 @@ wss.on('connection', async (ws, req) => {
     sessionId = sid || `ssh-${Date.now()}-${Math.random().toString(36).substr(2, 8)}`;
     console.log(`[WS] Creating SSH session: ${sessionId}, connectionId: ${connectionId}`);
 
-    const session = await sshService.createSession(sessionId, connectionId, cols || 80, rows || 24, name);
+    // 将连接过程日志推送到前端终端信息流
+    // 使用独立的 conn-log 类型，避免经过 ZMODEM sentry 处理被吞掉
+    const sendLog = (msg) => {
+      safeSend(JSON.stringify({ type: 'conn-log', sessionId, data: msg }));
+    };
+
+    const session = await sshService.createSession(sessionId, connectionId, cols || 80, rows || 24, name, sendLog);
     console.log(`[WS] SSH session created: ${sessionId}`);
 
     // 根据会话类型绑定输出和关闭事件
     const sendOutput = (chunk) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        const hasBinary = buf.some(b => b > 127);
-        // 通知输出监听器（用于 Agent 捕获输出）
-        if (!hasBinary) {
-          try { sshService.notifyOutput(sessionId, buf.toString('utf-8')); } catch(e) {}
-        }
-        if (hasBinary) {
-          ws.send(JSON.stringify({ type: 'terminal', sessionId, data: buf.toString('base64'), binary: true }));
-        } else {
-          ws.send(JSON.stringify({ type: 'terminal', sessionId, data: buf.toString('utf-8') }));
-        }
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const hasBinary = buf.some(b => b > 127);
+      // 通知输出监听器（用于 Agent 捕获输出）
+      if (!hasBinary) {
+        try { sshService.notifyOutput(sessionId, buf.toString('utf-8')); } catch(e) {}
+      }
+      if (hasBinary) {
+        safeSend(JSON.stringify({ type: 'terminal', sessionId, data: buf.toString('base64'), binary: true }), true);
+      } else {
+        safeSend(JSON.stringify({ type: 'terminal', sessionId, data: buf.toString('utf-8') }), true);
       }
     };
     const sendClose = (source) => () => {
       console.log(`[WS] ${source} closed: ${sessionId}`);
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'close', sessionId }));
-      }
+      safeSend(JSON.stringify({ type: 'close', sessionId }));
     };
 
     if (session.pty) {
@@ -296,7 +316,7 @@ wss.on('connection', async (ws, req) => {
       session.stream.on('close', sendClose('SSH stream'));
     }
 
-    ws.send(JSON.stringify({ type: 'status', sessionId, data: 'connected' }));
+    safeSend(JSON.stringify({ type: 'status', sessionId, data: 'connected' }));
     // 注册 sessionId -> ws 映射
     wsBySessionId.set(sessionId, ws);
     console.log(`[WS] Session ${sessionId} connected, status sent`);
@@ -586,8 +606,24 @@ wss.on('connection', async (ws, req) => {
   });
 
   ws.on('error', (err) => {
+    // EAGAIN 等可恢复错误仅警告，不中断连接
+    if (err && (err.code === 'EAGAIN' || err.code === 'ECONNRESET' || err.code === 'EPIPE')) {
+      console.warn('[WS] Recoverable socket error (code=%s): %s', err.code, err.message);
+      return;
+    }
     console.error('[WS] WebSocket error:', err);
   });
+
+  // 捕获底层 socket 的 error 事件，防止 EAGAIN 等错误成为未捕获异常导致进程崩溃
+  if (ws._socket) {
+    ws._socket.on('error', (err) => {
+      if (err && (err.code === 'EAGAIN' || err.code === 'ECONNRESET' || err.code === 'EPIPE')) {
+        console.warn('[WS] Socket recoverable error (code=%s): %s', err.code, err.message);
+      } else {
+        console.error('[WS] Socket error:', err);
+      }
+    });
+  }
 });
 
 // 解析命令行参数获取端口
@@ -622,14 +658,19 @@ process.on('exit', () => { cleanupPid(); logStream.end(); });
 process.on('SIGTERM', () => { cleanupPid(); process.exit(0); });
 process.on('SIGINT', () => { cleanupPid(); process.exit(0); });
 process.on('uncaughtException', (err) => {
+  // EAGAIN 等可恢复错误不退出进程
+  if (err && (err.code === 'EAGAIN' || err.code === 'ECONNRESET' || err.code === 'EPIPE')) {
+    console.warn('[Process] Recoverable socket error (code=%s): %s', err.code, err.message);
+    return;
+  }
   console.error('Uncaught exception:', err);
-  cleanupPid();
-  logStream.end();
+  try { cleanupPid(); } catch(e) {}
+  try { logStream.end(); } catch(e) {}
   process.exit(1);
 });
 process.on('unhandledRejection', (err) => {
   console.error('Unhandled rejection:', err);
-  cleanupPid();
-  logStream.end();
+  try { cleanupPid(); } catch(e) {}
+  try { logStream.end(); } catch(e) {}
   process.exit(1);
 });

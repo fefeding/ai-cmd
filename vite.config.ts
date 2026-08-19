@@ -220,12 +220,47 @@ const config = defineConfig({
                         console.log('[WS] Client connected to Vite dev WebSocket');
                         let sessionId: string | null = null;
 
+                        // 捕获底层 socket 的 error 事件，防止 EAGAIN 等错误成为未捕获异常导致进程崩溃
+                        if (ws._socket) {
+                            ws._socket.on('error', (err: any) => {
+                                if (err && (err.code === 'EAGAIN' || err.code === 'ECONNRESET' || err.code === 'EPIPE')) {
+                                    console.warn('[WS] Socket recoverable error (code=%s): %s', err.code, err.message);
+                                } else {
+                                    console.error('[WS] Socket error:', err);
+                                }
+                            });
+                        }
+                        ws.on('error', (err: any) => {
+                            if (err && (err.code === 'EAGAIN' || err.code === 'ECONNRESET' || err.code === 'EPIPE')) {
+                                console.warn('[WS] Recoverable socket error (code=%s): %s', err.code, err.message);
+                                return;
+                            }
+                            console.error('[WS] WebSocket error:', err);
+                        });
+
+                        // 安全发送 WebSocket 消息：捕获 EAGAIN 等写入异常，防止未处理的 'error' 事件导致进程崩溃
+                        // highFreq=true 时启用背压检测，缓冲区超过阈值则丢弃该消息（终端输出可丢帧，不影响连接）
+                        const WS_BACKPRESSURE_LIMIT = 4 * 1024 * 1024; // 4MB
+                        const safeSend = (data: string, highFreq = false) => {
+                            if (ws.readyState !== WebSocket.OPEN) return;
+                            if (highFreq && ws.bufferedAmount > WS_BACKPRESSURE_LIMIT) {
+                                console.warn(`[WS] Backpressure: dropping message (buffered: ${ws.bufferedAmount} bytes)`);
+                                return;
+                            }
+                            try {
+                                ws.send(data);
+                            } catch (err: any) {
+                                // EAGAIN / ECONNRESET / EPIPE 等 — 记录但不崩溃
+                                console.warn(`[WS] safeSend error (code=${err.code}): ${err.message}`);
+                            }
+                        };
+
                         ws.on('message', async (raw: Buffer) => {
                             let msg: any;
                             try {
                                 msg = JSON.parse(raw.toString());
                             } catch (e) {
-                                ws.send(JSON.stringify({ type: 'error', data: 'Invalid message format' }));
+                                safeSend(JSON.stringify({ type: 'error', data: 'Invalid message format' }));
                                 return;
                             }
 
@@ -234,39 +269,40 @@ const config = defineConfig({
                                 case 'create': {
                                     const { connectionId, cols, rows, name } = data || {};
                                     if (!connectionId) {
-                                        ws.send(JSON.stringify({ type: 'error', data: 'Missing connectionId' }));
+                                        safeSend(JSON.stringify({ type: 'error', data: 'Missing connectionId' }));
                                         return;
                                     }
                                     sessionId = sid || `ssh-${Date.now()}-${Math.random().toString(36).substr(2, 8)}`;
                                     try {
-                                        const sshSession = await sshService.createSession(sessionId, connectionId, cols || 80, rows || 24, name);
+                                        // SSH 连接过程日志推送到前端终端信息流（绕过 ZMODEM sentry）
+                                        const sendLog = (msg: string) => {
+                                            safeSend(JSON.stringify({ type: 'conn-log', sessionId, data: msg }));
+                                        };
+
+                                        const sshSession = await sshService.createSession(sessionId, connectionId, cols || 80, rows || 24, name, sendLog);
 
                                         // 根据会话类型设置数据接收
                                         const sendOutput = (chunk: any) => {
-                                            if (ws.readyState === WebSocket.OPEN) {
-                                                const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(typeof chunk === 'string' ? chunk : chunk);
-                                                const hasBinary = buf.some((b: number) => b > 127);
-                                                // 通知输出监听器（用于 Agent 捕获输出）
-                                                if (!hasBinary) {
-                                                    try { sshService.notifyOutput(sessionId!, buf.toString('utf-8')); } catch(e) {}
-                                                }
-                                                const zmSig = Buffer.from([42, 42, 24, 66]);
-                                                if (buf.length >= 4 && buf.includes(zmSig)) {
-                                                    console.log('[WS-DEBUG] ZMODEM sig in SSH output! buf.length:', buf.length,
-                                                        'hasBinary:', hasBinary,
-                                                        'first 30 bytes:', Array.from(buf.slice(0, 30)).join(','));
-                                                }
-                                                if (hasBinary) {
-                                                    ws.send(JSON.stringify({ type: 'terminal', sessionId, data: buf.toString('base64'), binary: true }));
-                                                } else {
-                                                    ws.send(JSON.stringify({ type: 'terminal', sessionId, data: buf.toString('utf-8') }));
-                                                }
+                                            const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(typeof chunk === 'string' ? chunk : chunk);
+                                            const hasBinary = buf.some((b: number) => b > 127);
+                                            // 通知输出监听器（用于 Agent 捕获输出）
+                                            if (!hasBinary) {
+                                                try { sshService.notifyOutput(sessionId!, buf.toString('utf-8')); } catch(e) {}
+                                            }
+                                            const zmSig = Buffer.from([42, 42, 24, 66]);
+                                            if (buf.length >= 4 && buf.includes(zmSig)) {
+                                                console.log('[WS-DEBUG] ZMODEM sig in SSH output! buf.length:', buf.length,
+                                                    'hasBinary:', hasBinary,
+                                                    'first 30 bytes:', Array.from(buf.slice(0, 30)).join(','));
+                                            }
+                                            if (hasBinary) {
+                                                safeSend(JSON.stringify({ type: 'terminal', sessionId, data: buf.toString('base64'), binary: true }), true);
+                                            } else {
+                                                safeSend(JSON.stringify({ type: 'terminal', sessionId, data: buf.toString('utf-8') }), true);
                                             }
                                         };
                                         const sendClose = (source: string) => () => {
-                                            if (ws.readyState === WebSocket.OPEN) {
-                                                ws.send(JSON.stringify({ type: 'close', sessionId }));
-                                            }
+                                            safeSend(JSON.stringify({ type: 'close', sessionId }));
                                         };
 
                                         if (sshSession.pty) {
@@ -284,9 +320,9 @@ const config = defineConfig({
                                             sshSession.stream.on('close', sendClose('SSH stream'));
                                         }
 
-                                        ws.send(JSON.stringify({ type: 'status', sessionId, data: 'connected' }));
+                                        safeSend(JSON.stringify({ type: 'status', sessionId, data: 'connected' }));
                                     } catch (err: any) {
-                                        ws.send(JSON.stringify({ type: 'error', sessionId, data: err.message || '连接失败' }));
+                                        safeSend(JSON.stringify({ type: 'error', sessionId, data: err.message || '连接失败' }));
                                     }
                                     break;
                                 }
@@ -312,17 +348,13 @@ const config = defineConfig({
                                 case 'ai-agent-run': {
                                     const { aiSessionId, message, context, skillId, locale } = data || {};
                                     if (!aiSessionId || !message) {
-                                        ws.send(JSON.stringify({ type: 'ai-agent-event', event: { type: 'error', error: 'Missing params' } }));
+                                        safeSend(JSON.stringify({ type: 'ai-agent-event', event: { type: 'error', error: 'Missing params' } }));
                                         break;
                                     }
                                     aiService.agentRun(aiSessionId, message, context, (event: any) => {
-                                        if (ws.readyState === WebSocket.OPEN) {
-                                            ws.send(JSON.stringify({ type: 'ai-agent-event', sessionId: aiSessionId, event }));
-                                        }
+                                        safeSend(JSON.stringify({ type: 'ai-agent-event', sessionId: aiSessionId, event }));
                                     }, skillId, locale).catch((err: any) => {
-                                        if (ws.readyState === WebSocket.OPEN) {
-                                            ws.send(JSON.stringify({ type: 'ai-agent-event', sessionId: aiSessionId, event: { type: 'error', error: err.message } }));
-                                        }
+                                        safeSend(JSON.stringify({ type: 'ai-agent-event', sessionId: aiSessionId, event: { type: 'error', error: err.message } }));
                                     });
                                     break;
                                 }
