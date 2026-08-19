@@ -1,6 +1,6 @@
 {
   "name": "@fefeding/aicmd",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "private": false,
   "type": "commonjs",
   "description": "AI-powered web SSH terminal with autonomous agent, skills, and file transfer",
