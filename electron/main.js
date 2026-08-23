@@ -231,7 +231,9 @@ function setupTerminalIPC() {
           if (!windowSessions.has(win.id)) windowSessions.set(win.id, new Set());
           windowSessions.get(win.id).add(sessionId);
 
-          const session = await sshService.createSession(sessionId, connectionId, cols || 80, rows || 24, name);
+          const session = await sshService.createSession(sessionId, connectionId, cols || 80, rows || 24, name, (msg) => {
+            send({ type: 'conn-log', sessionId, data: msg });
+          });
 
           // 绑定输出
           const sendOutput = (chunk) => {
@@ -283,7 +285,9 @@ function setupTerminalIPC() {
           if (!windowSessions.has(win.id)) windowSessions.set(win.id, new Set());
           windowSessions.get(win.id).add(sessionId);
 
-          const session = await sshService.createSession(sessionId, connectionId, cols || 80, rows || 24, name);
+          const session = await sshService.createSession(sessionId, connectionId, cols || 80, rows || 24, name, (msg) => {
+            send({ type: 'conn-log', sessionId, data: msg });
+          });
 
           const sendOutput = (chunk) => {
             if (win.isDestroyed()) return;

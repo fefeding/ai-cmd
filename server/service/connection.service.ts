@@ -225,11 +225,9 @@ export class ConnectionService {
       }
     }
 
-    // 添加 debug 以查看服务器支持的认证方式
+    // 添加 debug 以查看服务器支持的认证方式；全部推送到前端终端信息流
     config.debug = (msg: string) => {
-      console.log(`[SSH Debug] ${msg}`);
-      // 将认证相关的 debug 信息推送到前端
-      if (onLog && (msg.includes('AUTH') || msg.includes('auth'))) {
+      if (onLog) {
         onLog(`[debug] ${msg.trim()}`);
       }
     };
