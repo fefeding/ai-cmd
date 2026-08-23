@@ -225,9 +225,11 @@ export class ConnectionService {
       }
     }
 
-    // 添加 debug 以查看服务器支持的认证方式；全部推送到前端终端信息流
+    // ssh2 协议级 debug：默认不向前端推送（避免握手/KEX/keepalive 等噪音刷屏）；
+    // 仅在环境变量 FSHELL_SSH_DEBUG=1 时转发，便于排障。进程侧始终记录到 stdout。
+    const forwardSSHDebug = process.env.FSHELL_SSH_DEBUG === '1';
     config.debug = (msg: string) => {
-      if (onLog) {
+      if (forwardSSHDebug && onLog) {
         onLog(`[debug] ${msg.trim()}`);
       }
     };
