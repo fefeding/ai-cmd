@@ -1,6 +1,6 @@
 {
   "name": "@fefeding/aicmd",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "private": false,
   "type": "commonjs",
   "description": "AI-powered web SSH terminal with autonomous agent, skills, and file transfer",
@@ -29,6 +29,7 @@
     "preview": "vite preview",
     "build-only": "vite build && npm run build-server",
     "build-server": "tsc -p tsconfig.server.json",
+    "prepublishOnly": "npm run build",
     "type-check": "vue-tsc --noEmit --composite false",
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix --ignore-path .gitignore",
     "electron:dev": "node scripts/electron-dev.js",
