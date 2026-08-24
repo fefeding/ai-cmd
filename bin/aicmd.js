@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const crypto = require('crypto');
-const { exec, spawn } = require('child_process');
+const { exec, spawn, execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
@@ -176,22 +176,69 @@ async function startProject() {
 
 function stopProject() {
   console.log('Stopping aicmd...');
-  const pid = readPid();
-  if (!pid) {
-    console.log('No server process found');
-    return;
+
+  // 解析 -p / --port 参数（与 start 保持一致）
+  let port = 9801;
+  const portIndex = commandArgs.findIndex(arg => arg === '-p' || arg === '--port');
+  if (portIndex !== -1 && commandArgs[portIndex + 1]) {
+    const p = parseInt(commandArgs[portIndex + 1]);
+    if (!isNaN(p)) port = p;
   }
 
-  try {
-    process.kill(pid, 'SIGTERM');
-    deletePid();
-    console.log('Server stopped');
-  } catch (error) {
-    if (error.code === 'ESRCH') {
-      deletePid();
+  let stopped = false;
+
+  // 1) 优先用 PID 文件
+  const pid = readPid();
+  if (pid) {
+    try {
+      process.kill(pid, 'SIGTERM');
+      console.log('Stopped process from PID file:', pid);
+      stopped = true;
+    } catch (error) {
+      if (error.code !== 'ESRCH') {
+        console.error('Failed to stop PID', pid + ':', error.message);
+      }
     }
-    console.error('Failed to stop:', error.message);
   }
+
+  // 2) 兜底：查找监听该端口的 node server.js 进程（PID 文件丢失/跨用户/进程已变均适用）
+  const portPids = findPidsByPort(port);
+  for (const p of portPids) {
+    try {
+      process.kill(p, 'SIGTERM');
+      console.log('Stopped process on port', port + ':', p);
+      stopped = true;
+    } catch (error) {
+      if (error.code !== 'ESRCH') {
+        console.error('Failed to stop PID', p + ':', error.message);
+      }
+    }
+  }
+
+  // 3) 清理所有已知位置的 PID 文件（root 与普通用户），避免跨用户遗留
+  deletePid();
+  try { fs.unlinkSync('/root/.aicmd/aicmd.server.pid'); } catch { /* ignore */ }
+
+  if (stopped) {
+    console.log('Server stopped');
+  } else {
+    console.log('No running aicmd server found on port', port);
+  }
+}
+
+// 通过 lsof 查找监听指定端口的进程 PID 列表（macOS / Linux 通用）
+function findPidsByPort(port) {
+  const pids = new Set();
+  try {
+    const out = execSync(`lsof -tiTCP:${port} -sTCP:LISTEN 2>/dev/null`).toString().trim();
+    if (out) {
+      for (const line of out.split('\n')) {
+        const p = parseInt(line.trim());
+        if (!isNaN(p)) pids.add(p);
+      }
+    }
+  } catch { /* lsof 不可用或无可匹配进程 */ }
+  return [...pids];
 }
 
 function restartProject() {
