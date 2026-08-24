@@ -124,10 +124,19 @@ async function build() {
       process.exit(1);
     }
 
+    // 配置合并：CI 无 Apple 证书，使用 ad-hoc 签名（"-"），避免完全未签名
+    // 导致 Gatekeeper 直接报"已损坏"。本地（非 CI）保留 null，由 electron-builder
+    // 自动从 keychain 发现 Developer ID 证书做正式签名。
+    const baseConfig = require(path.resolve(projectRoot, 'electron-builder.json'));
+    if (process.env.CI) {
+      baseConfig.mac = baseConfig.mac || {};
+      baseConfig.mac.identity = '-'; // ad-hoc 签名
+    }
+
     await builder.build({
       targets,
       config: {
-        ...require(path.resolve(projectRoot, 'electron-builder.json')),
+        ...baseConfig,
         // In CI, enable native module rebuild (build tools available)
         npmRebuild: !!process.env.CI,
       },

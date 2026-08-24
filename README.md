@@ -151,6 +151,17 @@ pnpm electron:build:mac    # macOS (DMG, x64 + arm64)
 pnpm electron:build:linux  # Linux (AppImage)
 ```
 
+### macOS 打开提示
+
+CI 自动构建的 macOS 客户端**未使用 Apple Developer ID 签名公证**（无证书），下载后首次打开会提示“已损坏，无法打开”。这是 Gatekeeper 的 quarantine 拦截，并非文件损坏。解除拦截：
+
+```bash
+# 下载后执行，移除 quarantine 属性即可正常打开
+xattr -cr /Applications/AICmd.app
+```
+
+如果你自己有 Developer ID 证书，可在本地直接 `pnpm electron:build:mac` 出已签名的版本（脚本会自动从 keychain 取证书）。
+
 ### Automated Builds (CI/CD)
 
 Push a version tag to trigger multi-platform builds:

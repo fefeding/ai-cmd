@@ -114,6 +114,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/electron-build.js --platform=mac
 
+      - name: Ad-hoc codesign (no Apple cert in CI)
+        # CI 无 Developer ID 证书，electron-build.js 已对 app 做 ad-hoc 签名（-）。
+        # 这里对 release 目录内所有 .app 再补一次 deep ad-hoc 签名，确保嵌套的
+        # Helper/可执行文件都带上签名结构。用户下载后仍需用 xattr -cr 解除 quarantine。
+        run: |
+          find release -name "*.app" -maxdepth 3 | while read app; do
+            echo "Ad-hoc signing: $app"
+            codesign --force --deep --sign - "$app" || true
+          done
+
       - name: Upload artifacts to Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
