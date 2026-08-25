@@ -173,10 +173,6 @@ importers:
       zmodem.js:
         specifier: ^0.1.10
         version: 0.1.10(patch_hash=dba85ba4b3429ef2b7cf7722dfd1424332618d438b27499a9bc194fae5594a6e)
-    optionalDependencies:
-      cpu-features:
-        specifier: ^0.0.10
-        version: 0.0.10
 
 packages:
 

@@ -31,7 +31,6 @@
     "hardenedRuntime": true,
     "gatekeeperAssess": false,
     "identity": null,
-    "_note_identity": "本地构建时留 null，让 electron-builder 从 keychain 自动发现 Developer ID 证书做正式签名；CI 环境无证书，由 scripts/electron-build.js 在 CI 时覆盖为 '-' 走 ad-hoc 签名（见 README『macOS 打开提示』，用户需 xattr -cr）",
     "entitlements": "build/entitlements.mac.plist",
     "entitlementsInherit": "build/entitlements.mac.plist"
   },

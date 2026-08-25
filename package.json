@@ -1,6 +1,6 @@
 {
   "name": "@fefeding/aicmd",
-  "version": "1.0.22",
+  "version": "1.0.23",
   "private": false,
   "type": "commonjs",
   "description": "AI-powered web SSH terminal with autonomous agent, skills, and file transfer",
@@ -49,9 +49,6 @@
     "uuid": "^13.0.2",
     "vue-i18n": "^11.4.9",
     "ws": "^8.21.3"
-  },
-  "optionalDependencies": {
-    "cpu-features": "^0.0.10"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.11.0",
@@ -103,7 +100,6 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "cpu-features",
       "ssh2",
       "node-pty",
       "electron"
