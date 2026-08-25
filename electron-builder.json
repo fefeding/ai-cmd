@@ -51,7 +51,8 @@
       }
     ],
     "category": "Utility",
-    "icon": "public/favicon.png"
+    "icon": "public/favicon.png",
+    "executableName": "AICmd"
   },
   "nsis": {
     "oneClick": false,
