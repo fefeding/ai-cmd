@@ -65,35 +65,49 @@
           @change="handleFileSelect"
         >
         <div class="dest-dir-hint mt-2 px-2 py-1" v-if="mode === 'upload'">
-          <!-- rz 触发的 ZMODEM 上传：远端 rz 自行决定写入目录，这里仅作提示 -->
-          <template v-if="isZmodemSend">
-            <i class="bi bi-folder2 me-1 text-info"></i>
-            <span class="text-secondary">远端 rz 将写入当前目录：</span>
-            <code class="text-info">{{ destDir || '（解析中…）' }}</code>
-          </template>
-          <!-- 普通上传：目标目录可编辑，检测失败也可手动指定 -->
-          <template v-else>
-            <div class="d-flex align-items-center gap-2">
-              <label class="text-secondary mb-0 text-nowrap"><i class="bi bi-folder2 me-1 text-info"></i>目标目录</label>
-              <input
-                v-model="destDir"
-                type="text"
-                class="form-control form-control-sm"
-                placeholder="/当前/目录（可手动修改）"
-                spellcheck="false"
-              >
-              <button class="btn btn-sm btn-outline-secondary" :disabled="destDirLoading" @click="queryCwd" title="重新检测当前目录">
-                <i class="bi" :class="destDirLoading ? 'bi-hourglass-split' : 'bi-arrow-clockwise'"></i>
-              </button>
-            </div>
-            <div v-if="destDir && !destDir.startsWith('/')" class="text-danger mt-1" style="font-size: 12px;">
-              <i class="bi bi-exclamation-triangle me-1"></i>目录必须是绝对路径（以 / 开头），否则将回退到家目录。
-            </div>
-            <div v-else-if="!destDir" class="text-warning mt-1" style="font-size: 12px;">
-              <i class="bi bi-exclamation-triangle me-1"></i>
-              未能自动检测当前目录{{ destDirError ? '：' + destDirError : '' }}，请手动填写目标目录（绝对路径），否则文件会传到家目录。
-            </div>
-          </template>
+          <div class="d-flex align-items-center gap-2">
+            <label class="text-secondary mb-0 text-nowrap">
+              <i class="bi bi-folder2 me-1 text-info"></i>{{ isZmodemSend ? 'rz 写入目录' : '目标目录' }}
+            </label>
+            <input
+              v-model="destDir"
+              type="text"
+              class="form-control form-control-sm"
+              placeholder="/当前/目录（可手动修改）"
+              spellcheck="false"
+              @input="destDirManual = true"
+            >
+            <button
+              class="btn btn-sm btn-outline-secondary"
+              :disabled="destDirLoading"
+              @click="queryCwd(isZmodemSend, true)"
+              title="重新检测当前目录"
+            >
+              <i class="bi" :class="destDirLoading ? 'bi-hourglass-split' : 'bi-arrow-clockwise'"></i>
+            </button>
+          </div>
+          <div class="mt-1" style="font-size: 12px;">
+            <template v-if="destDirLoading">
+              <span class="text-secondary">
+                <span class="spinner-border spinner-border-sm me-1" style="width: 10px; height: 10px;"></span>
+                正在检测当前目录…
+              </span>
+            </template>
+            <template v-else-if="destDir && !destDir.startsWith('/')">
+              <span class="text-danger">
+                <i class="bi bi-exclamation-triangle me-1"></i>目录必须是绝对路径（以 / 开头），否则将回退到家目录。
+              </span>
+            </template>
+            <template v-else-if="!destDir">
+              <span class="text-warning">
+                <i class="bi bi-exclamation-triangle me-1"></i>
+                未能自动检测当前目录{{ destDirError ? '：' + destDirError : '' }}，请手动填写目标目录（绝对路径），否则文件会传到家目录。
+              </span>
+            </template>
+            <template v-else-if="isZmodemSend">
+              <span class="text-secondary">上传前会中断远端 rz，文件将直接写入上面目录。</span>
+            </template>
+          </div>
         </div>
       </div>
 
@@ -252,10 +266,18 @@ let activeTabId: string | null = null;
 const destDir = ref('');
 const destDirLoading = ref(false);
 const destDirError = ref('');
-// 是否为 rz 触发的 ZMODEM 上传（远端 rz 自行决定写入目录，目标目录不可编辑）
+// 用户是否手动编辑过目标目录（手动后不再被自动检测结果覆盖）
+const destDirManual = ref(false);
+// 是否为 rz 触发的 ZMODEM 上传（role === 'send'）
 const isZmodemSend = ref(false);
 
-async function queryCwd(): Promise<string> {
+/**
+ * 向服务端查询当前终端所在目录。
+ * @param zmodem 远端 rz 是否正在等待接收文件。为 true 时服务端禁止向交互式 shell
+ *               注入探测命令（否则 Ctrl+C 会打断 rz，注入文本也会被 rz 吞掉）。
+ * @param force  强制服务端重新探测，忽略缓存（手动点"重新检测"、上传前兜底时使用）。
+ */
+async function queryCwd(zmodem?: boolean, force?: boolean): Promise<string> {
   const sid = activeTermRef?.sessionId;
   if (!sid) return '';
   destDirLoading.value = true;
@@ -264,16 +286,20 @@ async function queryCwd(): Promise<string> {
     const electronApi = (window as any).electronAPI;
     let cwd = '';
     if (electronApi?.api?.getCwd) {
-      const res = await electronApi.api.getCwd(sid);
+      const res = await electronApi.api.getCwd(sid, !!zmodem, !!force);
       cwd = res?.cwd || '';
       if (!cwd && res?.error) destDirError.value = res.error;
     } else {
-      const resp = await fetch(`/api/cwd?sessionId=${encodeURIComponent(sid)}`);
+      const zmodemParam = zmodem ? '&zmodem=1' : '';
+      const forceParam = force ? '&force=1' : '';
+      const resp = await fetch(`/api/cwd?sessionId=${encodeURIComponent(sid)}${zmodemParam}${forceParam}`);
       const data = await resp.json();
       cwd = data?.cwd || '';
       if (!cwd && data?.error) destDirError.value = data.error;
     }
-    destDir.value = cwd;
+    // 只在解析成功且用户未手填时覆盖，避免清空用户手动输入
+    if (cwd && !destDirManual.value) destDir.value = cwd;
+    if (!cwd) destDirManual.value = false;
     return cwd;
   } catch (e: any) {
     destDirError.value = e?.message || String(e);
@@ -331,6 +357,12 @@ function show(tabId: string, termRef: any, info?: any) {
   zmodemAutoMode.value = false;
   visible.value = true;
   isCollapsed.value = false;
+  // 重置目标目录状态（每次打开面板重新解析）
+  destDir.value = '';
+  destDirError.value = '';
+  destDirManual.value = false;
+  // role === 'send' 即远端执行了 rz，浏览器需要上传文件
+  isZmodemSend.value = !!(info && info.role === 'send');
 
   if (info && info.session) {
     zmodemSession = info.session;
@@ -366,10 +398,18 @@ function show(tabId: string, termRef: any, info?: any) {
 
   // 上传模式：提前向服务端解析当前终端目录，用于展示目标目录并构造绝对上传路径
   if (mode.value === 'upload') {
-    isZmodemSend.value = !!(activeTermRef as any)?.zmodemSender;
-    queryCwd();
-  } else {
-    isZmodemSend.value = false;
+    if (isZmodemSend.value) {
+      // rz 场景：远端 rz 正在等待接收文件。
+      // 本组件的上传本来就要先中断 rz 再走 SFTP 直传（不走 ZMODEM 协议），
+      // 所以这里直接中断它，让服务端向 shell 询问目录 —— /proc 进程探测在
+      // tmux/子 shell 等场景下可能定位到错误的进程，只有问 shell 才是 100% 准确的。
+      void (async () => {
+        await interruptRemoteForeground();
+        await queryCwd(false, true);
+      })();
+    } else {
+      queryCwd(false);
+    }
   }
 }
 
@@ -417,12 +457,44 @@ function handleFileSelect(e: Event) {
   }
 }
 
+/** 目标目录是否已是可用的绝对路径 */
+function hasValidDestDir(): boolean {
+  return !!destDir.value && destDir.value.startsWith('/');
+}
+
+/**
+ * 中断远端前台进程并清空当前输入行（Ctrl+C x2 + Ctrl+U）。
+ * 上传流程本来就要中断 rz 再改用 SFTP 直传，所以这里是安全的；
+ * 目录探测失败时也可以先调用它，让 shell 回到提示符后再注入探测命令。
+ */
+async function interruptRemoteForeground(): Promise<void> {
+  if (!activeTermRef) return;
+  sendToTerm('\x03');
+  await new Promise(r => setTimeout(r, 300));
+  sendToTerm('\x03');
+  await new Promise(r => setTimeout(r, 200));
+  sendToTerm('\x15');
+  await new Promise(r => setTimeout(r, 300));
+}
+
 /**
  * 上传文件 - 通过 HTTP POST + SFTP 直传
  */
 async function startUpload(files: File[]) {
   if (!activeTermRef) {
     toast.error(t('fileTransfer.terminalNotConnected'));
+    return;
+  }
+
+  // 上传前必须确认目标目录：除非用户手动指定，否则一律以「中断前台进程后向 shell 询问」
+  // 的结果为准 —— /proc 进程探测在 tmux / 子 shell 等场景下可能定位到错误的进程。
+  // 本流程随后也会中断前台进程改用 SFTP 直传，所以这里的中断是安全的。
+  if (!hasValidDestDir() || !destDirManual.value) {
+    await interruptRemoteForeground();
+    await queryCwd(false, true);
+  }
+  if (!hasValidDestDir()) {
+    toast.warning('未能获取当前终端目录，请在上方填写目标目录（绝对路径）后重试');
     return;
   }
 
@@ -434,12 +506,7 @@ async function startUpload(files: File[]) {
       zmodemSession = null;
     }
 
-    sendToTerm('\x03');
-    await new Promise(r => setTimeout(r, 300));
-    sendToTerm('\x03');
-    await new Promise(r => setTimeout(r, 200));
-    sendToTerm('\x15');
-    await new Promise(r => setTimeout(r, 100));
+    await interruptRemoteForeground();
 
     for (const file of files) {
       currentProgress.value = {

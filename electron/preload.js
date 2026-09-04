@@ -60,8 +60,8 @@ const api = {
   uploadFile(sessionId, fileName, fileData) {
     return ipcRenderer.invoke('file:upload', { sessionId, fileName, fileData });
   },
-  getCwd(sessionId) {
-    return ipcRenderer.invoke('terminal:get-cwd', { sessionId });
+  getCwd(sessionId, zmodem, force) {
+    return ipcRenderer.invoke('terminal:get-cwd', { sessionId, zmodem, force });
   },
   downloadFile(sessionId, remotePath, fileName) {
     return ipcRenderer.invoke('file:download', { sessionId, remotePath, fileName });

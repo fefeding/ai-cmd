@@ -300,26 +300,11 @@ function initTerminal() {
 
     // ===== 粘贴 =====
     if (isPasteTrigger) {
-      // sandbox 模式下同步读取不可用，使用异步读取
-      if (clip) {
-        const syncText = clip.readText();
-        if (syncText) {
-          sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data: syncText });
-        } else if (clip.readTextAsync) {
-          clip.readTextAsync().then((text: string) => {
-            if (text && terminal) {
-              sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data: text });
-            }
-          });
-        }
-      } else {
-        navigator.clipboard?.readText().then((text: string) => {
-          if (text && terminal) {
-            sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data: text });
-          }
-        }).catch(() => {});
-      }
-      return false; // 阻止 xterm.js 处理
+      // 不要在这里自定义发送！Cmd+V 已经会触发原生菜单的 paste（webContents.paste），
+      // 进而触发 xterm 的 'paste' 事件把剪贴板内容写入终端（见 electron/main.js 的 Edit 菜单）。
+      // 若这里再额外通过 IPC 发送一次，就会出现重复粘贴。
+      // 右键菜单的 Paste 走 handleContextPaste（无原生 paste 事件），所以不会重复。
+      return false; // 仅阻止 xterm 把 Cmd+V 当作普通按键输入，实际粘贴交给原生 paste 事件
     }
 
     return true;

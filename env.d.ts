@@ -9,7 +9,7 @@ declare interface Window {
     api: {
       request(pathname: string, body?: any): Promise<any>;
       uploadFile(sessionId: string, fileName: string, fileData: ArrayBuffer | Uint8Array): Promise<{ success: boolean; bytes?: number; fileName?: string; error?: string }>;
-      getCwd(sessionId: string): Promise<{ cwd?: string; error?: string }>;
+      getCwd(sessionId: string, zmodem?: boolean, force?: boolean): Promise<{ cwd?: string; error?: string }>;
       downloadFile(sessionId: string, remotePath: string, fileName?: string): Promise<{ success: boolean; canceled?: boolean; filePath?: string; size?: number; error?: string }>;
     };
 

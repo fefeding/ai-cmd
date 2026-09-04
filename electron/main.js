@@ -168,11 +168,17 @@ function setupApiIPC() {
       return { cwd: '', error: 'Services not available' };
     }
     try {
-      const { sessionId } = payload || {};
+      // zmodem=true 表示远端 rz 正在等待接收文件：禁止注入式探测，避免打断 rz
+      // force=true 表示忽略缓存重新探测（用户手动重新检测 / 上传前兜底）
+      const { sessionId, zmodem, force } = payload || {};
       if (!sessionId) {
         return { cwd: '', error: 'Missing sessionId' };
       }
-      const cwd = await services.sshService.getSessionCwd(sessionId);
+      const cwd = await services.sshService.getSessionCwd(sessionId, {
+        allowShellProbe: !zmodem,
+        preferTransferProcess: !!zmodem,
+        force: !!force,
+      });
       return { cwd };
     } catch (err) {
       console.error('[IPC] get-cwd error:', err);

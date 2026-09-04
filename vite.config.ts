@@ -492,6 +492,32 @@ async function serverRoute(req: Connect.IncomingMessage, res: http.ServerRespons
             return true;
         }
 
+        // 查询当前终端所在目录（dev 模式：上传前由前端拉取，确保文件落到当前目录）
+        // zmodem=1 表示远端 rz 正在等待接收文件：禁止注入式探测，避免打断 rz
+        if (pathname === '/api/cwd' && method === 'get') {
+            const sessionId = (req.headers['x-session-id'] as string) || (parsedUrl.query.sessionId as string);
+            if (!sessionId) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, error: 'Missing sessionId' }));
+                return true;
+            }
+            const zmodem = parsedUrl.query.zmodem === '1' || parsedUrl.query.zmodem === 'true';
+            const force = parsedUrl.query.force === '1' || parsedUrl.query.force === 'true';
+            try {
+                const cwd = await sshService!.getSessionCwd(String(sessionId), {
+                    allowShellProbe: !zmodem,
+                    preferTransferProcess: !!zmodem,
+                    force,
+                });
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: true, cwd }));
+            } catch (err: any) {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, cwd: '', error: err.message || String(err) }));
+            }
+            return true;
+        }
+
         if (method !== 'post') {
             res.writeHead(405, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ret: 405, msg: 'Only POST method is allowed' }));

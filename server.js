@@ -143,16 +143,24 @@ app.post('/api/file-upload', async (req, res) => {
 });
 
 // 查询当前终端所在目录（Web 模式：上传前由前端拉取，确保文件落到当前目录）
+// zmodem=1 表示远端 rz 正在等待接收文件：此时禁止向交互式 shell 注入探测命令，
+// 否则 Ctrl+C 会打断 rz，注入的文本也会被 rz 当成数据吞掉。
 app.get('/api/cwd', async (req, res) => {
   const sessionId = req.headers['x-session-id'] || req.query.sessionId;
   if (!sessionId) {
     res.status(400).json({ success: false, error: 'Missing sessionId' });
     return;
   }
+  const zmodem = req.query.zmodem === '1' || req.query.zmodem === 'true';
+  const force = req.query.force === '1' || req.query.force === 'true';
   try {
     const serverModule = require('./dist/server/index.js');
     const { sshService } = serverModule;
-    const cwd = await sshService.getSessionCwd(String(sessionId));
+    const cwd = await sshService.getSessionCwd(String(sessionId), {
+      allowShellProbe: !zmodem,
+      preferTransferProcess: !!zmodem,
+      force,
+    });
     res.json({ success: true, cwd });
   } catch (err) {
     res.status(200).json({ success: false, cwd: '', error: err.message || String(err) });
