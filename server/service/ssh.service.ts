@@ -41,6 +41,8 @@ interface TerminalSession {
   inputBuffer?: string;
   /** 远端交互式 shell 的 PID（用于 /proc/<pid>/cwd 精确读取当前目录，不影响终端） */
   shellPid?: number;
+  /** 复用的 SFTP 实例（每个会话只建一次，避免 channel 泄漏） */
+  sftp?: any;
   /** 后台刷新 CWD 的防抖定时器 */
   cwdRefreshTimer?: NodeJS.Timeout;
   /** 上次后台刷新 CWD 的时间戳 */
@@ -59,6 +61,11 @@ const CWD_CACHE_TTL = 120000;
  * cd 跟踪值的保护期：这段时间内后台探测结果不会覆盖它（见 refreshCwd）。
  */
 const CWD_TRACK_GRACE = 5000;
+
+/**
+ * 后台 CWD 刷新的最小间隔：目录刚解析过就跳过，避免频繁 exec 占用 SSH channel。
+ */
+const CWD_REFRESH_MIN_INTERVAL = 15000;
 
 /**
  * 远端进程探测脚本（通过独立 exec 通道执行，不会向交互式终端写入任何内容）。
@@ -218,6 +225,8 @@ export class SSHService {
   private hasCreatedSession: boolean = false;
   /** 定时清理僵尸 session 的定时器 */
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+  /** 正在建立中的 SFTP 连接（避免并发重复创建） */
+  private sftpPromises: Map<string, Promise<any>> = new Map();
 
   constructor(connectionService: ConnectionService) {
     this.connectionService = connectionService;
@@ -1187,6 +1196,9 @@ Write-Output "__DOCKER__: $dockerVer"
   private scheduleCwdRefresh(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session || session.type !== 'ssh' || !session.client) return;
+    // 目录刚解析过就别再跑 exec 了：每次 exec 都要占用一个 channel，
+    // 频繁调用会挤占 SFTP 的 channel 配额（MaxSessions）。
+    if (session.cwdAt && (Date.now() - session.cwdAt) < CWD_REFRESH_MIN_INTERVAL) return;
     if (session.cwdRefreshTimer) clearTimeout(session.cwdRefreshTimer);
     session.cwdRefreshTimer = setTimeout(() => {
       session.cwdRefreshTimer = undefined;
@@ -1311,10 +1323,14 @@ Write-Output "__DOCKER__: $dockerVer"
       }
       let stdout = '';
       let settled = false;
+      let streamRef: ClientChannel | null = null;
       const finish = () => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        // 必须显式关闭 channel：OpenSSH 默认 MaxSessions=10，
+        // 泄漏的 channel 累积后会导致后续 SFTP channel 打开失败（上传时好时坏）。
+        try { streamRef?.end(); } catch { /* ignore */ }
         resolve(stdout);
       };
       const timer = setTimeout(finish, timeoutMs);
@@ -1325,6 +1341,7 @@ Write-Output "__DOCKER__: $dockerVer"
             finish();
             return;
           }
+          streamRef = stream;
           stream.on('data', (data: Buffer) => { stdout += data.toString('utf-8'); });
           stream.stderr.on('data', () => {});
           stream.on('close', finish);
@@ -1448,6 +1465,9 @@ Write-Output "__DOCKER__: $dockerVer"
         clearTimeout(session.cwdRefreshTimer);
         session.cwdRefreshTimer = undefined;
       }
+      // 关闭复用的 SFTP channel，避免连接关闭后仍占用资源
+      this.invalidateSftp(sessionId);
+      this.sftpPromises.delete(sessionId);
       try {
         if (session.pty) {
           session.pty.kill();
@@ -1700,20 +1720,23 @@ Write-Output "__DOCKER__: $dockerVer"
         if (err) reject(err); else resolve(bytes!);
       };
 
-      const doSftpWrite = (targetPath: string, callback: (err: Error | null) => void) => {
-        console.log(`[SSH] SFTP opening subsystem...`);
-        session.client!.sftp((sftpErr: Error | undefined, sftp: any) => {
+      const doSftpWrite = (targetPath: string, callback: (err: Error | null) => void, isRetry = false) => {
+        console.log(`[SSH] SFTP getting subsystem (reuse=${!!session.sftp})...`);
+        this.getSftp(sessionId).then((sftp) => {
           if (done) return;
-          if (sftpErr) {
-            callback(new Error('SFTP init failed: ' + sftpErr.message));
-            return;
-          }
           console.log(`[SSH] SFTP writing ${fileBuffer.length} bytes to ${targetPath}...`);
 
           sftp.open(targetPath, 'w', (openErr: Error | undefined, fd: number) => {
             if (done) return;
             if (openErr) {
               console.error(`[SSH] SFTP open error: ${openErr.message}`);
+              // channel 类故障（达到 MaxSessions 上限 / channel 已失效）：重建实例后重试一次
+              if (!isRetry && /channel|not open|closed|failure/i.test(openErr.message)) {
+                console.log('[SSH] SFTP channel broken, recreating subsystem and retrying once');
+                this.invalidateSftp(sessionId);
+                setTimeout(() => { if (!done) doSftpWrite(targetPath, callback, true); }, 300);
+                return;
+              }
               callback(new Error('SFTP open failed: ' + openErr.message));
               return;
             }
@@ -1737,6 +1760,16 @@ Write-Output "__DOCKER__: $dockerVer"
               });
             });
           });
+        }).catch((initErr: any) => {
+          if (done) return;
+          // 建立 subsystem 就可能 "Channel open failure"（MaxSessions 上限）：重建后重试一次
+          if (!isRetry && /channel|failure|closed|not open/i.test(initErr?.message || '')) {
+            console.log('[SSH] SFTP init failed, recreating subsystem and retrying once');
+            this.invalidateSftp(sessionId);
+            setTimeout(() => { if (!done) doSftpWrite(targetPath, callback, true); }, 300);
+            return;
+          }
+          callback(new Error(initErr?.message || 'SFTP init failed'));
         });
       };
 
@@ -1746,8 +1779,10 @@ Write-Output "__DOCKER__: $dockerVer"
         if (!err) {
           // 直接写入成功，验证文件
           console.log(`[SSH] SFTP direct write succeeded, verifying...`);
-          session.client!.sftp((_, sftp) => {
+          this.getSftp(sessionId).then((sftp) => {
+            if (done) return;
             sftp.stat(fullPath, (statErr: Error | undefined, stats: any) => {
+              if (done) return;
               if (statErr || stats.size !== fileBuffer.length) {
                 finish(new Error('SFTP verify failed'));
               } else {
@@ -1755,6 +1790,9 @@ Write-Output "__DOCKER__: $dockerVer"
                 finish(null, fileBuffer.length);
               }
             });
+          }).catch((statInitErr: any) => {
+            if (done) return;
+            finish(new Error(statInitErr?.message || 'SFTP verify init failed'));
           });
           return;
         }
@@ -1890,19 +1928,53 @@ Write-Output "__DOCKER__: $dockerVer"
   // ========== 文件管理（SFTP / 本地 fs） ==========
 
   /**
-   * 获取 SFTP 客户端（ssh2 的 sftp 子系统）
+   * 获取（并复用）SFTP 客户端（ssh2 的 sftp 子系统）
+   *
+   * 必须复用：OpenSSH 默认 MaxSessions=10，而每次 client.sftp() 都会新开一个
+   * subsystem channel。若每次调用都新建且不关闭，几次之后就会
+   * "Channel open failure: open failed"，表现为上传时好时坏、重连后又正常。
    */
   private getSftp(sessionId: string): Promise<any> {
     const session = this.sessions.get(sessionId);
     if (!session || !session.client) {
       return Promise.reject(new Error('SFTP is only available for SSH sessions'));
     }
-    return new Promise((resolve, reject) => {
+    if (session.sftp) return Promise.resolve(session.sftp);
+
+    const pending = this.sftpPromises.get(sessionId);
+    if (pending) return pending;
+
+    const p = new Promise<any>((resolve, reject) => {
       session.client!.sftp((err: Error | undefined, sftp: any) => {
-        if (err) return reject(err);
+        this.sftpPromises.delete(sessionId);
+        if (err || !sftp) {
+          reject(new Error('SFTP init failed: ' + (err?.message || 'unknown')));
+          return;
+        }
+        session.sftp = sftp;
+        // 实例出错/关闭后丢弃，下次自动重建
+        const drop = () => {
+          if (session.sftp === sftp) session.sftp = undefined;
+        };
+        try {
+          sftp.on('error', drop);
+          sftp.on('close', drop);
+        } catch { /* ignore */ }
         resolve(sftp);
       });
     });
+    this.sftpPromises.set(sessionId, p);
+    return p;
+  }
+
+  /** 丢弃并关闭失效的 SFTP 实例（下次使用时重建） */
+  private invalidateSftp(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    const sftp = session?.sftp;
+    if (!sftp) return;
+    session!.sftp = undefined;
+    this.sftpPromises.delete(sessionId);
+    try { sftp.end(); } catch { /* ignore */ }
   }
 
   /**
