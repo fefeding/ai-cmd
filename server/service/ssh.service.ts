@@ -1624,14 +1624,16 @@ Write-Output "__DOCKER__: $dockerVer"
         if (probe.shellPid) session.shellPid = probe.shellPid;
         if (probe.xferCwd.startsWith('/')) return commit(probe.xferCwd, true);
 
-        // 只读得到部分进程（sudo su 场景）：结果只是推断，如实标记不可信，
-        // 由调用方决定「中断 rz 后问 shell」还是「让用户手填」。
-        if (probe.shellCwd.startsWith('/')) {
-          return commit(probe.shellCwd, probe.reliable);
+        // 可信的 shell 进程目录（能读到所有同源进程）：直接用，无需再麻烦用户。
+        if (probe.shellCwd.startsWith('/') && probe.reliable) {
+          return commit(probe.shellCwd, true);
         }
-        // 用户刚敲过 cd：cd 是显式意图，比推断出的进程目录更可信
+        // 不可信（sudo su 等只读到部分进程）：优先用「用户刚敲的 cd」跟踪值，
+        // 它最贴近真实意图；最后才退回不可信的进程推断，绝不能把登录 shell 家目录
+        // 当成当前目录（那会让文件传到错误的位置）。
         const trackedFresh = !!cached && !!session.cwdAt && (Date.now() - session.cwdAt) < CWD_TRACK_GRACE;
         if (trackedFresh) return commit(cached, true);
+        if (probe.shellCwd.startsWith('/')) return commit(probe.shellCwd, probe.reliable);
       }
 
       const forcedFallback = cacheFresh ? cached : '';
