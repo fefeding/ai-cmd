@@ -80,7 +80,7 @@
             <button
               class="btn btn-sm btn-outline-secondary"
               :disabled="destDirLoading"
-              @click="queryCwd(isZmodemSend, true)"
+              @click="refreshDestDir()"
               title="重新检测当前目录"
             >
               <i class="bi" :class="destDirLoading ? 'bi-hourglass-split' : 'bi-arrow-clockwise'"></i>
@@ -102,6 +102,12 @@
               <span class="text-warning">
                 <i class="bi bi-exclamation-triangle me-1"></i>
                 未能自动检测当前目录{{ destDirError ? '：' + destDirError : '' }}，请手动填写目标目录（绝对路径），否则文件会传到家目录。
+              </span>
+            </template>
+            <template v-else-if="!destDirConfirmed && destDirUnreliable">
+              <span class="text-danger">
+                <i class="bi bi-exclamation-triangle me-1"></i>
+                自动检测可能不准（sudo su 后无法读取进程目录），请核对或修改上面目录后再上传。
               </span>
             </template>
             <template v-else-if="isZmodemSend">
@@ -268,6 +274,11 @@ const destDirLoading = ref(false);
 const destDirError = ref('');
 // 用户是否手动编辑过目标目录（手动后不再被自动检测结果覆盖）
 const destDirManual = ref(false);
+// 目标目录是否已被权威来源确认（rz 进程自身的 cwd，或中断后向 shell 询问的结果）。
+// 已确认时上传前不再重复探测，避免探测失败把正确目录改回家目录。
+const destDirConfirmed = ref(false);
+// 当前展示的目录来自不可信推断（sudo su 后探测只能看到登录 shell），需要用户核对
+const destDirUnreliable = ref(false);
 // 是否为 rz 触发的 ZMODEM 上传（role === 'send'）
 const isZmodemSend = ref(false);
 
@@ -277,17 +288,27 @@ const isZmodemSend = ref(false);
  *               注入探测命令（否则 Ctrl+C 会打断 rz，注入文本也会被 rz 吞掉）。
  * @param force  强制服务端重新探测，忽略缓存（手动点"重新检测"、上传前兜底时使用）。
  */
-async function queryCwd(zmodem?: boolean, force?: boolean): Promise<string> {
+/**
+ * 向服务端查询当前终端所在目录。
+ * @param zmodem 远端 rz 是否正在等待接收文件。为 true 时服务端禁止向交互式 shell
+ *               注入探测命令（否则 Ctrl+C 会打断 rz，注入文本也会被 rz 吞掉）。
+ * @param force  强制服务端重新探测，忽略缓存（手动点"重新检测"、上传前兜底时使用）。
+ * @returns cwd 目录；reliable=false 表示结果不可信（sudo su 后读不到 /proc，
+ *          只是「唯一读得到的进程」，往往是登录 shell 家目录），不能直接当结论。
+ */
+async function queryCwd(zmodem?: boolean, force?: boolean): Promise<{ cwd: string; reliable: boolean }> {
   const sid = activeTermRef?.sessionId;
-  if (!sid) return '';
+  if (!sid) return { cwd: '', reliable: false };
   destDirLoading.value = true;
   destDirError.value = '';
   try {
     const electronApi = (window as any).electronAPI;
     let cwd = '';
+    let reliable = false;
     if (electronApi?.api?.getCwd) {
       const res = await electronApi.api.getCwd(sid, !!zmodem, !!force);
       cwd = res?.cwd || '';
+      reliable = res?.reliable !== false && !!cwd;
       if (!cwd && res?.error) destDirError.value = res.error;
     } else {
       const zmodemParam = zmodem ? '&zmodem=1' : '';
@@ -295,18 +316,47 @@ async function queryCwd(zmodem?: boolean, force?: boolean): Promise<string> {
       const resp = await fetch(`/api/cwd?sessionId=${encodeURIComponent(sid)}${zmodemParam}${forceParam}`);
       const data = await resp.json();
       cwd = data?.cwd || '';
+      reliable = data?.reliable !== false && !!cwd;
       if (!cwd && data?.error) destDirError.value = data.error;
     }
     // 只在解析成功且用户未手填时覆盖，避免清空用户手动输入
-    if (cwd && !destDirManual.value) destDir.value = cwd;
+    if (cwd && !destDirManual.value) {
+      destDir.value = cwd;
+      destDirUnreliable.value = !reliable;
+    }
     if (!cwd) destDirManual.value = false;
-    return cwd;
+    return { cwd, reliable };
   } catch (e: any) {
     destDirError.value = e?.message || String(e);
-    return '';
+    return { cwd: '', reliable: false };
   } finally {
     destDirLoading.value = false;
   }
+}
+
+/**
+ * 兜底：从终端屏显的提示符里解析当前目录（root@host:/data/server/work-agent#）。
+ * 这是唯一不受权限影响的来源 —— sudo su 之后服务端读不到 /proc，rz 又占着终端时，
+ * 屏幕上的提示符就是当前目录的最直接证据。
+ */
+function cwdFromPrompt(): string {
+  try {
+    const p = activeTermRef?.getCurrentCwd?.();
+    return typeof p === 'string' && p.startsWith('/') ? p : '';
+  } catch {
+    return '';
+  }
+}
+
+/** 把目录写入输入框（用户手填过就不覆盖）并标记是否可信 */
+function applyDestDir(cwd: string, reliable: boolean) {
+  if (!cwd || !cwd.startsWith('/')) return false;
+  if (!destDirManual.value) {
+    destDir.value = cwd;
+    destDirUnreliable.value = !reliable;
+  }
+  if (reliable) destDirConfirmed.value = true;
+  return true;
 }
 
 /**
@@ -361,6 +411,8 @@ function show(tabId: string, termRef: any, info?: any) {
   destDir.value = '';
   destDirError.value = '';
   destDirManual.value = false;
+  destDirConfirmed.value = false;
+  destDirUnreliable.value = false;
   // role === 'send' 即远端执行了 rz，浏览器需要上传文件
   isZmodemSend.value = !!(info && info.role === 'send');
 
@@ -399,13 +451,27 @@ function show(tabId: string, termRef: any, info?: any) {
   // 上传模式：提前向服务端解析当前终端目录，用于展示目标目录并构造绝对上传路径
   if (mode.value === 'upload') {
     if (isZmodemSend.value) {
-      // rz 场景：远端 rz 正在等待接收文件。
-      // 本组件的上传本来就要先中断 rz 再走 SFTP 直传（不走 ZMODEM 协议），
-      // 所以这里直接中断它，让服务端向 shell 询问目录 —— /proc 进程探测在
-      // tmux/子 shell 等场景下可能定位到错误的进程，只有问 shell 才是 100% 准确的。
+      // rz 场景：远端 rz 进程的 cwd 就是文件将要写入的目录，是最权威的来源，
+      // 且读取它不需要打断 rz（zmodem=true 时服务端只做进程探测）。
+      //
+      // 但 sudo su 之后 rz 与 shell 都属于 root，服务端（登录用户）读不到它们的 /proc，
+      // 探测会退化成「唯一读得到的进程」= 登录 shell = 家目录，此时 reliable=false：
+      // 必须中断 rz 后向 shell 询问；再不行就用提示符解析兜底。
       void (async () => {
+        const r = await queryCwd(true, true);
+        if (r.cwd && r.reliable) {
+          destDirConfirmed.value = true;
+          return;
+        }
+        // 先用提示符里的目录顶上去，避免面板短暂显示成家目录
+        applyDestDir(cwdFromPrompt(), false);
         await interruptRemoteForeground();
-        await queryCwd(false, true);
+        const r2 = await queryCwd(false, true);
+        if (r2.cwd && r2.reliable) {
+          destDirConfirmed.value = true;
+        } else if (!r2.cwd) {
+          applyDestDir(cwdFromPrompt(), false);
+        }
       })();
     } else {
       queryCwd(false);
@@ -457,6 +523,14 @@ function handleFileSelect(e: Event) {
   }
 }
 
+/** 手动点「重新检测」：中断前台进程后向 shell 询问，拿不到再用提示符解析兜底 */
+async function refreshDestDir() {
+  await interruptRemoteForeground();
+  const r = await queryCwd(false, true);
+  if (r.cwd && r.reliable) destDirConfirmed.value = true;
+  else if (!r.cwd) applyDestDir(cwdFromPrompt(), false);
+}
+
 /** 目标目录是否已是可用的绝对路径 */
 function hasValidDestDir(): boolean {
   return !!destDir.value && destDir.value.startsWith('/');
@@ -469,6 +543,12 @@ function hasValidDestDir(): boolean {
  */
 async function interruptRemoteForeground(): Promise<void> {
   if (!activeTermRef) return;
+  // rz 会把终端设为 raw 模式，此时 Ctrl+C 只是普通字节、产生不了 SIGINT，
+  // 必须先发 ZMODEM 中止序列（8×CAN + 8×BS）才能真正结束 rz。
+  sendToTerm('\x18\x18\x18\x18\x18\x18\x18\x18');
+  await new Promise(r => setTimeout(r, 200));
+  sendToTerm('\x08\x08\x08\x08\x08\x08\x08\x08');
+  await new Promise(r => setTimeout(r, 200));
   sendToTerm('\x03');
   await new Promise(r => setTimeout(r, 300));
   sendToTerm('\x03');
@@ -486,12 +566,17 @@ async function startUpload(files: File[]) {
     return;
   }
 
-  // 上传前必须确认目标目录：除非用户手动指定，否则一律以「中断前台进程后向 shell 询问」
-  // 的结果为准 —— /proc 进程探测在 tmux / 子 shell 等场景下可能定位到错误的进程。
-  // 本流程随后也会中断前台进程改用 SFTP 直传，所以这里的中断是安全的。
-  if (!hasValidDestDir() || !destDirManual.value) {
+  // 目标目录未确认时（用户也未手填），先中断前台进程再向 shell 询问 —— 这是权威结果。
+  // 已确认（例如取自 rz 进程自身 cwd）时不再重复探测，避免探测失败把正确目录改回家目录。
+  if (!destDirManual.value && (!hasValidDestDir() || !destDirConfirmed.value)) {
     await interruptRemoteForeground();
-    await queryCwd(false, true);
+    const r = await queryCwd(false, true);
+    if (r.cwd && r.reliable) {
+      destDirConfirmed.value = true;
+    } else if (!r.cwd) {
+      // 服务端探测失败（sudo su 后读不到 /proc）：用终端提示符里的目录兜底
+      applyDestDir(cwdFromPrompt(), false);
+    }
   }
   if (!hasValidDestDir()) {
     toast.warning('未能获取当前终端目录，请在上方填写目标目录（绝对路径）后重试');

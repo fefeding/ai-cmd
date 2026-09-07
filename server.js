@@ -156,12 +156,12 @@ app.get('/api/cwd', async (req, res) => {
   try {
     const serverModule = require('./dist/server/index.js');
     const { sshService } = serverModule;
-    const cwd = await sshService.getSessionCwd(String(sessionId), {
+    const { cwd, reliable } = await sshService.getSessionCwdDetailed(String(sessionId), {
       allowShellProbe: !zmodem,
       preferTransferProcess: !!zmodem,
       force,
     });
-    res.json({ success: true, cwd });
+    res.json({ success: true, cwd, reliable });
   } catch (err) {
     res.status(200).json({ success: false, cwd: '', error: err.message || String(err) });
   }

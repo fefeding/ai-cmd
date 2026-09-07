@@ -37,6 +37,8 @@ interface TerminalSession {
   cwd?: string;
   /** cwd 最后一次被成功解析的时间戳（用于判断缓存是否过期） */
   cwdAt?: number;
+  /** 缓存的 cwd 是否可信（false = 只是「唯一读得到的进程」推断值，如 sudo su 后的登录 shell） */
+  cwdReliable?: boolean;
   /** 未提交的输入行缓冲（xterm 逐字符发送，需累积成完整命令行才能解析 cd） */
   inputBuffer?: string;
   /** 远端交互式 shell 的 PID（用于 /proc/<pid>/cwd 精确读取当前目录，不影响终端） */
@@ -73,24 +75,33 @@ const CWD_REFRESH_MIN_INTERVAL = 15000;
  * 输出格式（每行一条，可能 0~2 行）：
  *   SHELL:<pid>:<cwd>   本会话的交互式 shell
  *   XFER:<pid>:<cwd>    本会话正在运行的 rz/sz 进程（rz 的 cwd 即文件将写入的目录）
+ *   NOCWD:<kind>:<pid>:<pri>:<dep>
+ *                       属于本会话、但 cwd 读不到（sudo su 后属主变了，需要 ptrace 权限）。
+ *                       出现即表示本次探测结果不可信，必须换用交互式 shell 探测。
  *
  * 设计要点：
  *   1) 只认与本 exec 通道同源（祖先链命中同一个 sshd 会话进程）的候选，
  *      避免同一台机器开多个标签页时串台读到别的终端目录；
- *   2) 排除 exec 通道自身及其祖先，避免把 exec 自己的 shell（cwd 恒为 $HOME）
- *      误判成终端 —— 这正是"文件被传到家目录"的根因；
+ *   2) 排除 exec 通道自身、其祖先、以及**它的所有子孙进程**（见 is_exec_tree）——
+ *      命令替换 $(...)/管道 fork 出的子 shell 与父进程同名、深度更大、cwd 恒为 $HOME，
+ *      若不过滤就会被「最深优先」选中，这正是"文件被传到家目录"的根因；
  *   3) 不使用 exec 通道的 pwd 兜底，探测不到就返回空，宁可让用户手填。
  */
 const SESSION_PROBE_SCRIPT = [
+  'self=$$',
   // 无 /proc 的远端（macOS / BSD）：改用 lsof 读取 shell 的 cwd
   'if [ ! -d /proc ]; then',
-  '  for pid in $(ps -eo pid=,comm= 2>/dev/null | awk \'$2 ~ /^(bash|zsh|sh|fish|dash|ksh|ksh93|mksh|tcsh|csh)$/ {print $1}\'); do',
+  '  for cand in $(ps -eo pid=,ppid=,comm= 2>/dev/null | awk \'$3 ~ /^(bash|zsh|sh|fish|dash|ksh|ksh93|mksh|tcsh|csh)$/ {print $1":"$2}\'); do',
+  '    pid=${cand%%:*}',
+  '    pp=${cand##*:}',
+  // 排除 exec 通道自身及其子进程：它们的 cwd 恒为 $HOME
+  '    [ "$pid" = "$self" ] && continue',
+  '    [ "$pp" = "$self" ] && continue',
   '    d=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n "s/^n//p" | head -n 1)',
   '    case "$d" in /*) echo "SHELL:$pid:$d"; break;; esac',
   '  done',
   '  exit 0',
   'fi',
-  'self=$$',
   'ppid_of() { sed -n "s/^PPid:[[:space:]]*//p" "/proc/$1/status" 2>/dev/null | head -n 1; }',
   'name_of() { sed -n "s/^Name:[[:space:]]*//p" "/proc/$1/status" 2>/dev/null | head -n 1; }',
   'cwd_of() { readlink "/proc/$1/cwd" 2>/dev/null; }',
@@ -104,27 +115,44 @@ const SESSION_PROBE_SCRIPT = [
   '  self_chain="$self_chain$p "',
   '  i=$((i+1))',
   'done',
+  // 是否属于 exec 通道自己的进程树（self 及其子孙）。
+  // 只认 self 本身：self 的祖先（sshd 会话进程）是与交互式 shell 共享的，
+  // 拿它们做判定会把真正的交互式 shell 也一起排除掉。
+  'is_exec_tree() {',
+  '  _et=$1',
+  '  [ "$_et" = "$self" ] && return 0',
+  '  _j=0',
+  '  while [ $_j -lt 12 ]; do',
+  '    _et=$(ppid_of "$_et")',
+  '    case "$_et" in ""|0|1) break;; esac',
+  '    [ "$_et" = "$self" ] && return 0',
+  '    _j=$((_j+1))',
+  '  done',
+  '  return 1',
+  '}',
   // 最近的 sshd 会话祖先：用于把候选限定在本 SSH 会话内
   'sshd_anc=""',
   'for q in $self_chain; do',
   '  n=$(name_of "$q")',
   '  case "$n" in sshd*) sshd_anc="$q"; break;; esac',
   'done',
-  'in_chain() { case "$self_chain" in *" $1 "*) return 0;; esac; return 1; }',
   // 返回值即优先级：2 = 与 sshd 会话同源（最准），1 = 仅 stdin 是 tty（tmux/su 等兜底），0 = 不匹配
+  // pri_src 记录判定依据：chain=进程链命中 / tty=stdin 是 tty / unknown=读不到（权限不足）
   'match_pri() {',
   '  pid=$1',
+  '  pri_src=""',
   '  if [ -n "$sshd_anc" ]; then',
   '    q=$pid; j=0',
   '    while [ $j -lt 12 ]; do',
   '      q=$(ppid_of "$q")',
   '      case "$q" in ""|0|1) break;; esac',
-  '      [ "$q" = "$sshd_anc" ] && return 2',
+  '      [ "$q" = "$sshd_anc" ] && { pri_src=chain; return 2; }',
   '      j=$((j+1))',
   '    done',
   '  fi',
   '  tty=$(readlink "/proc/$pid/fd/0" 2>/dev/null)',
-  '  case "$tty" in /dev/pts/*|/dev/tty*|/dev/console) return 1;; esac',
+  '  case "$tty" in /dev/pts/*|/dev/tty*|/dev/console) pri_src=tty; return 1;; esac',
+  '  pri_src=unknown',
   '  return 0',
   '}',
   // 进程深度（到 PID 1 的层数）：多个候选时取最深的那个。
@@ -142,19 +170,26 @@ const SESSION_PROBE_SCRIPT = [
   'best_shell=""; best_shell_key=0',
   'best_xfer=""; best_xfer_key=0',
   'for pid in $(ls /proc 2>/dev/null | grep -E "^[0-9]+$"); do',
-  '  in_chain "$pid" && continue',
   '  n=$(name_of "$pid")',
   '  case "$n" in',
   '    bash|sh|zsh|fish|dash|ksh|ksh93|mksh|tcsh|csh|ash|busybox) kind=shell;;',
   '    rz|sz|lrz|lsz|lrzsz) kind=xfer;;',
   '    *) continue;;',
   '  esac',
-  '  c=$(cwd_of "$pid")',
-  '  [ -n "$c" ] || continue',
+  // 先按名字过滤再判定，避免为每个进程都走一遍祖先链（省掉大量 fork）
+  '  is_exec_tree "$pid" && continue',
+  '  case "$self_chain" in *" $pid "*) continue;; esac',
   '  match_pri "$pid"',
   '  pri=$?',
+  // sshd 会话祖先未知时无法用进程链判定，fd/0 又因权限读不到的候选按「可能同源」处理，
+  // 否则 sudo su / su 之后会直接漏掉用户真正在用的那个 shell。
+  '  if [ "$pri" = 0 ] && [ -z "$sshd_anc" ] && [ "$pri_src" = unknown ]; then pri=1; fi',
   '  [ "$pri" = 0 ] && continue',
   '  dep=$(depth_of "$pid")',
+  '  c=$(cwd_of "$pid")',
+  // cwd 读不到：sudo su / su 到别的用户后，/proc/<pid>/cwd 需要 ptrace 权限。
+  // 必须上报而不是静默丢弃 —— 否则服务端会把唯一读得到的登录 shell 当成可信答案。
+  '  if [ -z "$c" ]; then echo "NOCWD:$kind:$pid:$pri:$dep"; continue; fi',
   '  key=$((pri * 100 + dep))',
   '  echo "CAND:$kind:$pid:$c:$pri:$dep"',
   '  if [ "$kind" = shell ]; then',
@@ -1258,15 +1293,19 @@ Write-Output "__DOCKER__: $dockerVer"
     if (!Number.isInteger(pid) || pid <= 0) return '';
     const out = await this.execRemote(
       sessionId,
-      `cat /proc/${pid}/comm 2>/dev/null; readlink /proc/${pid}/cwd 2>/dev/null`,
+      `cat /proc/${pid}/comm 2>/dev/null; readlink /proc/${pid}/cwd 2>/dev/null; readlink /proc/${pid}/fd/0 2>/dev/null`,
       4000,
     );
     const lines = out.split('\n').map(l => l.trim()).filter(Boolean);
-    if (lines.length < 2) return '';
+    if (lines.length < 3) return '';
     const comm = lines[0];
-    const cwd = lines[lines.length - 1];
+    const cwd = lines[1];
+    const stdin = lines[2];
     if (!cwd.startsWith('/')) return '';
     if (!/^(bash|sh|zsh|fish|dash|ksh|ksh93|mksh|tcsh|csh|ash|busybox|rz|sz|lrz|lsz)$/.test(comm)) return '';
+    // 交互式 shell / rz 的 stdin 一定是 tty；exec 通道（及其子 shell）是 pipe/socket，
+    // 这里再校验一次，避免 PID 复用时读到无关进程的目录（通常是 $HOME）。
+    if (!/^\/dev\/(pts|tty|console)/.test(stdin)) return '';
     return cwd;
   }
 
@@ -1276,12 +1315,22 @@ Write-Output "__DOCKER__: $dockerVer"
    */
   private async probeSessionProcess(
     sessionId: string,
-  ): Promise<{ shellPid?: number; shellCwd: string; xferCwd: string; candidates: string[] }> {
+  ): Promise<{
+    shellPid?: number;
+    shellCwd: string;
+    xferCwd: string;
+    candidates: string[];
+    /** 存在读不到 cwd 的同源进程（sudo su 等）时为 true：结果只是「唯一读得到的那个」，不可信 */
+    unreadable: string[];
+    reliable: boolean;
+  }> {
     const result = {
       shellPid: undefined as number | undefined,
       shellCwd: '',
       xferCwd: '',
       candidates: [] as string[],
+      unreadable: [] as string[],
+      reliable: true,
     };
     const out = await this.execRemote(sessionId, SESSION_PROBE_SCRIPT, 5000);
     for (const raw of out.split('\n')) {
@@ -1290,6 +1339,11 @@ Write-Output "__DOCKER__: $dockerVer"
       if (line.startsWith('CAND:')) {
         // 诊断用：列出全部候选进程（kind:pid:cwd:pri:depth）
         result.candidates.push(line.substring(5));
+        continue;
+      }
+      if (line.startsWith('NOCWD:')) {
+        // 诊断 + 可信度：kind:pid:pri:depth（cwd 因权限读不到）
+        result.unreadable.push(line.substring(6));
         continue;
       }
       const m = line.match(/^(SHELL|XFER):(\d+):(\/.*)$/);
@@ -1303,9 +1357,13 @@ Write-Output "__DOCKER__: $dockerVer"
         result.xferCwd = cwd;
       }
     }
+    // 只要还有读不到的同源候选，本次结果就只能算「推断」：
+    // 用户真正在用的 shell 很可能就是那个读不到的（sudo su 后的 root shell）。
+    if (result.unreadable.length) result.reliable = false;
     console.log(
       `[SSH] probeSessionProcess: shell=${result.shellPid || '-'}:${result.shellCwd || '-'} ` +
-      `xfer=${result.xferCwd || '-'} cands=[${result.candidates.join(' | ')}]`,
+      `xfer=${result.xferCwd || '-'} reliable=${result.reliable} ` +
+      `cands=[${result.candidates.join(' | ')}] nocwd=[${result.unreadable.join(' | ')}]`,
     );
     return result;
   }
@@ -1516,25 +1574,72 @@ Write-Output "__DOCKER__: $dockerVer"
     sessionId: string,
     opts: { allowShellProbe?: boolean; preferTransferProcess?: boolean; force?: boolean } = {},
   ): Promise<string> {
+    return (await this.getSessionCwdDetailed(sessionId, opts)).cwd;
+  }
+
+  /**
+   * 同 getSessionCwd，但额外返回可信度。
+   *
+   * reliable=false 的典型场景：`sudo su` / `su` 之后，用户真正在用的 shell 属于 root，
+   * 而 exec 通道跑在登录用户下，/proc/<pid>/cwd 需要 ptrace 权限、读不到，
+   * 探测结果退化成「唯一读得到的那个进程」（往往是登录 shell = 家目录）。
+   * 调用方必须据此改向交互式 shell 询问或让用户确认，不能直接拿它当结论。
+   */
+  async getSessionCwdDetailed(
+    sessionId: string,
+    opts: { allowShellProbe?: boolean; preferTransferProcess?: boolean; force?: boolean } = {},
+  ): Promise<{ cwd: string; reliable: boolean }> {
     const allowShellProbe = opts.allowShellProbe !== false;
     const session = this.sessions.get(sessionId);
-    if (!session) return '';
+    if (!session) return { cwd: '', reliable: false };
 
     const cached = session.cwd && session.cwd.startsWith('/') ? session.cwd : '';
     const cacheFresh = !!cached && !!session.cwdAt && (Date.now() - session.cwdAt) < CWD_CACHE_TTL;
 
-    // 0) 强制刷新 + 允许注入探测：直接向 shell 询问，这是最权威的手段。
-    //    调用方（上传前兜底、用户点"重新检测"）已确保终端处于可打断状态，
-    //    否则只靠 exec 探测，一旦 shellPid 指错进程就会一直拿到错误的目录。
-    if (opts.force && allowShellProbe) {
-      let probed = await this.probeCwdViaShell(sessionId);
-      if (!probed) probed = await this.probeCwdViaShell(sessionId);
-      if (probed && probed.startsWith('/')) {
-        session.cwd = probed;
-        session.cwdAt = Date.now();
-        console.log(`[SSH] getSessionCwd (forced shell probe): '${probed}'`);
-        return probed;
+    const commit = (cwd: string, reliable: boolean) => {
+      session.cwd = cwd;
+      session.cwdAt = Date.now();
+      session.cwdReliable = reliable;
+      console.log(`[SSH] getSessionCwd: '${cwd}' reliable=${reliable}`);
+      return { cwd, reliable };
+    };
+
+    // 0) 强制刷新：按可信度从高到低依次尝试，拿到结果立即返回；
+    //    全部失败时只在缓存仍然新鲜的情况下才用缓存兜底，绝不把不可信的猜测当当前目录。
+    if (opts.force) {
+      let probed = '';
+
+      // 0.1) 向 shell 询问（最权威）。调用方（上传前兜底、用户点"重新检测"）已确保
+      //      终端处于可打断状态；rz 把终端设为 raw 模式时 Ctrl+C 只是普通字节，
+      //      探测会失败并落到 0.2，不会污染结果。
+      if (allowShellProbe) {
+        let probed = await this.probeCwdViaShell(sessionId);
+        if (!probed) probed = await this.probeCwdViaShell(sessionId);
+        if (probed.startsWith('/')) return commit(probed, true);
       }
+
+      // 0.2) 进程探测：rz/sz 自己的 cwd 最权威（它就是文件要写入的目录）。
+      if (session.type === 'ssh' && session.client) {
+        const probe = await this.probeSessionProcess(sessionId);
+        if (probe.shellPid) session.shellPid = probe.shellPid;
+        if (probe.xferCwd.startsWith('/')) return commit(probe.xferCwd, true);
+
+        // 只读得到部分进程（sudo su 场景）：结果只是推断，如实标记不可信，
+        // 由调用方决定「中断 rz 后问 shell」还是「让用户手填」。
+        if (probe.shellCwd.startsWith('/')) {
+          return commit(probe.shellCwd, probe.reliable);
+        }
+        // 用户刚敲过 cd：cd 是显式意图，比推断出的进程目录更可信
+        const trackedFresh = !!cached && !!session.cwdAt && (Date.now() - session.cwdAt) < CWD_TRACK_GRACE;
+        if (trackedFresh) return commit(cached, true);
+      }
+
+      const forcedFallback = cacheFresh ? cached : '';
+      console.log(
+        `[SSH] getSessionCwd: forced probe failed for ${sessionId} ` +
+        `(allowShellProbe=${allowShellProbe}, staleCache=${cached || '-'}, returning='${forcedFallback}')`,
+      );
+      return { cwd: forcedFallback, reliable: false };
     }
 
     // 0.5) rz/sz 正在等待传输：直接取 rz 进程自身的 cwd。
@@ -1544,27 +1649,19 @@ Write-Output "__DOCKER__: $dockerVer"
       const probe = await this.probeSessionProcess(sessionId);
       if (probe.shellPid) session.shellPid = probe.shellPid;
       const cwd = probe.xferCwd || probe.shellCwd;
-      if (cwd) {
-        session.cwd = cwd;
-        session.cwdAt = Date.now();
-        return cwd;
-      }
+      if (cwd) return commit(cwd, probe.reliable);
     }
 
     // 1) 缓存命中（且未过期、未强制刷新）
-    if (cached && cacheFresh && !opts.force) {
-      return cached;
+    if (cached && cacheFresh) {
+      return { cwd: cached, reliable: session.cwdReliable !== false };
     }
 
     // 2) 已知 shell PID：直接读 /proc
     if (session.type === 'ssh' && session.client) {
       if (session.shellPid) {
         const cwd = await this.readPidCwd(sessionId, session.shellPid);
-        if (cwd) {
-          session.cwd = cwd;
-          session.cwdAt = Date.now();
-          return cwd;
-        }
+        if (cwd) return commit(cwd, true);
         session.shellPid = undefined;
       }
 
@@ -1574,31 +1671,23 @@ Write-Output "__DOCKER__: $dockerVer"
       const cwd = (opts.preferTransferProcess && probe.xferCwd)
         ? probe.xferCwd
         : (probe.shellCwd || probe.xferCwd);
-      if (cwd) {
-        session.cwd = cwd;
-        session.cwdAt = Date.now();
-        return cwd;
-      }
+      if (cwd) return commit(cwd, probe.reliable);
     }
 
     // 4) 注入式探测（会打断前台进程）
     if (allowShellProbe) {
       let cwd = await this.probeCwdViaShell(sessionId);
       if (!cwd) cwd = await this.probeCwdViaShell(sessionId);
-      if (cwd && cwd.startsWith('/')) {
-        session.cwd = cwd;
-        session.cwdAt = Date.now();
-        return cwd;
-      }
+      if (cwd.startsWith('/')) return commit(cwd, true);
     }
 
     // 全部失败：缓存已过期时返回空（让前端提示手填），避免把陈旧目录当当前目录使用
     const fallback = cacheFresh ? cached : '';
     console.log(
       `[SSH] getSessionCwd: probes failed for ${sessionId} ` +
-      `(allowShellProbe=${allowShellProbe}, force=${!!opts.force}, staleCache=${cached || '-'}, returning='${fallback || ''}')`,
+      `(allowShellProbe=${allowShellProbe}, staleCache=${cached || '-'}, returning='${fallback}')`,
     );
-    return fallback;
+    return { cwd: fallback, reliable: false };
   }
 
   /** 向交互式 shell 注入 printf $PWD 探测 CWD（会先 Ctrl+C 打断前台进程） */
@@ -1608,6 +1697,9 @@ Write-Output "__DOCKER__: $dockerVer"
     // 否则 printf 命令会被前台进程吞掉，shell 不会执行
     this.writeData(sessionId, '\x03');
     await new Promise(r => setTimeout(r, 200));
+    // Ctrl+U 清空当前输入行：若行内还有残留字符，注入的命令会被拼接成无效命令而拿不到结果
+    this.writeData(sessionId, '\x15');
+    await new Promise(r => setTimeout(r, 150));
 
     // 启动捕获后发送命令（marker 行输出完整就立即返回，通常几百毫秒）
     const stopWhen = (text: string) => {

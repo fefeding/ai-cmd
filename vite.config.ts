@@ -504,13 +504,13 @@ async function serverRoute(req: Connect.IncomingMessage, res: http.ServerRespons
             const zmodem = parsedUrl.query.zmodem === '1' || parsedUrl.query.zmodem === 'true';
             const force = parsedUrl.query.force === '1' || parsedUrl.query.force === 'true';
             try {
-                const cwd = await sshService!.getSessionCwd(String(sessionId), {
+                const { cwd, reliable } = await sshService!.getSessionCwdDetailed(String(sessionId), {
                     allowShellProbe: !zmodem,
                     preferTransferProcess: !!zmodem,
                     force,
                 });
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ success: true, cwd }));
+                res.end(JSON.stringify({ success: true, cwd, reliable }));
             } catch (err: any) {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ success: false, cwd: '', error: err.message || String(err) }));

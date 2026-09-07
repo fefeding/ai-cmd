@@ -174,12 +174,12 @@ function setupApiIPC() {
       if (!sessionId) {
         return { cwd: '', error: 'Missing sessionId' };
       }
-      const cwd = await services.sshService.getSessionCwd(sessionId, {
+      const { cwd, reliable } = await services.sshService.getSessionCwdDetailed(sessionId, {
         allowShellProbe: !zmodem,
         preferTransferProcess: !!zmodem,
         force: !!force,
       });
-      return { cwd };
+      return { cwd, reliable };
     } catch (err) {
       console.error('[IPC] get-cwd error:', err);
       return { cwd: '', error: err.message };
