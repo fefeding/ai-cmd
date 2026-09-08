@@ -65,9 +65,9 @@
           @change="handleFileSelect"
         >
         <div class="dest-dir-hint mt-2 px-2 py-1" v-if="mode === 'upload'">
-          <div class="d-flex align-items-center gap-2">
+          <div v-if="!isZmodemSend" class="d-flex align-items-center gap-2">
             <label class="text-secondary mb-0 text-nowrap">
-              <i class="bi bi-folder2 me-1 text-info"></i>{{ isZmodemSend ? 'rz 写入目录' : '目标目录' }}
+              <i class="bi bi-folder2 me-1 text-info"></i>目标目录
             </label>
             <input
               v-model="destDir"
@@ -86,7 +86,12 @@
               <i class="bi" :class="destDirLoading ? 'bi-hourglass-split' : 'bi-arrow-clockwise'"></i>
             </button>
           </div>
-          <div class="mt-1" style="font-size: 12px;">
+          <!-- rz 场景：走 ZMODEM 直发，目录由 rz 自己的 cwd 决定，无需也无从填写 -->
+          <div v-else class="d-flex align-items-center gap-2 text-secondary">
+            <i class="bi bi-folder2 text-info"></i>
+            <span>将通过 ZMODEM 发送给 rz，文件写入终端当前目录</span>
+          </div>
+          <div v-if="!isZmodemSend" class="mt-1" style="font-size: 12px;">
             <template v-if="destDirLoading">
               <span class="text-secondary">
                 <span class="spinner-border spinner-border-sm me-1" style="width: 10px; height: 10px;"></span>
@@ -109,9 +114,6 @@
                 <i class="bi bi-exclamation-triangle me-1"></i>
                 自动检测可能不准（sudo su 后无法读取进程目录），请核对或修改上面目录后再上传。
               </span>
-            </template>
-            <template v-else-if="isZmodemSend">
-              <span class="text-secondary">上传前会中断远端 rz，文件将直接写入上面目录。</span>
             </template>
           </div>
         </div>
@@ -268,6 +270,13 @@ let zmodemAutoMode = ref(false);
 let activeTermRef: any = null;
 let activeTabId: string | null = null;
 
+/**
+ * 等待「自动发起的 rz」握手成功。
+ * 手动上传时我们会在终端执行 rz，然后等 Sentry 检测到 ZRINIT 并建好 Session.Send，
+ * 由 show() 通过这个回调把 session 交回来。
+ */
+let pendingRzResolve: ((session: any) => void) | null = null;
+
 // 上传目标目录：由服务端可靠解析当前终端所在目录后展示，并用于构造绝对远程路径
 const destDir = ref('');
 const destDirLoading = ref(false);
@@ -325,6 +334,18 @@ async function queryCwd(zmodem?: boolean, force?: boolean): Promise<{ cwd: strin
       destDirUnreliable.value = !reliable;
     }
     if (!cwd) destDirManual.value = false;
+
+    // 服务端拿不到目录，或结果不可信（sudo su 后只能看到登录 shell）时，
+    // 用终端提示符里的目录兜底：提示符就是屏幕上的内容，既不受 /proc 权限限制，
+    // 也不受进程可见性影响，是这类场景下唯一稳定的来源（root@host:/data/server#）。
+    // 这样输入框不会空着，用户不必被"未能自动检测"劝退，上传时仍会再校验一次。
+    if ((!cwd || !reliable) && !destDirManual.value) {
+      const fromPrompt = cwdFromPrompt();
+      if (fromPrompt) {
+        destDir.value = fromPrompt;
+        destDirUnreliable.value = true;
+      }
+    }
     return { cwd, reliable };
   } catch (e: any) {
     destDirError.value = e?.message || String(e);
@@ -419,6 +440,10 @@ function show(tabId: string, termRef: any, info?: any) {
   if (info && info.session) {
     zmodemSession = info.session;
     const role = info.role;
+    // 若这次握手是我们自动执行 rz 触发的，唤醒等待中的上传流程
+    if (role === 'send' && pendingRzResolve) {
+      pendingRzResolve(info.session);
+    }
     console.log('[FileTransfer] ZMODEM session ready, role:', role);
 
     if (role === 'send') {
@@ -448,34 +473,13 @@ function show(tabId: string, termRef: any, info?: any) {
     mode.value = 'upload';
   }
 
-  // 上传模式：提前向服务端解析当前终端目录，用于展示目标目录并构造绝对上传路径
-  if (mode.value === 'upload') {
-    if (isZmodemSend.value) {
-      // rz 场景：远端 rz 进程的 cwd 就是文件将要写入的目录，是最权威的来源，
-      // 且读取它不需要打断 rz（zmodem=true 时服务端只做进程探测）。
-      //
-      // 但 sudo su 之后 rz 与 shell 都属于 root，服务端（登录用户）读不到它们的 /proc，
-      // 探测会退化成「唯一读得到的进程」= 登录 shell = 家目录，此时 reliable=false：
-      // 必须中断 rz 后向 shell 询问；再不行就用提示符解析兜底。
-      void (async () => {
-        const r = await queryCwd(true, true);
-        if (r.cwd && r.reliable) {
-          destDirConfirmed.value = true;
-          return;
-        }
-        // 先用提示符里的目录顶上去，避免面板短暂显示成家目录
-        applyDestDir(cwdFromPrompt(), false);
-        await interruptRemoteForeground();
-        const r2 = await queryCwd(false, true);
-        if (r2.cwd && r2.reliable) {
-          destDirConfirmed.value = true;
-        } else if (!r2.cwd) {
-          applyDestDir(cwdFromPrompt(), false);
-        }
-      })();
-    } else {
-      queryCwd(false);
-    }
+  // 上传模式：提前向服务端解析当前终端目录，用于构造 SFTP 直传的绝对路径。
+  //
+  // rz 场景跳过探测：此时走 ZMODEM 直发，文件由 rz 写入它自己的 cwd（= 终端当前目录），
+  // 根本用不到目录。而且探测在这里是有害的 —— 注入 pwd 需要先中断 rz，
+  // 中断后 ZMODEM 传输就没法进行了；不中断则注入的命令会被 rz 当数据吞掉。
+  if (mode.value === 'upload' && !isZmodemSend.value) {
+    queryCwd(false);
   }
 }
 
@@ -558,12 +562,178 @@ async function interruptRemoteForeground(): Promise<void> {
 }
 
 /**
+ * 在终端自动执行 rz，并等待 ZMODEM 握手完成（Xshell 拖放上传的行为）。
+ *
+ * 这样上传就完全不需要知道目录：rz 由当前 shell 启动、继承其 cwd，并把收到的文件
+ * 写进这个目录。相比 SFTP 直传，它不需要 /proc 探测、不需要注入 pwd，
+ * 也不受 sudo su / tmux / 子 shell 影响 —— 目录正确性由内核保证。
+ *
+ * @returns 建好的 Session.Send；超时或远端没有 lrzsz 时返回 null，调用方退回 SFTP。
+ */
+function autoStartRzAndWait(timeoutMs = 8000): Promise<any> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (session: any) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      pendingRzResolve = null;
+      resolve(session);
+    };
+    const timer = setTimeout(() => {
+      console.warn('[FileTransfer] auto rz timed out, falling back to SFTP');
+      finish(null);
+    }, timeoutMs);
+    pendingRzResolve = finish;
+    // 先清掉输入行里可能残留的半截内容，再执行 rz
+    sendToTerm('\x15');
+    setTimeout(() => sendToTerm('rz -bye\r'), 120);
+  });
+}
+
+/**
+ * 通过 ZMODEM 直接把文件发给远端正在等待的 rz（Xshell / SecureCRT 的做法）。
+ *
+ * 为什么这是最可靠的方案：rz 由用户所在的 shell 启动，会继承该 shell 的 cwd，
+ * 并把收到的文件写进这个目录 —— 我们不需要知道这个目录是什么，它天然就是对的。
+ * 相比之下 SFTP 直传必须先拿到绝对路径，才有了 /proc 进程探测、注入 pwd、
+ * 解析提示符等一堆在 sudo su / tmux / 子 shell 下会失效的启发式手段。
+ */
+async function startZmodemUpload(files: File[]) {
+  const session = zmodemSession;
+  if (!session) return;
+
+  transferring.value = true;
+  const CHUNK = 64 * 1024; // 分块读取，避免大文件一次性占用内存
+  const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+  let doneBytes = 0;
+
+  try {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      currentProgress.value = {
+        direction: 'upload',
+        fileName: file.name,
+        bytesSent: 0,
+        bytesTotal: file.size,
+        percent: 0,
+        state: 'transferring',
+      };
+      console.log(`[FileTransfer] ZMODEM upload: ${file.name} (${file.size} bytes)`);
+
+      // 向远端 rz 发起文件要约；接收端接受后返回 Transfer 对象
+      const transfer = await session.send_offer({
+        name: file.name,
+        size: file.size,
+        mtime: Math.floor((file.lastModified || Date.now()) / 1000),
+        files_remaining: files.length - i,
+        bytes_remaining: totalBytes - doneBytes,
+      });
+
+      if (!transfer) {
+        // 远端跳过该文件（通常是同名文件已存在）
+        toast.warning(`远端已跳过：${file.name}（可能同名文件已存在）`);
+        doneBytes += file.size;
+        continue;
+      }
+
+      let sent = 0;
+      while (sent < file.size) {
+        const end = Math.min(sent + CHUNK, file.size);
+        const buf = new Uint8Array(await file.slice(sent, end).arrayBuffer());
+        transfer.send(buf);
+        sent += buf.length;
+        currentProgress.value = {
+          direction: 'upload',
+          fileName: file.name,
+          bytesSent: sent,
+          bytesTotal: file.size,
+          percent: Math.min(99, Math.round((sent / file.size) * 100)),
+          state: 'transferring',
+        };
+      }
+      // end() 返回的 Promise 在接收端确认收完该文件后 resolve
+      await transfer.end([]);
+      doneBytes += file.size;
+
+      currentProgress.value = {
+        direction: 'upload',
+        fileName: file.name,
+        bytesSent: file.size,
+        bytesTotal: file.size,
+        percent: 100,
+        state: 'transferring',
+      };
+      transferHistory.value.unshift({
+        direction: 'upload',
+        fileName: file.name,
+        bytesSent: file.size,
+        bytesTotal: file.size,
+        percent: 100,
+        state: 'complete',
+      });
+    }
+
+    // 通知远端本批传输结束（发送 ZEOF / ZFIN）
+    try {
+      await session.close();
+    } catch (e) {
+      console.warn('[FileTransfer] ZMODEM close:', e);
+    }
+    // rz 已退出，切回普通上传模式。
+    // 必须先给 destDir 一个正确初值：rz 模式下我们从不探测目录（也没必要），
+    // 若直接切回输入框模式就会显示空的"未能自动检测当前目录"，让人误以为上传失败。
+    // 优先用终端提示符填充（不向终端注入任何命令），拿不到再真问一次 shell。
+    // 这里刻意不标记 destDirConfirmed，下次上传仍会重新校验，避免沿用过期目录。
+    const promptCwd = cwdFromPrompt();
+    if (promptCwd && !destDirManual.value) {
+      destDir.value = promptCwd;
+      destDirUnreliable.value = false;
+    } else {
+      await queryCwd(false, true);
+    }
+    zmodemSession = null;
+    isZmodemSend.value = false;
+    toast.success(t('fileTransfer.uploadComplete'));
+  } catch (e: any) {
+    console.error('[FileTransfer] ZMODEM upload failed:', e);
+    toast.error(`ZMODEM 上传失败：${e?.message || String(e)}`);
+  } finally {
+    transferring.value = false;
+  }
+}
+
+/**
  * 上传文件 - 通过 HTTP POST + SFTP 直传
  */
 async function startUpload(files: File[]) {
   if (!activeTermRef) {
     toast.error(t('fileTransfer.terminalNotConnected'));
     return;
+  }
+
+  // 【Xshell 方案】远端 rz 正在等待接收：直接走 ZMODEM 把文件发给 rz，
+  // 由 rz 写入它自己的 cwd —— 而 rz 是由当前 shell 启动的，其 cwd 就是终端当前目录。
+  // 因此这里完全不需要"猜"目录，也就不可能出现"传到家目录"的问题。
+  // （SFTP 直传必须事先知道绝对路径，才引出了前面一系列不可靠的目录探测。）
+  if (isZmodemSend.value && zmodemSession) {
+    await startZmodemUpload(files);
+    return;
+  }
+
+  // 【Xshell 方案 - 手动上传】终端里没有正在等待的 rz：主动在终端执行 rz，再走 ZMODEM 直发。
+  // 文件由 rz 写入它自己的 cwd，因此完全不需要探测目录，也就不受 sudo su 影响。
+  // 远端没有 lrzsz（或终端正忙）时会超时返回 null，自动退回下面的 SFTP + 目录探测。
+  // 只在终端确实停在 shell 提示符（空闲）时才自动执行 rz，
+  // 避免在 vim / top 之类前台程序里把命令灌进去。
+  if (!zmodemSession && cwdFromPrompt()) {
+    const session = await autoStartRzAndWait();
+    if (session) {
+      zmodemSession = session;
+      isZmodemSend.value = true;
+      await startZmodemUpload(files);
+      return;
+    }
   }
 
   // 目标目录未确认时（用户也未手填），先中断前台进程再向 shell 询问 —— 这是权威结果。

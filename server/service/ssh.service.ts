@@ -1655,11 +1655,16 @@ Write-Output "__DOCKER__: $dockerVer"
     }
 
     // 1) 缓存命中（且未过期、未强制刷新）
-    if (cached && cacheFresh) {
-      return { cwd: cached, reliable: session.cwdReliable !== false };
+    //    注意：缓存值本身不可信时必须重新探测，不能直接用 ——
+    //    那正是"sudo su 后上次探测只拿到登录 shell 家目录"的情况，
+    //    若在这里直接返回，错误目录会被一直沿用，警告也就永远消不掉。
+    if (cached && cacheFresh && session.cwdReliable !== false) {
+      return { cwd: cached, reliable: true };
     }
 
     // 2) 已知 shell PID：直接读 /proc
+    // inferredCwd：进程探测得到的推断值，可信则立即采用，不可信时留作最后兜底
+    let inferredCwd = '';
     if (session.type === 'ssh' && session.client) {
       if (session.shellPid) {
         const cwd = await this.readPidCwd(sessionId, session.shellPid);
@@ -1673,7 +1678,14 @@ Write-Output "__DOCKER__: $dockerVer"
       const cwd = (opts.preferTransferProcess && probe.xferCwd)
         ? probe.xferCwd
         : (probe.shellCwd || probe.xferCwd);
-      if (cwd) return commit(cwd, probe.reliable);
+      // 只有结果可信才直接采用。不可信（sudo su 后只能读到登录 shell）时必须继续
+      // 走第 4 步向交互式 shell 询问 —— 否则会把登录 shell 的家目录当成当前目录，
+      // 文件就传到错误的位置了（这正是"老是传到 /home/ubuntu"的根因）。
+      if (cwd && probe.reliable) return commit(cwd, true);
+      // 不允许注入式探测（rz 正在等待接收）：只能用这个推断值，如实标记不可信，
+      // 由前端提示用户核对或改走 ZMODEM 直发。
+      if (cwd && !allowShellProbe) return commit(cwd, false);
+      inferredCwd = cwd || '';
     }
 
     // 4) 注入式探测（会打断前台进程）
@@ -1682,6 +1694,9 @@ Write-Output "__DOCKER__: $dockerVer"
       if (!cwd) cwd = await this.probeCwdViaShell(sessionId);
       if (cwd.startsWith('/')) return commit(cwd, true);
     }
+
+    // 注入式探测也失败：退回进程推断值（有总比没有强，前端会提示用户核对）
+    if (inferredCwd) return commit(inferredCwd, false);
 
     // 全部失败：缓存已过期时返回空（让前端提示手填），避免把陈旧目录当当前目录使用
     const fallback = cacheFresh ? cached : '';
