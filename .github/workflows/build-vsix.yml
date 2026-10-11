@@ -1,0 +1,155 @@
+name: Build and Release AICmd VSIX
+
+# Mirrors the Database Tool extension pipeline: a .vsix is built on every push/PR to main
+# (uploaded as a CI artifact). On version tags of the form `aicmd-v*` it creates a GitHub
+# Release with the .vsix attached and publishes the extension to BOTH the VS Code
+# Marketplace (VSCODE_TOKEN) and the Open VSX Registry (OVSX_TOKEN).
+#
+# NOTE: the Electron app build (.github/workflows/build.yml) triggers on `v*` tags, while this
+# extension pipeline triggers on `aicmd-v*` tags. Keep them distinct so the two release channels
+# don't collide (and the version check here compares packages/vscode/package.json).
+on:
+  push:
+    tags:
+      - 'aicmd-v*'
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # required by softprops/action-gh-release to create releases
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-
+
+      - name: Install dependencies (root)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: pnpm install --no-frozen-lockfile
+
+      # Tagged releases must match packages/vscode version so the published artifact is unambiguous.
+      - name: Verify tag matches extension version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          PKG_VER="$(node -p "require('./packages/vscode/package.json').version")"
+          TAG="${GITHUB_REF_NAME#aicmd-v}"
+          if [ "$PKG_VER" != "$TAG" ]; then
+            echo "::error::Git tag '${GITHUB_REF_NAME}' does not match packages/vscode version '${PKG_VER}'. Bump the version before tagging."
+            exit 1
+          fi
+
+      # `vsce package` runs `vscode:prepublish` (esbuild host build) and produces packages/vscode/*.vsix.
+      - name: Package VSIX
+        working-directory: packages/vscode
+        run: ../../node_modules/.bin/vsce package
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-aicmd-${{ github.sha }}
+          path: packages/vscode/*.vsix
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packages/vscode/*.vsix
+          generate_release_notes: true
+          force: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Publish to the VS Code Marketplace on `aicmd-v*` tags. The repository secret VSCODE_TOKEN
+  # (an Azure DevOps PAT with Marketplace > Manage, owned by the publisher in package.json)
+  # is mapped to VSCE_PAT, which vsce reads.
+  publish-marketplace:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install dependencies (root)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Package VSIX
+        working-directory: packages/vscode
+        run: ../../node_modules/.bin/vsce package
+
+      - name: Publish to VS Code Marketplace
+        working-directory: packages/vscode
+        run: ../../node_modules/.bin/vsce publish --packagePath *.vsix -p "$VSCE_PAT"
+        env:
+          VSCE_PAT: ${{ secrets.VSCODE_TOKEN }}
+
+  # Publish to the Open VSX Registry on `aicmd-v*` tags. OVSX_TOKEN may be stored as a
+  # repository secret OR a repository variable; the expression falls back to the variable when
+  # the secret is empty. NOTE: repository variables are NOT masked in logs, so prefer a secret.
+  publish-ovsx:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install dependencies (root)
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Package VSIX
+        working-directory: packages/vscode
+        run: ../../node_modules/.bin/vsce package
+
+      - name: Publish to Open VSX
+        working-directory: packages/vscode
+        run: ../../node_modules/.bin/ovsx publish *.vsix -p "$OVSX_TOKEN"
+        env:
+          OVSX_TOKEN: ${{ secrets.OVSX_TOKEN || vars.OVSX_TOKEN }}
