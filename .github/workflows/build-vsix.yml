@@ -150,6 +150,6 @@ jobs:
 
       - name: Publish to Open VSX
         working-directory: packages/vscode
-        run: pnpm exec ovsx publish *.vsix -p "$OVSX_TOKEN"
+        run: ./node_modules/.bin/ovsx publish *.vsix -p "$OVSX_TOKEN"
         env:
           OVSX_TOKEN: ${{ secrets.OVSX_TOKEN || vars.OVSX_TOKEN }}
