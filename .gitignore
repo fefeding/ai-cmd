@@ -43,3 +43,6 @@ data/exports/
 dist/
 release/
 data/messages/
+
+# VSCode extension packaged output (must not be committed; pollutes *.vsix globs)
+*.vsix
