@@ -1,0 +1,13 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "build:vscode",
+      "group": "build",
+      "problemMatcher": [],
+      "label": "npm: build vscode",
+      "detail": "构建前端 + 后端以及 VSCode 扩展宿主代码"
+    }
+  ]
+}

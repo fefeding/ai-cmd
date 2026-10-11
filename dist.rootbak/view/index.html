@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <base href="" />
+    <script type="text/template" id="__INITIAL_STATE__">
+        {{ data | dump | safe }}
+    </script>
+    <script type="text/template" id="__DEFAULTINITIAL_STATE__">
+      {"config":{"prefix":"","apiUrl":""},"title":"aicmd Terminal"}
+    </script>
+    <script>
+      function __get_templateJson(id) {
+        try { 
+            var tag = document.getElementById(id);
+            var obj = JSON.parse(tag.innerHTML);
+            return obj;
+        }
+        catch (e) {    
+          return null;
+        }
+      }
+      var __INITIAL_STATE__ = __get_templateJson('__INITIAL_STATE__');
+      if(!__INITIAL_STATE__) __INITIAL_STATE__ = __get_templateJson('__DEFAULTINITIAL_STATE__');        
+    </script>
+    <link rel="icon" href="/public/favicon.ico" />    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AICmd - AI Terminal</title>
+    <meta name="description" content="{{description}}">
+    <script>
+      window.addEventListener('vite:preloadError', function (event) {
+        console.error(event);
+      });
+    </script> 
+    <script type="module" crossorigin src="/public/index.js"></script>
+    <link rel="modulepreload" crossorigin href="/public/rolldown-runtime.js">
+    <link rel="modulepreload" crossorigin href="/public/vue.js">
+    <link rel="modulepreload" crossorigin href="/public/bootstrap.js">
+    <link rel="stylesheet" crossorigin href="/public/bootstrap.css">
+    <link rel="stylesheet" crossorigin href="/public/index.css">
+  </head>
+  <body>
+    <div id="app" class="min-vh-100"></div>
+  </body>
+</html>

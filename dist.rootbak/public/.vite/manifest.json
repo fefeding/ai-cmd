@@ -1,0 +1,92 @@
+{
+  "_bootstrap.css": {
+    "file": "bootstrap.css",
+    "src": "_bootstrap.css"
+  },
+  "_bootstrap.js": {
+    "file": "bootstrap.js",
+    "name": "bootstrap",
+    "imports": [
+      "_rolldown-runtime.js"
+    ],
+    "css": [
+      "bootstrap.css"
+    ],
+    "assets": [
+      "bootstrap-icons.woff2",
+      "bootstrap-icons.woff"
+    ]
+  },
+  "_rolldown-runtime.js": {
+    "file": "rolldown-runtime.js",
+    "name": "rolldown-runtime"
+  },
+  "_vue.js": {
+    "file": "vue.js",
+    "name": "vue",
+    "imports": [
+      "_rolldown-runtime.js"
+    ]
+  },
+  "_xterm.css": {
+    "file": "xterm.css",
+    "src": "_xterm.css"
+  },
+  "_xterm.js": {
+    "file": "xterm.js",
+    "name": "xterm",
+    "imports": [
+      "_rolldown-runtime.js"
+    ],
+    "css": [
+      "xterm.css"
+    ]
+  },
+  "node_modules/.pnpm/bootstrap-icons@1.13.1/node_modules/bootstrap-icons/font/fonts/bootstrap-icons.woff": {
+    "file": "bootstrap-icons.woff",
+    "src": "node_modules/.pnpm/bootstrap-icons@1.13.1/node_modules/bootstrap-icons/font/fonts/bootstrap-icons.woff"
+  },
+  "node_modules/.pnpm/bootstrap-icons@1.13.1/node_modules/bootstrap-icons/font/fonts/bootstrap-icons.woff2": {
+    "file": "bootstrap-icons.woff2",
+    "src": "node_modules/.pnpm/bootstrap-icons@1.13.1/node_modules/bootstrap-icons/font/fonts/bootstrap-icons.woff2"
+  },
+  "public/favicon.ico": {
+    "file": "favicon.ico",
+    "src": "public/favicon.ico"
+  },
+  "src/index.html": {
+    "file": "index.js",
+    "name": "index",
+    "src": "src/index.html",
+    "isEntry": true,
+    "imports": [
+      "_rolldown-runtime.js",
+      "_vue.js",
+      "_bootstrap.js"
+    ],
+    "dynamicImports": [
+      "src/views/index.vue"
+    ],
+    "css": [
+      "index.css"
+    ],
+    "assets": [
+      "favicon.ico"
+    ]
+  },
+  "src/views/index.vue": {
+    "file": "views.js",
+    "name": "views",
+    "src": "src/views/index.vue",
+    "isDynamicEntry": true,
+    "imports": [
+      "_rolldown-runtime.js",
+      "_vue.js",
+      "src/index.html",
+      "_xterm.js"
+    ],
+    "css": [
+      "views.css"
+    ]
+  }
+}
