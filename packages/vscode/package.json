@@ -1,0 +1,156 @@
+{
+  "name": "vscode-aicmd",
+  "displayName": "AICmd Terminal",
+  "description": "AI 驱动的 Web SSH 终端：SSH/本地终端、AI Agent、技能系统、命令审计、日志监控、批量操作与文件传输，全部在 VSCode 内运行。",
+  "version": "0.1.2",
+  "publisher": "fefeding",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fefeding/ai-cmd"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other",
+    "Terminal"
+  ],
+  "keywords": [
+    "ssh",
+    "terminal",
+    "ai",
+    "agent",
+    "remote"
+  ],
+  "icon": "resources/activity-icon.png",
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onView:aicmd.explorer",
+    "onCommand:aicmd.openTerminal",
+    "onCommand:aicmd.refresh"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aicmd",
+          "title": "AICmd",
+          "icon": "resources/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "aicmd": [
+        {
+          "id": "aicmd.explorer",
+          "name": "终端"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "aicmd.openTerminal",
+        "title": "打开终端",
+        "category": "AICmd",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "aicmd.refresh",
+        "title": "刷新连接",
+        "category": "AICmd",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "aicmd.addConnection",
+        "title": "新增连接",
+        "category": "AICmd",
+        "icon": "$(add)"
+      },
+      {
+        "command": "aicmd.editConnection",
+        "title": "编辑连接",
+        "category": "AICmd",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "aicmd.deleteConnection",
+        "title": "删除连接",
+        "category": "AICmd",
+        "icon": "$(trash)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "aicmd.addConnection",
+          "when": "view == aicmd.explorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "aicmd.refresh",
+          "when": "view == aicmd.explorer",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "aicmd.openTerminal",
+          "when": "view == aicmd.explorer && viewItem == connection",
+          "group": "inline"
+        },
+        {
+          "command": "aicmd.editConnection",
+          "when": "view == aicmd.explorer && viewItem == connection",
+          "group": "connection@1"
+        },
+        {
+          "command": "aicmd.deleteConnection",
+          "when": "view == aicmd.explorer && viewItem == connection",
+          "group": "connection@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "aicmd.openTerminal"
+        },
+        {
+          "command": "aicmd.editConnection",
+          "when": "false"
+        },
+        {
+          "command": "aicmd.deleteConnection",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "AICmd",
+      "properties": {
+        "aicmd.dataDir": {
+          "type": "string",
+          "default": "",
+          "description": "AICmd 的数据目录（连接配置 / 会话 / AI 配置 / 审计日志）。留空则复用桌面端 / CLI 的 ~/.aicmd，与独立运行的 fshell 共用同一份 connections.json 等文件。"
+        },
+        "aicmd.startPort": {
+          "type": "number",
+          "default": 9802,
+          "description": "VSCode 内启动 AICmd 服务时使用的起始端口（如被占用会自动向后寻找可用端口）。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "node esbuild.js --production",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "type-check": "tsc --noEmit",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "^1.75.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.23.1"
+  }
+}

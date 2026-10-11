@@ -245,7 +245,7 @@ defineExpose({ loadSessions });
 
 .batch-command {
   flex: 1;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bg-recess);
   border: 1px solid var(--border-color);
   color: var(--text-primary);
   padding: 6px 10px;
@@ -261,7 +261,7 @@ defineExpose({ loadSessions });
 .btn-batch {
   background: var(--accent);
   border: none;
-  color: white;
+  color: var(--accent-fg);
   padding: 6px 16px;
   border-radius: 4px;
   cursor: pointer;
@@ -299,7 +299,7 @@ defineExpose({ loadSessions });
   gap: 4px;
   margin-left: auto;
 }
-.btn-select-sessions:hover { background: rgba(255,255,255,0.05); color: var(--text-primary); }
+.btn-select-sessions:hover { background: rgb(var(--overlay-rgb) / 5%); color: var(--text-primary); }
 
 /* 服务器选择器 */
 .session-selector {
@@ -315,7 +315,7 @@ defineExpose({ loadSessions });
   padding: 6px 12px;
   font-size: 11px;
   color: var(--text-secondary);
-  border-bottom: 1px solid rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgb(var(--overlay-rgb) / 4%);
 }
 
 .selector-actions { display: flex; gap: 4px; }
@@ -340,15 +340,15 @@ defineExpose({ loadSessions });
   cursor: pointer;
   transition: background 0.12s;
 }
-.session-item:hover { background: rgba(255,255,255,0.04); }
-.session-item.selected { background: rgba(137, 180, 250, 0.08); }
+.session-item:hover { background: rgb(var(--overlay-rgb) / 4%); }
+.session-item.selected { background: rgb(var(--accent-rgb) / 8%); }
 .session-item i { font-size: 13px; color: var(--text-secondary); }
 .session-item.selected i { color: var(--accent); }
 .session-name { flex: 1; font-size: 12px; }
 .session-type {
   font-size: 10px;
   color: var(--text-secondary);
-  background: rgba(255,255,255,0.06);
+  background: rgb(var(--overlay-rgb) / 6%);
   padding: 1px 5px;
   border-radius: 3px;
 }
@@ -382,8 +382,8 @@ defineExpose({ loadSessions });
 }
 .results-title code {
   font-size: 11px;
-  color: #89b4fa;
-  background: rgba(0,0,0,0.2);
+  color: var(--accent);
+  background: var(--bg-recess);
   padding: 1px 6px;
   border-radius: 3px;
 }
@@ -392,9 +392,9 @@ defineExpose({ loadSessions });
   padding: 1px 6px;
   border-radius: 3px;
 }
-.status-completed { background: rgba(166, 227, 161, 0.15); color: #a6e3a1; }
-.status-running { background: rgba(250, 176, 5, 0.15); color: #fab387; }
-.status-failed { background: rgba(243, 139, 168, 0.15); color: #f38ba8; }
+.status-completed { background: rgb(var(--success-rgb) / 15%); color: var(--success); }
+.status-running { background: rgb(var(--warning-strong-rgb) / 15%); color: var(--warning-strong); }
+.status-failed { background: rgb(var(--danger-rgb) / 15%); color: var(--danger); }
 
 .results-summary {
   display: flex;
@@ -402,16 +402,16 @@ defineExpose({ loadSessions });
   font-size: 11px;
   color: var(--text-secondary);
 }
-.summary-success { color: #a6e3a1; }
-.summary-fail { color: #f38ba8; }
+.summary-success { color: var(--success); }
+.summary-fail { color: var(--danger); }
 
 .results-list { padding: 4px 0; }
 
 .result-item {
-  border-bottom: 1px solid rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgb(var(--overlay-rgb) / 4%);
   cursor: pointer;
 }
-.result-item:hover { background: rgba(255,255,255,0.03); }
+.result-item:hover { background: rgb(var(--overlay-rgb) / 3%); }
 
 .result-header {
   display: flex;
@@ -425,7 +425,7 @@ defineExpose({ loadSessions });
 
 .result-output {
   padding: 6px 12px 10px 32px;
-  background: rgba(0,0,0,0.15);
+  background: var(--bg-recess-soft);
 }
 .result-output pre {
   margin: 0;
@@ -453,10 +453,10 @@ defineExpose({ loadSessions });
   cursor: pointer;
   font-size: 10px;
 }
-.btn-copy:hover { background: rgba(255,255,255,0.05); color: var(--text-primary); }
+.btn-copy:hover { background: rgb(var(--overlay-rgb) / 5%); color: var(--text-primary); }
 
-.text-success { color: #a6e3a1; }
-.text-danger { color: #f38ba8; }
+.text-success { color: var(--success); }
+.text-danger { color: var(--danger); }
 
 /* 空状态 */
 .batch-empty {

@@ -1,0 +1,14 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: #1e1e1e;
+  overflow: hidden;
+}
+
+#terminal {
+  width: 100%;
+  height: 100%;
+  padding: 4px 8px;
+  box-sizing: border-box;
+}

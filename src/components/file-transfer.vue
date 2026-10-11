@@ -131,7 +131,7 @@
             class="form-control form-control-sm"
             v-model="remoteFilePath"
             :placeholder="t('fileTransfer.remotePathPlaceholder')"
-            style="background: #313244; border-color: #45475a; color: var(--text-primary);"
+            style="background: var(--bg-input); border-color: var(--border-strong); color: var(--text-primary);"
           >
           <button
             class="btn btn-primary btn-sm w-100 mt-2"
@@ -1001,8 +1001,8 @@ defineExpose({ show });
   bottom: 12px;
   right: 12px;
   width: 300px;
-  background: rgba(30, 30, 46, 0.96);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgb(var(--bg-dark-rgb) / 96%);
+  border: 1px solid rgb(var(--overlay-rgb) / 10%);
   border-radius: 10px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   z-index: 30;
@@ -1027,8 +1027,8 @@ defineExpose({ show });
   padding: 8px 10px;
   cursor: grab;
   user-select: none;
-  background: rgba(255, 255, 255, 0.04);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgb(var(--overlay-rgb) / 4%);
+  border-bottom: 1px solid rgb(var(--overlay-rgb) / 6%);
 }
 
 .ft-header:active {
@@ -1064,7 +1064,7 @@ defineExpose({ show });
 }
 
 .ft-btn-icon:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgb(var(--overlay-rgb) / 10%);
   color: var(--text-primary, #cdd6f4);
 }
 
@@ -1073,7 +1073,7 @@ defineExpose({ show });
 }
 
 .drop-zone {
-  border: 2px dashed #45475a;
+  border: 2px dashed var(--border-strong);
   border-radius: 6px;
   padding: 14px 10px;
   text-align: center;
@@ -1089,7 +1089,7 @@ defineExpose({ show });
 .drop-zone:hover,
 .drop-zone.dragging {
   border-color: var(--accent, #89b4fa);
-  background-color: rgba(137, 180, 250, 0.05);
+  background-color: rgb(var(--accent-rgb) / 5%);
   color: var(--text-primary, #cdd6f4);
 }
 
@@ -1101,7 +1101,7 @@ defineExpose({ show });
 .transfer-item {
   padding: 6px 8px;
   border-radius: 4px;
-  background-color: rgba(255, 255, 255, 0.03);
+  background-color: rgb(var(--overlay-rgb) / 3%);
   margin-bottom: 4px;
 }
 </style>

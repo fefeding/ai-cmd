@@ -5,6 +5,7 @@
     :closeButton="{ text: t('common.cancel'), show: false }"
     :confirmButton="{ text: '', show: false }"
     :dialogStyle="{ maxWidth: '700px', width: '100%' }"
+    :embedded="embedded"
     @onClose="handleModalClose"
   >
     <form @submit.prevent="saveConnection" class="connection-form">
@@ -167,7 +168,7 @@
           {{ testing ? t('connection.testing') : t('connection.testConnection') }}
         </button>
         <div>
-          <button type="button" class="btn btn-secondary me-2" @click="close">{{ t('common.cancel') }}</button>
+          <button type="button" class="btn btn-secondary me-2" @click="cancel">{{ t('common.cancel') }}</button>
           <button type="submit" class="btn btn-primary" :disabled="saving">
             <span v-if="saving" class="spinner-border spinner-border-sm me-1"></span>
             {{ saving ? t('connection.saving') : t('common.save') }}
@@ -186,6 +187,10 @@ import { ConnectionService } from '@/service/connection';
 import { toast } from '@/utils/toast';
 
 const { t } = useI18n();
+
+const props = defineProps({
+  embedded: { type: Boolean, default: false },
+});
 
 const connectionModal = ref();
 const editingConnection = ref<string | null>(null);
@@ -254,10 +259,19 @@ function open(connection?: any) {
     keepaliveInterval.value = 10000;
     keepaliveCountMax.value = 3;
   }
-  connectionModal.value?.show();
+  if (!props.embedded) connectionModal.value?.show();
 }
 
 function close() {
+  if (!props.embedded) connectionModal.value?.hide();
+}
+
+// 取消 / 关闭：内嵌模式需通知宿主关闭面板
+function cancel() {
+  if (props.embedded) {
+    emit('close');
+    return;
+  }
   connectionModal.value?.hide();
 }
 
@@ -348,7 +362,7 @@ async function loadPrivateKey() {
   }, 0);
 }
 
-const emit = defineEmits(['saved']);
+const emit = defineEmits(['saved', 'close']);
 
 defineExpose({ open, close });
 </script>

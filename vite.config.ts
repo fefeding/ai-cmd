@@ -105,6 +105,28 @@ const config = defineConfig({
                     html = html.replace(/\.\.\/([a-zA-Z0-9_-]+\.(js|css|woff|woff2|png|jpg|jpeg|gif|svg|ico))/g, '/public/$1');
                     fs.writeFileSync(htmlPath, html);
                 }
+                // 纯终端页（VSCode 扩展 WebView 用）：留在 src/ 下被静态服务，
+                // 仅重写 ../ 资源引用为 /public/ 绝对路径
+                const termHtmlPath = path.join(publicDir, 'src/term.html');
+                if (fs.existsSync(termHtmlPath)) {
+                    let termHtml = fs.readFileSync(termHtmlPath, 'utf-8');
+                    termHtml = termHtml.replace(/\.\.\/([a-zA-Z0-9_-]+\.(js|css|woff|woff2|png|jpg|jpeg|gif|svg|ico))/g, '/public/$1');
+                    fs.writeFileSync(termHtmlPath, termHtml);
+                }
+                // VSCode 扩展 WebView 专用终端页（复用 TerminalTab，含 AI 对话 / 文件浏览）
+                const vscodeHtmlPath = path.join(publicDir, 'src/vscode-term.html');
+                if (fs.existsSync(vscodeHtmlPath)) {
+                    let vscodeHtml = fs.readFileSync(vscodeHtmlPath, 'utf-8');
+                    vscodeHtml = vscodeHtml.replace(/\.\.\/([a-zA-Z0-9_-]+\.(js|css|woff|woff2|png|jpg|jpeg|gif|svg|ico))/g, '/public/$1');
+                    fs.writeFileSync(vscodeHtmlPath, vscodeHtml);
+                }
+                // VSCode 扩展「新增 / 编辑连接」专用页（复用 ConnectionEditor）
+                const vscodeEditHtmlPath = path.join(publicDir, 'src/vscode-edit.html');
+                if (fs.existsSync(vscodeEditHtmlPath)) {
+                    let vscodeEditHtml = fs.readFileSync(vscodeEditHtmlPath, 'utf-8');
+                    vscodeEditHtml = vscodeEditHtml.replace(/\.\.\/([a-zA-Z0-9_-]+\.(js|css|woff|woff2|png|jpg|jpeg|gif|svg|ico))/g, '/public/$1');
+                    fs.writeFileSync(vscodeEditHtmlPath, vscodeEditHtml);
+                }
                 const viewHtmlPath = path.join(publicDir, 'src/index.html');
                 const destViewDir = path.resolve(__dirname, './dist/view');
                 const destViewHtmlPath = path.join(destViewDir, 'index.html');

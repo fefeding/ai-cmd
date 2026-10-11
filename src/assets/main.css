@@ -1,36 +1,80 @@
 /* AICmd 主样式 */
 
 [data-bs-theme="dark"] {
-  --bs-body-bg: #1e1e2e;
-  --bs-body-color: #cdd6f4;
-  --bs-primary: #89b4fa;
-  --bs-secondary: #a6adc8;
-  --bs-border-color: #313244;
-  --bs-card-bg: #181825;
-  --bs-card-cap-bg: #11111b;
-  --bs-modal-bg: #181825;
-  --bs-modal-border-color: #313244;
-  --bs-form-control-bg: #313244;
-  --bs-form-control-color: #cdd6f4;
-  --bs-form-control-border-color: #45475a;
+  --bs-body-bg: var(--bg-dark);
+  --bs-body-color: var(--text-primary);
+  --bs-primary: var(--accent);
+  --bs-secondary: var(--text-secondary);
+  --bs-border-color: var(--border-color);
+  --bs-card-bg: var(--bg-sidebar);
+  --bs-card-cap-bg: var(--bg-toolbar);
+  --bs-modal-bg: var(--bg-sidebar);
+  --bs-modal-border-color: var(--border-color);
+  --bs-form-control-bg: var(--bg-input);
+  --bs-form-control-color: var(--text-primary);
+  --bs-form-control-border-color: var(--border-strong);
 }
 
+/*
+ * 应用语义色板。默认值为 Catppuccin Mocha（桌面端 / 浏览器外观不变）。
+ * 在 VSCode 扩展 WebView 中，src/utils/vscode-theme.ts 会用 VSCode 主题色
+ * 覆盖这些变量（含 --*-rgb 三元组，供 rgb(var(--x-rgb) / 10%) 半透明色使用）。
+ */
 :root {
   --sidebar-width: 280px;
   --sidebar-collapsed-width: 0px;
   --toolbar-height: 40px;
   --tab-bar-height: 38px;
+
+  /* 表面 */
   --bg-dark: #1e1e2e;
   --bg-sidebar: #181825;
   --bg-toolbar: #11111b;
+  --bg-input: #313244;
+  --bg-menu: #2b2d3e;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  /* 内凹表面：代码块 / 日志区 / 工具栏等 */
+  --bg-recess-soft: rgba(0, 0, 0, 0.15);
+  --bg-recess: rgba(0, 0, 0, 0.2);
+  --bg-recess-strong: rgba(0, 0, 0, 0.3);
+
+  /* 文本 */
   --text-primary: #cdd6f4;
   --text-secondary: #a6adc8;
+  --text-muted: #6c7086;
+
+  /* 线条 */
+  --border-color: #313244;
+  --border-strong: #45475a;
+  --scrollbar-thumb: #45475a;
+  --scrollbar-thumb-hover: #585b70;
+
+  /* 强调色 */
   --accent: #89b4fa;
   --accent-hover: #74c7ec;
-  --border-color: #313244;
+  --accent-fg: #ffffff;
   --danger: #f38ba8;
   --success: #a6e3a1;
   --warning: #f9e2af;
+  --warning-strong: #fab387;
+  --info: #2196f3;
+
+  /* 半透明叠加基准：暗色主题用白色提亮，亮色主题由 JS 改为黑色压暗 */
+  --overlay-rgb: 255 255 255;
+
+  /* 颜色三元组（供 rgb(var(--x-rgb) / α) 语法使用） */
+  --bg-dark-rgb: 30 30 46;
+  --bg-sidebar-rgb: 24 24 37;
+  --bg-toolbar-rgb: 17 17 27;
+  --bg-input-rgb: 49 50 68;
+  --bg-menu-rgb: 43 45 62;
+  --border-color-rgb: 49 50 68;
+  --border-strong-rgb: 69 71 90;
+  --accent-rgb: 137 180 250;
+  --danger-rgb: 243 139 168;
+  --success-rgb: 166 227 161;
+  --warning-rgb: 249 226 175;
+  --warning-strong-rgb: 250 179 135;
 }
 
 * {
@@ -53,12 +97,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #45475a;
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #585b70;
+  background: var(--scrollbar-thumb-hover);
 }
 
 /* 终端容器 */
@@ -93,11 +137,11 @@ body {
 }
 
 .sidebar .connection-item:hover {
-  background-color: rgba(137, 180, 250, 0.1);
+  background-color: rgb(var(--accent-rgb) / 10%);
 }
 
 .sidebar .connection-item.active {
-  background-color: rgba(137, 180, 250, 0.15);
+  background-color: rgb(var(--accent-rgb) / 15%);
 }
 
 /* Tab 栏 */
@@ -126,7 +170,7 @@ body {
 }
 
 .tab-bar .tab-item:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: rgb(var(--overlay-rgb) / 5%);
 }
 
 .tab-bar .tab-item.active {
@@ -148,7 +192,7 @@ body {
 }
 
 .tab-bar .tab-item .tab-close:hover {
-  background-color: rgba(243, 139, 168, 0.3);
+  background-color: rgb(var(--danger-rgb) / 30%);
   color: var(--danger);
 }
 
@@ -192,24 +236,24 @@ body {
 }
 
 .toolbar .btn-toolbar:hover {
-  background-color: rgba(255, 255, 255, 0.08);
+  background-color: rgb(var(--overlay-rgb) / 8%);
   color: var(--text-primary);
 }
 
 /* 连接表单 */
 .connection-form .form-control,
 .connection-form .form-select {
-  background-color: #313244;
-  border-color: #45475a;
+  background-color: var(--bg-input);
+  border-color: var(--border-strong);
   color: var(--text-primary);
 }
 
 .connection-form .form-control:focus,
 .connection-form .form-select:focus {
-  background-color: #313244;
+  background-color: var(--bg-input);
   border-color: var(--accent);
   color: var(--text-primary);
-  box-shadow: 0 0 0 0.15rem rgba(137, 180, 250, 0.25);
+  box-shadow: 0 0 0 0.15rem rgb(var(--accent-rgb) / 25%);
 }
 
 /* 空状态 */
@@ -290,7 +334,7 @@ body {
 
 .btn-outline-secondary:hover {
   color: var(--text-primary);
-  background-color: rgba(255, 255, 255, 0.08);
+  background-color: rgb(var(--overlay-rgb) / 8%);
   border-color: var(--text-secondary);
 }
 
@@ -305,7 +349,7 @@ body {
 }
 
 .dropdown-item:hover {
-  background-color: rgba(137, 180, 250, 0.1);
+  background-color: rgb(var(--accent-rgb) / 10%);
   color: var(--text-primary);
 }
 
@@ -334,21 +378,21 @@ body {
 /* 表单元素 */
 .form-control,
 .form-select {
-  background-color: #313244;
-  border-color: #45475a;
+  background-color: var(--bg-input);
+  border-color: var(--border-strong);
   color: var(--text-primary);
 }
 
 .form-control:focus,
 .form-select:focus {
-  background-color: #313244;
+  background-color: var(--bg-input);
   border-color: var(--accent);
   color: var(--text-primary);
-  box-shadow: 0 0 0 0.15rem rgba(137, 180, 250, 0.25);
+  box-shadow: 0 0 0 0.15rem rgb(var(--accent-rgb) / 25%);
 }
 
 .form-control::placeholder {
-  color: #6c7086;
+  color: var(--text-muted);
 }
 
 /* input group */

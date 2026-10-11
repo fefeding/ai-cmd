@@ -174,6 +174,23 @@ git push origin v0.1.6
 
 Or trigger manually from the **Actions** tab with platform selection.
 
+### VSCode Extension
+
+AICmd also ships as a VSCode extension that runs the **same** backend and front-end inside the editor — no separate install needed. It launches `server.js` as a child process (bound to `127.0.0.1`) and loads the SPA through a same-origin WebView iframe, so all features (SSH/local terminal, AI Agent, skills, audit, log monitoring, batch ops, file transfer) work in-editor. Connection data is shared with the desktop/CLI via `~/.aicmd/connections.json`.
+
+- **Install / build from source**: see [`packages/vscode/README.md`](./packages/vscode/README.md) for detailed setup, usage, settings, and packaging instructions.
+- **Quick dev loop**:
+
+```bash
+pnpm build:vscode      # build front-end + backend + extension host
+cd packages/vscode && npm run watch   # continuous extension rebuild
+# then press F5 in VSCode to launch the Extension Development Host
+```
+
+- **Package**: `pnpm build:vscode && cd packages/vscode && vsce package` produces a `.vsix`.
+- **Key settings**: `aicmd.dataDir` (data directory, default `~/.aicmd`), `aicmd.startPort` (starting port, default `9802`).
+- **Commands**: `AICmd: 打开终端` (open terminal), plus connection add / edit / delete / refresh in the Activity Bar's **AICmd → Terminal** view.
+
 ## AI Usage Examples
 
 ### Natural Language Operations

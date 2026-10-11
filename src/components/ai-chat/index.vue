@@ -748,7 +748,7 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   justify-content: space-between;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-color);
-  background: rgba(49, 50, 68, 0.5);
+  background: rgb(var(--bg-input-rgb) / 50%);
 }
 
 .btn-ai-action {
@@ -762,11 +762,11 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   transition: all 0.15s;
 }
 .btn-ai-action:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgb(var(--overlay-rgb) / 10%);
   color: var(--text-primary);
 }
-.btn-ai-action.btn-stop { color: #f38ba8; }
-.btn-ai-action.btn-stop:hover { color: #f38ba8; background: rgba(243, 139, 168, 0.1); }
+.btn-ai-action.btn-stop { color: var(--danger); }
+.btn-ai-action.btn-stop:hover { color: var(--danger); background: rgb(var(--danger-rgb) / 10%); }
 
 .ai-chat-messages {
   flex: 1;
@@ -805,8 +805,8 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   flex-shrink: 0;
   font-size: 16px;
 }
-.ai-message.user .ai-message-avatar { background: var(--accent); color: white; }
-.ai-message.assistant .ai-message-avatar { background: rgba(166, 227, 161, 0.2); color: #a6e3a1; }
+.ai-message.user .ai-message-avatar { background: var(--accent); color: var(--accent-fg); }
+.ai-message.assistant .ai-message-avatar { background: rgb(var(--success-rgb) / 20%); color: var(--success); }
 
 .ai-message-content {
   max-width: calc(100% - 48px);
@@ -817,17 +817,17 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
 }
 .ai-message.user .ai-message-content {
   background: var(--accent);
-  color: white;
+  color: var(--accent-fg);
   border-top-right-radius: 4px;
 }
 .ai-message.assistant .ai-message-content {
-  background: rgba(69, 71, 90, 0.5);
+  background: rgb(var(--border-strong-rgb) / 50%);
   color: var(--text-primary);
   border-top-left-radius: 4px;
 }
 
 .ai-message-text :deep(.code-block) {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bg-recess-strong);
   border-radius: 6px;
   padding: 12px;
   margin: 8px 0;
@@ -836,7 +836,7 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   font-size: 12px;
 }
 .ai-message-text :deep(.inline-code) {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bg-recess-strong);
   padding: 2px 6px;
   border-radius: 4px;
   font-family: 'JetBrains Mono', monospace;
@@ -852,17 +852,17 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
 }
 .ai-message-text :deep(.md-table th),
 .ai-message-text :deep(.md-table td) {
-  border: 1px solid rgba(255,255,255,0.1);
+  border: 1px solid rgb(var(--overlay-rgb) / 10%);
   padding: 5px 8px;
   text-align: left;
 }
 .ai-message-text :deep(.md-table th) {
-  background: rgba(0,0,0,0.2);
+  background: var(--bg-recess);
   font-weight: 600;
-  color: #89b4fa;
+  color: var(--accent);
 }
 .ai-message-text :deep(.md-table tr:nth-child(even)) {
-  background: rgba(255,255,255,0.02);
+  background: rgb(var(--overlay-rgb) / 2%);
 }
 
 /* Markdown 标题 */
@@ -882,7 +882,7 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
 
 /* 链接 */
 .ai-message-text :deep(a) {
-  color: #89b4fa;
+  color: var(--accent);
   text-decoration: none;
 }
 .ai-message-text :deep(a:hover) {
@@ -907,14 +907,14 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  background: rgba(250, 176, 5, 0.08);
+  background: rgb(var(--warning-strong-rgb) / 8%);
   border-radius: 4px;
-  color: #fab387;
+  color: var(--warning-strong);
 }
 .thinking-step .step-label { font-size: 11px; }
 
 .tool-call-step {
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--bg-recess-soft);
   border-radius: 4px;
   overflow: hidden;
 }
@@ -927,13 +927,13 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   cursor: pointer;
   transition: background 0.15s;
 }
-.step-header:hover { background: rgba(255, 255, 255, 0.04); }
+.step-header:hover { background: rgb(var(--overlay-rgb) / 4%); }
 
 .step-chevron { color: var(--text-secondary); font-size: 10px; width: 10px; }
-.step-icon { color: #a6e3a1; font-size: 11px; }
+.step-icon { color: var(--success); font-size: 11px; }
 .step-label { color: var(--text-secondary); font-size: 11px; white-space: nowrap; }
 .step-cmd {
-  color: #89b4fa;
+  color: var(--accent);
   font-family: 'JetBrains Mono', monospace;
   font-size: 11px;
   overflow: hidden;
@@ -943,13 +943,13 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
 }
 .step-status {
   font-size: 11px;
-  color: #a6e3a1;
+  color: var(--success);
   flex-shrink: 0;
   margin-left: auto;
 }
 
 .step-result {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid rgb(var(--overlay-rgb) / 6%);
   padding: 6px 8px;
   max-height: 150px;
   overflow-y: auto;
@@ -970,7 +970,7 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
 .ai-loading span {
   width: 6px;
   height: 6px;
-  background: #fab387;
+  background: var(--warning-strong);
   border-radius: 50%;
   animation: bounce 1.4s infinite ease-in-out both;
 }
@@ -988,11 +988,11 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   gap: 8px;
   padding: 12px 16px;
   border-top: 1px solid var(--border-color);
-  background: rgba(49, 50, 68, 0.3);
+  background: rgb(var(--bg-input-rgb) / 30%);
 }
 .ai-chat-input textarea {
   flex: 1;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bg-recess);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 10px 14px;
@@ -1013,7 +1013,7 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   border: none;
   border-radius: 8px;
   background: var(--accent);
-  color: white;
+  color: var(--accent-fg);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1022,7 +1022,7 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   transition: all 0.15s;
   flex-shrink: 0;
 }
-.btn-send:hover:not(:disabled) { background: #7aa2f7; }
+.btn-send:hover:not(:disabled) { background: var(--accent-hover); }
 .btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* Skills 按钮 */
@@ -1031,7 +1031,7 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   height: 36px;
   border: none;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgb(var(--overlay-rgb) / 5%);
   color: var(--text-secondary);
   cursor: pointer;
   display: flex;
@@ -1041,13 +1041,13 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   transition: all 0.15s;
   flex-shrink: 0;
 }
-.btn-skill-toggle:hover { background: rgba(255, 255, 255, 0.1); color: #f9e2af; }
-.btn-skill-toggle.active { color: #f9e2af; background: rgba(249, 226, 175, 0.1); }
+.btn-skill-toggle:hover { background: rgb(var(--overlay-rgb) / 10%); color: var(--warning); }
+.btn-skill-toggle.active { color: var(--warning); background: rgb(var(--warning-rgb) / 10%); }
 
 /* Skills 面板 */
 .skills-panel {
   border-top: 1px solid var(--border-color);
-  background: rgba(30, 30, 46, 0.95);
+  background: rgb(var(--bg-dark-rgb) / 95%);
   max-height: 200px;
   overflow-y: auto;
 }
@@ -1058,7 +1058,7 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   padding: 8px 16px;
   font-size: 12px;
   color: var(--text-secondary);
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid rgb(var(--overlay-rgb) / 5%);
 }
 .skills-grid {
   display: flex;
@@ -1072,8 +1072,8 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   cursor: pointer;
   transition: background 0.12s;
 }
-.skill-item:hover { background: rgba(255,255,255,0.06); }
-.skill-item.active { background: rgba(249, 226, 175, 0.1); border: 1px solid rgba(249, 226, 175, 0.2); }
+.skill-item:hover { background: rgb(var(--overlay-rgb) / 6%); }
+.skill-item.active { background: rgb(var(--warning-rgb) / 10%); border: 1px solid rgb(var(--warning-rgb) / 20%); }
 .skill-item-header {
   display: flex;
   align-items: center;
@@ -1081,12 +1081,12 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   font-size: 12px;
   color: var(--text-primary);
 }
-.skill-item-header i { color: #f9e2af; font-size: 12px; }
+.skill-item-header i { color: var(--warning); font-size: 12px; }
 .skill-name { font-weight: 500; }
 .skill-source {
   font-size: 10px;
   color: var(--text-secondary);
-  background: rgba(255,255,255,0.06);
+  background: rgb(var(--overlay-rgb) / 6%);
   padding: 1px 5px;
   border-radius: 4px;
   margin-left: auto;
@@ -1110,24 +1110,24 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
 /* 已选 Skill 栏 */
 .selected-skill-bar {
   padding: 4px 16px 0;
-  background: rgba(49, 50, 68, 0.3);
+  background: rgb(var(--bg-input-rgb) / 30%);
 }
 .selected-skill-tag {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   padding: 3px 8px 3px 10px;
-  background: rgba(249, 226, 175, 0.12);
-  border: 1px solid rgba(249, 226, 175, 0.25);
+  background: rgb(var(--warning-rgb) / 12%);
+  border: 1px solid rgb(var(--warning-rgb) / 25%);
   border-radius: 12px;
   font-size: 12px;
-  color: #f9e2af;
+  color: var(--warning);
 }
 .selected-skill-tag i { font-size: 11px; }
 .skill-remove {
   background: none;
   border: none;
-  color: rgba(249, 226, 175, 0.6);
+  color: rgb(var(--warning-rgb) / 60%);
   cursor: pointer;
   padding: 0 2px;
   font-size: 13px;
@@ -1135,7 +1135,7 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   display: flex;
   align-items: center;
 }
-.skill-remove:hover { color: #f9e2af; }
+.skill-remove:hover { color: var(--warning); }
 
 /* Skill 徽章在用户消息中 */
 .skill-badge {
@@ -1149,12 +1149,12 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   margin-bottom: 6px;
   color: rgba(255,255,255,0.9);
 }
-.skill-badge i { font-size: 10px; color: #f9e2af; }
+.skill-badge i { font-size: 10px; color: var(--warning); }
 
 /* 历史对话面板 */
 .history-panel {
   border-top: 1px solid var(--border-color);
-  background: rgba(30, 30, 46, 0.95);
+  background: rgb(var(--bg-dark-rgb) / 95%);
   max-height: 240px;
   overflow-y: auto;
 }
@@ -1165,7 +1165,7 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   padding: 8px 16px;
   font-size: 12px;
   color: var(--text-secondary);
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  border-bottom: 1px solid rgb(var(--overlay-rgb) / 5%);
 }
 .history-list {
   display: flex;
@@ -1176,9 +1176,9 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   padding: 8px 16px;
   cursor: pointer;
   transition: background 0.12s;
-  border-bottom: 1px solid rgba(255,255,255,0.03);
+  border-bottom: 1px solid rgb(var(--overlay-rgb) / 3%);
 }
-.history-item:hover { background: rgba(255,255,255,0.06); }
+.history-item:hover { background: rgb(var(--overlay-rgb) / 6%); }
 .history-item:last-child { border-bottom: none; }
 .history-item-top {
   display: flex;
@@ -1204,7 +1204,7 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
 }
 .history-meta {
   font-size: 10px;
-  color: rgba(255,255,255,0.3);
+  color: var(--text-muted);
   margin-top: 2px;
 }
 .history-empty {
@@ -1215,15 +1215,15 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
 }
 
 .btn-ai-action.active {
-  color: #89b4fa;
-  background: rgba(137, 180, 250, 0.1);
+  color: var(--accent);
+  background: rgb(var(--accent-rgb) / 10%);
 }
 
 /* Tab 切换栏 */
 .ai-tab-bar {
   display: flex;
   gap: 2px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bg-recess);
   border-radius: 6px;
   padding: 2px;
 }
@@ -1243,7 +1243,7 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
 }
 .ai-tab:hover { color: var(--text-primary); }
 .ai-tab.active {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgb(var(--overlay-rgb) / 10%);
   color: var(--text-primary);
 }
 .ai-tab i { font-size: 12px; }
@@ -1258,11 +1258,11 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
 
 /* 系统信息消息 */
 .ai-message.system-info .ai-message-avatar i {
-  color: #89b4fa;
+  color: var(--accent);
 }
 .ai-message.system-info .ai-message-content {
-  background: rgba(137, 180, 250, 0.06);
-  border: 1px solid rgba(137, 180, 250, 0.15);
+  background: rgb(var(--accent-rgb) / 6%);
+  border: 1px solid rgb(var(--accent-rgb) / 15%);
 }
 .ai-message.system-info .ai-message-text {
   font-size: 11px;

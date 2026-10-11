@@ -308,7 +308,7 @@ defineExpose({ handleMonitorEvent, stopMonitoring });
 
 .monitor-input {
   flex: 1;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bg-recess);
   border: 1px solid var(--border-color);
   color: var(--text-primary);
   padding: 5px 10px;
@@ -321,7 +321,7 @@ defineExpose({ handleMonitorEvent, stopMonitoring });
 .monitor-input:disabled { opacity: 0.6; }
 
 .btn-monitor {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgb(var(--overlay-rgb) / 6%);
   border: 1px solid var(--border-color);
   color: var(--text-primary);
   padding: 5px 12px;
@@ -334,11 +334,11 @@ defineExpose({ handleMonitorEvent, stopMonitoring });
   white-space: nowrap;
   transition: all 0.15s;
 }
-.btn-monitor:hover:not(:disabled) { background: rgba(255, 255, 255, 0.1); }
-.btn-monitor.active { background: rgba(243, 139, 168, 0.15); border-color: #f38ba8; color: #f38ba8; }
+.btn-monitor:hover:not(:disabled) { background: rgb(var(--overlay-rgb) / 10%); }
+.btn-monitor.active { background: rgb(var(--danger-rgb) / 15%); border-color: var(--danger); color: var(--danger); }
 .btn-monitor:disabled { opacity: 0.4; cursor: not-allowed; }
-.btn-analyze { border-color: #89b4fa; color: #89b4fa; }
-.btn-analyze:hover:not(:disabled) { background: rgba(137, 180, 250, 0.1); }
+.btn-analyze { border-color: var(--accent); color: var(--accent); }
+.btn-analyze:hover:not(:disabled) { background: rgb(var(--accent-rgb) / 10%); }
 
 .monitor-status {
   display: flex;
@@ -348,16 +348,16 @@ defineExpose({ handleMonitorEvent, stopMonitoring });
   font-size: 11px;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-color);
-  background: rgba(0, 0, 0, 0.1);
+  background: var(--bg-recess-soft);
 }
 .status-indicator {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #666;
+  background: var(--text-muted);
 }
 .status-indicator.active {
-  background: #a6e3a1;
+  background: var(--success);
   animation: pulse 2s infinite;
 }
 @keyframes pulse {
@@ -369,7 +369,7 @@ defineExpose({ handleMonitorEvent, stopMonitoring });
 /* 告警面板 */
 .monitor-alerts {
   border-bottom: 1px solid var(--border-color);
-  background: rgba(243, 139, 168, 0.04);
+  background: rgb(var(--danger-rgb) / 4%);
 }
 .alerts-header {
   display: flex;
@@ -378,10 +378,10 @@ defineExpose({ handleMonitorEvent, stopMonitoring });
   padding: 6px 12px;
   cursor: pointer;
   font-size: 12px;
-  color: #f38ba8;
+  color: var(--danger);
   transition: background 0.15s;
 }
-.alerts-header:hover { background: rgba(255, 255, 255, 0.03); }
+.alerts-header:hover { background: rgb(var(--overlay-rgb) / 3%); }
 .alert-icon { font-size: 12px; }
 .btn-clear-alerts {
   background: none;
@@ -400,11 +400,11 @@ defineExpose({ handleMonitorEvent, stopMonitoring });
 }
 .alert-item {
   padding: 6px 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-top: 1px solid rgb(var(--overlay-rgb) / 4%);
 }
-.alert-item.level-critical { border-left: 3px solid #f38ba8; }
-.alert-item.level-error { border-left: 3px solid #fab387; }
-.alert-item.level-warning { border-left: 3px solid #f9e2af; }
+.alert-item.level-critical { border-left: 3px solid var(--danger); }
+.alert-item.level-error { border-left: 3px solid var(--warning-strong); }
+.alert-item.level-warning { border-left: 3px solid var(--warning); }
 
 .alert-header {
   display: flex;
@@ -418,9 +418,9 @@ defineExpose({ handleMonitorEvent, stopMonitoring });
   padding: 1px 5px;
   border-radius: 3px;
 }
-.level-critical .alert-level { background: rgba(243, 139, 168, 0.2); color: #f38ba8; }
-.level-error .alert-level { background: rgba(250, 179, 135, 0.2); color: #fab387; }
-.level-warning .alert-level { background: rgba(249, 226, 175, 0.2); color: #f9e2af; }
+.level-critical .alert-level { background: rgb(var(--danger-rgb) / 20%); color: var(--danger); }
+.level-error .alert-level { background: rgb(var(--warning-strong-rgb) / 20%); color: var(--warning-strong); }
+.level-warning .alert-level { background: rgb(var(--warning-rgb) / 20%); color: var(--warning); }
 .alert-time { font-size: 10px; color: var(--text-secondary); }
 .alert-message {
   font-size: 11px;
@@ -433,17 +433,17 @@ defineExpose({ handleMonitorEvent, stopMonitoring });
 .alert-analysis {
   margin-top: 4px;
   padding: 4px 8px;
-  background: rgba(137, 180, 250, 0.06);
+  background: rgb(var(--accent-rgb) / 6%);
   border-radius: 4px;
   font-size: 11px;
   color: var(--text-secondary);
 }
-.alert-analysis i { color: #89b4fa; margin-right: 4px; }
+.alert-analysis i { color: var(--accent); margin-right: 4px; }
 
 /* AI 分析结果 */
 .monitor-analysis {
   border-bottom: 1px solid var(--border-color);
-  background: rgba(137, 180, 250, 0.04);
+  background: rgb(var(--accent-rgb) / 4%);
   max-height: 200px;
   overflow-y: auto;
 }
@@ -453,8 +453,8 @@ defineExpose({ handleMonitorEvent, stopMonitoring });
   gap: 6px;
   padding: 6px 12px;
   font-size: 12px;
-  color: #89b4fa;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  color: var(--accent);
+  border-bottom: 1px solid rgb(var(--overlay-rgb) / 4%);
 }
 .analysis-content {
   padding: 8px 12px;
@@ -463,7 +463,7 @@ defineExpose({ handleMonitorEvent, stopMonitoring });
   color: var(--text-secondary);
 }
 .analysis-content :deep(.code-block) {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bg-recess-strong);
   border-radius: 4px;
   padding: 8px;
   margin: 4px 0;
@@ -471,7 +471,7 @@ defineExpose({ handleMonitorEvent, stopMonitoring });
   font-size: 11px;
 }
 .analysis-content :deep(.inline-code) {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--bg-recess-strong);
   padding: 1px 4px;
   border-radius: 3px;
   font-family: 'JetBrains Mono', monospace;
@@ -503,8 +503,8 @@ defineExpose({ handleMonitorEvent, stopMonitoring });
   word-break: break-all;
   color: var(--text-secondary);
 }
-.log-line:hover { background: rgba(255, 255, 255, 0.03); }
-.log-line.line-error { color: #f38ba8; background: rgba(243, 139, 168, 0.05); }
-.log-line.line-warning { color: #f9e2af; background: rgba(249, 226, 175, 0.03); }
+.log-line:hover { background: rgb(var(--overlay-rgb) / 3%); }
+.log-line.line-error { color: var(--danger); background: rgb(var(--danger-rgb) / 5%); }
+.log-line.line-warning { color: var(--warning); background: rgb(var(--warning-rgb) / 3%); }
 .log-line.line-debug { color: var(--text-secondary); opacity: 0.6; }
 </style>

@@ -102,6 +102,20 @@ app.use((req, res, next) => {
   next();
 });
 
+// 健康检查端点：供 VSCode 扩展探活。若设置了启动令牌，则必须携带正确 token，
+// 避免端口被其它无关进程占用时被误判为服务已就绪。
+app.get('/health', (req, res) => {
+  const tok = process.env.AICMD_LAUNCH_TOKEN;
+  if (tok) {
+    const q = new URL(req.url, `http://${req.headers.host || 'localhost'}`).searchParams.get('token');
+    if (q !== tok) {
+      res.status(401).json({ ok: false });
+      return;
+    }
+  }
+  res.json({ ok: true });
+});
+
 // HTTP 文件上传端点（绕过 WebSocket，支持大文件）
 app.post('/api/file-upload', async (req, res) => {
   const sessionId = req.headers['x-session-id'];
@@ -643,17 +657,18 @@ for (let i = 0; i < process.argv.length; i++) {
   }
 }
 
-// PID 文件路径（统一使用数据目录）
-const pidFilePath = getDataPath('aicmd.server.pid');
+// 启动服务器
+const PORT = portFromArgs || process.env.PORT || 9802;
+const HOST = process.env.HOST || process.env.AICMD_HOST || '127.0.0.1';
+
+// PID 文件路径：按端口区分，避免多实例（桌面端 / CLI / 多个 VSCode 窗口）互相覆盖
+// （多个进程监听不同端口，共用同一数据目录时，同名 PID 文件会导致 stop 杀错对象）
+const pidFilePath = getDataPath('aicmd.server.' + PORT + '.pid');
 
 // 进程退出时清理 PID 文件
 function cleanupPid() {
   try { if (fs.existsSync(pidFilePath)) fs.unlinkSync(pidFilePath); } catch {}
 }
-
-// 启动服务器
-const PORT = portFromArgs || process.env.PORT || 9802;
-const HOST = process.env.HOST || process.env.AICMD_HOST || '127.0.0.1';
 server.listen(PORT, HOST, () => {
   fs.writeFileSync(pidFilePath, process.pid.toString());
   console.log(`PID ${process.pid} written to ${pidFilePath}`);

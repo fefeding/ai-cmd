@@ -1,15 +1,15 @@
 <template>
-    <div class="modal fade" :id="modalId" ref="modalContainer" tabindex="-1" aria-labelledby="modalLabel">
-        <div class="modal-dialog modal-dialog-centered" :class="{'modal-fullscreen': isFullScreen}" :style="dialogStyle">
+    <div :class="embedded ? 'connection-editor-embed' : 'modal fade'" :id="modalId" ref="modalContainer" tabindex="-1" aria-labelledby="modalLabel">
+        <div :class="[embedded ? 'connection-editor-embed__dialog' : 'modal-dialog modal-dialog-centered', { 'modal-fullscreen': isFullScreen }]" :style="dialogStyle">
             <div class="modal-content" :class="contentClass">
                 <div class="modal-header" :class="headerClass">
                     <h5 class="modal-title d-flex align-items-center" id="modalLabel">
                         <i v-if="typeIcon" :class="typeIcon" class="me-2"></i>
                         {{ dynamicTitle || props.title }}
                     </h5>
-                    <button type="button" class="btn-close" aria-label="Close" @click="cancel"></button>
+                    <button v-if="!embedded" type="button" class="btn-close" aria-label="Close" @click="cancel"></button>
                 </div>
-                <div class="modal-body text-wrap" v-if="modalShow">
+                <div class="modal-body text-wrap" v-if="isContentVisible">
                     <slot v-if="$slots.default"></slot>
                     <div v-else>
                         <div class="d-flex align-items-center mb-3">
@@ -54,6 +54,7 @@ const props = defineProps({
     visible: { type: Boolean, default: false },
     isFullScreen: { type: Boolean, default: false },
     dialogStyle: { type: Object, default: () => ({}) },
+    embedded: { type: Boolean, default: false },
 });
 
 const dynamicOptions = ref<any>({});
@@ -80,6 +81,7 @@ const confirmButtonClass = computed(() => {
 
 const emits = defineEmits(['onConfirm', 'onClose', 'onCancel', 'onHidden']);
 const modalShow = ref(false);
+const isContentVisible = computed(() => props.embedded || modalShow.value);
 const modalContainer = ref<HTMLElement>(null as any);
 let modal: bootstrap.Modal | null = null;
 
@@ -93,22 +95,30 @@ function getModal() {
 }
 
 function show() {
+    if (props.embedded) return Promise.resolve();
     const m = getModal();
     if (m) { m.show(); return Promise.resolve(); }
     return Promise.resolve();
 }
 
 function hide() {
+    if (props.embedded) return Promise.resolve();
     const m = getModal();
     if (m) m.hide();
     return Promise.resolve();
 }
 
 function confirm() { (document.activeElement as HTMLElement)?.blur?.(); emits('onConfirm'); dynamicOptions.value?.onConfirm?.(); }
-function cancel() { (document.activeElement as HTMLElement)?.blur?.(); hide(); emits('onCancel'); dynamicOptions.value?.onCancel?.(); }
+function cancel() {
+    (document.activeElement as HTMLElement)?.blur?.();
+    if (props.embedded) { emits('onClose'); emits('onCancel'); dynamicOptions.value?.onCancel?.(); return; }
+    hide();
+    emits('onCancel');
+    dynamicOptions.value?.onCancel?.();
+}
 
 watch(() => props.visible, (visible) => { visible ? show() : hide(); });
-onMounted(() => { modal = getModal(); });
+onMounted(() => { if (!props.embedded) modal = getModal(); });
 onUnmounted(() => { if (modal) modal.dispose(); });
 
 defineExpose({
@@ -133,4 +143,75 @@ defineExpose({
 
 <style scoped>
 .modal-body { min-height: 80px; display: flex; flex-direction: column; align-items: stretch; }
+</style>
+
+<style>
+.connection-editor-embed {
+    width: 100%;
+    animation: aicmd-embed-fade .18s ease-out;
+}
+.connection-editor-embed__dialog {
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 1.5rem 1.5rem 2.25rem;
+}
+/* 内嵌态去弹窗化：透明卡片、分区标题化、隐藏空 footer */
+.connection-editor-embed .modal-content {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+}
+.connection-editor-embed div.modal-header {
+    border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.25));
+    padding: 0 0 0.75rem;
+    margin-bottom: 1.25rem;
+}
+.connection-editor-embed .modal-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+.connection-editor-embed div.modal-body {
+    min-height: 0;
+    padding: 0;
+}
+.connection-editor-embed .modal-footer {
+    display: none;
+}
+/* 折叠分区卡片 */
+.connection-editor-embed .card {
+    border-radius: 8px;
+    overflow: hidden;
+}
+.connection-editor-embed .card-header {
+    padding: 0.65rem 0.9rem;
+    transition: background 0.15s ease;
+}
+.connection-editor-embed .card-header:hover {
+    background: rgba(128, 128, 128, 0.08);
+}
+.connection-editor-embed .card-body {
+    padding: 0.9rem;
+}
+/* 表单与操作栏呼吸感 */
+.connection-editor-embed .connection-form {
+    padding: 0.25rem 0 0;
+}
+.connection-editor-embed .connection-form > .mb-3 {
+    margin-bottom: 1.1rem;
+}
+.connection-editor-embed .connection-form .d-flex.justify-content-between {
+    margin-top: 1.5rem;
+}
+@keyframes aicmd-embed-fade {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
 </style>

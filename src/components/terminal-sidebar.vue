@@ -25,7 +25,7 @@
         class="form-control form-control-sm"
         :placeholder="t('sidebar.searchPlaceholder')"
         v-model="searchQuery"
-        style="background: #313244; border-color: #45475a; color: var(--text-primary);"
+        style="background: var(--bg-input); border-color: var(--border-strong); color: var(--text-primary);"
       >
     </div>
 
@@ -150,7 +150,7 @@ function showContextMenu(_event: MouseEvent, _conn: ConnectionEntity) {
   font-size: 14px;
 }
 .btn-toolbar:hover {
-  background-color: rgba(255, 255, 255, 0.08);
+  background-color: rgb(var(--overlay-rgb) / 8%);
   color: var(--text-primary);
 }
 
@@ -209,6 +209,6 @@ function showContextMenu(_event: MouseEvent, _conn: ConnectionEntity) {
 .btn-ai-settings:hover {
   border-color: var(--accent);
   color: var(--accent);
-  background-color: rgba(137, 180, 250, 0.1);
+  background-color: rgb(var(--accent-rgb) / 10%);
 }
 </style>

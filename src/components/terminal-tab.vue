@@ -83,6 +83,12 @@ import { createSentry, base64ToOctets, stringToOctets, octetsToBase64, Zmodem } 
 import AIChat from '@/components/ai-chat/index.vue';
 import FileTransfer from '@/components/file-transfer.vue';
 import FileManager from '@/components/file-manager.vue';
+import {
+  TERMINAL_THEME_DARK,
+  TERMINAL_THEME_LIGHT,
+  buildVscodeTerminalTheme,
+  onVscodeThemeChange,
+} from '@/utils/vscode-theme';
 
 const { t } = useI18n();
 
@@ -183,7 +189,19 @@ let resizeObserver: ResizeObserver | null = null;
 let sentry: any = null;
 let zmodemSession: any = null;
 let zmodemRole: string | null = null; // 'send' | 'receive'
+let offVscodeTheme: (() => void) | null = null; // VSCode 主题变化订阅
 let fileUploadResultCallback: ((msg: WSMessage) => void) | null = null;
+
+/**
+ * 解析终端配色：
+ * 1. 连接显式选择「亮色」时用 Catppuccin Latte；
+ * 2. 在 VSCode 扩展 WebView 中优先跟随 VSCode 主题的终端配色；
+ * 3. 其余情况（桌面端 / 浏览器默认）用 Catppuccin Mocha。
+ */
+function resolveTerminalTheme() {
+  if (props.connection.terminal?.theme === 'light') return TERMINAL_THEME_LIGHT;
+  return buildVscodeTerminalTheme() || TERMINAL_THEME_DARK;
+}
 
 // 初始化终端
 function initTerminal() {
@@ -194,29 +212,7 @@ function initTerminal() {
     rows: props.connection.terminal?.rows || 24,
     fontSize: props.connection.terminal?.fontSize || 14,
     fontFamily: props.connection.terminal?.fontFamily || '"JetBrains Mono", "Fira Code", Menlo, Monaco, "Courier New", monospace',
-    theme: props.connection.terminal?.theme === 'light' ? {
-      background: '#eff1f5',
-      foreground: '#4c4f69',
-      cursor: '#dc8a78',
-      cursorAccent: '#eff1f5',
-      selectionBackground: '#acb0be40',
-      selectionForeground: '#4c4f69',
-      black: '#5c5f77', red: '#d20f39', green: '#40a02b', yellow: '#df8e1d',
-      blue: '#1e66f5', magenta: '#ea76cb', cyan: '#179299', white: '#acb0be',
-      brightBlack: '#6c6f85', brightRed: '#d20f39', brightGreen: '#40a02b', brightYellow: '#df8e1d',
-      brightBlue: '#1e66f5', brightMagenta: '#ea76cb', brightCyan: '#179299', brightWhite: '#bcc0cc',
-    } : {
-      background: '#1e1e2e',
-      foreground: '#cdd6f4',
-      cursor: '#f5e0dc',
-      cursorAccent: '#1e1e2e',
-      selectionBackground: '#585b7066',
-      selectionForeground: '#cdd6f4',
-      black: '#45475a', red: '#f38ba8', green: '#a6e3a1', yellow: '#f9e2af',
-      blue: '#89b4fa', magenta: '#f5c2e7', cyan: '#94e2d5', white: '#bac2de',
-      brightBlack: '#585b70', brightRed: '#f38ba8', brightGreen: '#a6e3a1', brightYellow: '#f9e2af',
-      brightBlue: '#89b4fa', brightMagenta: '#f5c2e7', brightCyan: '#94e2d5', brightWhite: '#a6adc8',
-    },
+    theme: resolveTerminalTheme(),
     cursorStyle: props.connection.terminal?.cursorStyle || 'block',
     cursorBlink: true,
     cursorInactiveStyle: 'outline',
@@ -981,6 +977,15 @@ onMounted(() => {
   initTerminal();
   writeStatusToTerminal('connecting');
 
+  // VSCode 主题切换时（含明暗切换）实时同步终端配色
+  offVscodeTheme = onVscodeThemeChange(() => {
+    if (!terminal) return;
+    const next = resolveTerminalTheme();
+    terminal.options.theme = next;
+    // xterm 主题变更不重绘已有单元格的默认前景/背景，重置一次以立即生效
+    terminal.refresh(0, terminal.rows - 1);
+  });
+
   // 全局点击关闭右键菜单
   document.addEventListener('click', onDocumentClick);
 
@@ -1000,6 +1005,7 @@ onBeforeUnmount(() => {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   resizeObserver?.disconnect();
   document.removeEventListener('click', onDocumentClick);
+  offVscodeTheme?.();
   ws?.close();
   ipcCleanup?.();
   terminal?.dispose();
@@ -1161,7 +1167,7 @@ function onDocumentClick() {
   height: 36px;
   border: none;
   border-radius: 8px;
-  background: rgba(49, 50, 68, 0.9);
+  background: rgb(var(--bg-input-rgb) / 90%);
   color: var(--text-secondary);
   cursor: pointer;
   display: flex;
@@ -1174,14 +1180,14 @@ function onDocumentClick() {
 }
 
 .ai-toggle-btn:hover {
-  background: rgba(69, 71, 90, 0.95);
+  background: rgb(var(--border-strong-rgb) / 95%);
   color: var(--accent);
   transform: scale(1.05);
 }
 
 .ai-toggle-btn.active {
   background: var(--accent);
-  color: white;
+  color: var(--accent-fg);
 }
 
 /* 文件管理器按钮定位在左上角 */
@@ -1248,8 +1254,8 @@ function onDocumentClick() {
   position: fixed;
   z-index: 1000;
   min-width: 160px;
-  background: #2b2d3e;
-  border: 1px solid #45475a;
+  background: var(--bg-menu);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   padding: 4px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
@@ -1261,7 +1267,7 @@ function onDocumentClick() {
   gap: 8px;
   padding: 8px 12px;
   font-size: 13px;
-  color: #cdd6f4;
+  color: var(--text-primary);
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.15s;
@@ -1269,7 +1275,7 @@ function onDocumentClick() {
 }
 
 .context-menu-item:hover {
-  background: #45475a;
+  background: var(--border-strong);
 }
 
 .context-menu-item i {

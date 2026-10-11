@@ -526,10 +526,10 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .fm-table tbody tr:hover {
-  background: rgba(137, 180, 250, 0.08);
+  background: rgb(var(--accent-rgb) / 8%);
 }
 .fm-selected {
-  background: rgba(137, 180, 250, 0.15) !important;
+  background: rgb(var(--accent-rgb) / 15%) !important;
 }
 .fm-file-icon {
   margin-right: 6px;

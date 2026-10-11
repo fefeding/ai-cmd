@@ -461,7 +461,7 @@ async function restoreOrCreateTabs() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: rgba(49, 50, 68, 0.9);
+  background-color: rgb(var(--bg-input-rgb) / 90%);
   border: 1px solid var(--border-color);
   border-left: none;
   border-radius: 0 6px 6px 0;
@@ -473,7 +473,7 @@ async function restoreOrCreateTabs() {
 }
 
 .sidebar-toggle-btn:hover {
-  background-color: rgba(69, 71, 90, 0.95);
+  background-color: rgb(var(--border-strong-rgb) / 95%);
   color: var(--accent);
   width: 24px;
 }
@@ -514,7 +514,7 @@ async function restoreOrCreateTabs() {
 }
 
 .tab-add-btn:hover {
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: rgb(var(--overlay-rgb) / 10%);
   color: var(--text-primary);
 }
 
@@ -536,7 +536,7 @@ async function restoreOrCreateTabs() {
   position: fixed;
   z-index: 9999;
   min-width: 160px;
-  background-color: #2b2b3d;
+  background-color: var(--bg-menu);
   border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 6px 0;
@@ -557,7 +557,7 @@ async function restoreOrCreateTabs() {
 }
 
 .tab-context-menu-item:hover {
-  background-color: rgba(255, 255, 255, 0.08);
+  background-color: rgb(var(--overlay-rgb) / 8%);
   color: var(--text-primary);
 }
 
@@ -592,7 +592,7 @@ async function restoreOrCreateTabs() {
 }
 
 .btn-empty-action:hover {
-  background-color: rgba(137, 180, 250, 0.1);
+  background-color: rgb(var(--accent-rgb) / 10%);
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -603,9 +603,9 @@ async function restoreOrCreateTabs() {
 }
 
 .btn-empty-success:hover {
-  background-color: rgba(166, 227, 161, 0.1);
-  border-color: #a6e3a1;
-  color: #a6e3a1;
+  background-color: rgb(var(--success-rgb) / 10%);
+  border-color: var(--success);
+  color: var(--success);
 }
 
 /* 批量操作模态框 */
@@ -650,7 +650,7 @@ async function restoreOrCreateTabs() {
   align-items: center;
   gap: 8px;
 }
-.batch-modal-header h4 i { color: #89b4fa; }
+.batch-modal-header h4 i { color: var(--accent); }
 .btn-close-modal {
   background: none;
   border: none;
@@ -660,7 +660,7 @@ async function restoreOrCreateTabs() {
   border-radius: 4px;
   font-size: 14px;
 }
-.btn-close-modal:hover { background: rgba(255,255,255,0.1); color: var(--text-primary, #cdd6f4); }
+.btn-close-modal:hover { background: rgb(var(--overlay-rgb) / 10%); color: var(--text-primary, #cdd6f4); }
 .batch-modal-body {
   flex: 1;
   overflow: hidden;

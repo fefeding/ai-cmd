@@ -246,7 +246,7 @@ defineExpose({ addRealtimeEntry, refresh });
 
 .audit-badge {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 8px;
@@ -289,9 +289,9 @@ defineExpose({ addRealtimeEntry, refresh });
   border-bottom: 1px solid var(--border-color);
   color: var(--text-secondary);
 }
-.stat-success { color: #4caf50; }
-.stat-error { color: #f44336; }
-.stat-blocked { color: #ff9800; }
+.stat-success { color: var(--success); }
+.stat-error { color: var(--danger); }
+.stat-blocked { color: var(--warning-strong); }
 
 .audit-list {
   flex: 1;
@@ -308,7 +308,7 @@ defineExpose({ addRealtimeEntry, refresh });
 
 .audit-entry {
   padding: 6px 12px;
-  border-bottom: 1px solid rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgb(var(--overlay-rgb) / 4%);
   cursor: pointer;
 }
 .audit-entry:hover { background: var(--bg-hover); }
@@ -338,7 +338,7 @@ defineExpose({ addRealtimeEntry, refresh });
 .entry-detail {
   margin-top: 6px;
   padding: 8px;
-  background: rgba(0,0,0,0.2);
+  background: var(--bg-recess);
   border-radius: 4px;
   font-size: 11px;
 }
@@ -353,7 +353,7 @@ defineExpose({ addRealtimeEntry, refresh });
   min-width: 60px;
 }
 .detail-code {
-  background: rgba(0,0,0,0.3);
+  background: var(--bg-recess-strong);
   padding: 4px 8px;
   border-radius: 3px;
   margin: 2px 0;
@@ -379,8 +379,8 @@ defineExpose({ addRealtimeEntry, refresh });
 }
 .btn-copy:hover { background: var(--bg-hover); color: var(--text-primary); }
 
-.text-success { color: #4caf50; }
-.text-danger { color: #f44336; }
-.text-warning { color: #ff9800; }
-.text-info { color: #2196f3; }
+.text-success { color: var(--success); }
+.text-danger { color: var(--danger); }
+.text-warning { color: var(--warning-strong); }
+.text-info { color: var(--info); }
 </style>

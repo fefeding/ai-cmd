@@ -1,0 +1,14 @@
+# VSCode 扩展打包排除项
+src/**
+tsconfig.json
+esbuild.js
+.vscode/**
+node_modules/**
+*.ts
+*.map
+**/*.ts
+
+# 例外：若已将运行时（server.js / dist / data 及其 node_modules）拷贝到 runtime/ 下，
+# 需保留它们，否则打包后的扩展无法启动后端服务
+!runtime/
+!runtime/**
