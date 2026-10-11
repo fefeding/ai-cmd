@@ -5,16 +5,30 @@
 // packages/vscode/runtime/，使其随 vsix 一起分发，从而实现「安装即可用」：
 //   - server.js           后端入口（根目录）
 //   - dist/               前端静态资源(dist/public) + 编译后的服务端(dist/server)
-//   - node_modules/       生产依赖（express/ws/ssh2/node-pty/...），按当前平台构建
+//   - node_modules/       生产依赖（express/ws/ssh2/...）
 //
-// 注意：node-pty / ssh2 是原生模块，runtime/node_modules 必须由「目标平台」的
-// 包管理器构建。本脚本在 runtime/ 内用 npm 重新安装生产依赖，会拉取/编译与
-// 当前机器平台匹配的预编译二进制。因此：
-//   - 在 macOS 上本地 `pnpm vscode:package` → 得到含 macOS 原生模块的 vsix，可本地安装测试；
-//   - CI(Linux) 打包 → 含 Linux 原生模块，适用于 Linux 环境的 VSCode。
-// 跨平台发布的单 vsix 无法同时覆盖三端，需要按平台分别打包。
+// ============ 两种模式 ============
+// 默认（便携模式 / portable）：
+//   以 `--ignore-scripts` 安装生产依赖，不构建任何原生模块。
+//   → runtime 为纯 JS，一个 vsix 可同时覆盖 Linux / macOS / Windows，
+//     也不受 Node ABI 影响（扩展会用宿主 Electron / nvm / 系统 node 启动后端，
+//     原生模块的 ABI 无法同时匹配这些运行时）。
+//   → SSH 功能完整（ssh2 为纯 JS）；本地 Shell 自动降级到 child_process
+//     （见 server/service/ssh.service.ts 中 node-pty 的 try/catch 与降级分支）。
+//
+// --with-pty（PTY 模式）：
+//   正常安装并构建原生模块，得到完整 PTY 的本地终端。
+//   → 该 vsix 与「打包机的 OS/架构 + 该 Node ABI」绑定，仅适用于同一平台，
+//     不能作为跨平台通用包发布。如需覆盖多平台，必须按平台分别打包。
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, cpSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  rmSync,
+  cpSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,6 +36,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 const vscodeDir = join(root, 'packages', 'vscode');
 const runtimeDir = join(vscodeDir, 'runtime');
+
+// --with-pty: 构建原生模块（完整 PTY，但产物与打包平台绑定）
+const withPty = process.argv.includes('--with-pty');
 
 function fail(msg) {
   console.error('[prepare-vscode-runtime] ' + msg);
@@ -45,7 +62,7 @@ cpSync(serverJs, join(runtimeDir, 'server.js'));
 cpSync(distDir, join(runtimeDir, 'dist'), { recursive: true });
 console.log('[prepare-vscode-runtime] copied server.js + dist/');
 
-// 4) 生成 runtime/package.json（仅生产依赖，让 npm 在目标平台安装并构建原生模块）
+// 4) 生成 runtime/package.json（仅生产依赖）
 const rootPkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const runtimePkg = {
   name: 'aicmd-runtime',
@@ -60,13 +77,39 @@ writeFileSync(
   JSON.stringify(runtimePkg, null, 2) + '\n'
 );
 
-// 5) 在 runtime/ 内安装生产依赖（npm 产出真实、可随 vsix 分发的 node_modules）
-console.log('[prepare-vscode-runtime] installing production deps (platform native modules)...');
+// 5) 安装生产依赖
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-execFileSync(
-  npm,
-  ['install', '--omit=dev', '--no-audit', '--no-fund', '--loglevel=error'],
-  { cwd: runtimeDir, stdio: 'inherit' }
-);
+if (withPty) {
+  console.warn(
+    '[prepare-vscode-runtime] PTY 模式：将构建原生模块，产物仅适用于 ' +
+      `${process.platform}/${process.arch}，不可作为跨平台通用包发布。`
+  );
+  execFileSync(
+    npm,
+    ['install', '--omit=dev', '--no-audit', '--no-fund', '--loglevel=error'],
+    { cwd: runtimeDir, stdio: 'inherit' }
+  );
+} else {
+  console.log(
+    '[prepare-vscode-runtime] 便携模式：忽略构建脚本，产出跨平台纯 JS 运行时 ' +
+      '（本地 Shell 将降级为 child_process，SSH 功能不受影响）。'
+  );
+  execFileSync(
+    npm,
+    [
+      'install',
+      '--omit=dev',
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+      '--loglevel=error',
+    ],
+    { cwd: runtimeDir, stdio: 'inherit' }
+  );
+}
 
-console.log('[prepare-vscode-runtime] runtime prepared at ' + runtimeDir);
+console.log(
+  '[prepare-vscode-runtime] runtime prepared at ' +
+    runtimeDir +
+    (withPty ? ' (PTY 模式)' : ' (便携模式)')
+);

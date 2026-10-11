@@ -41,7 +41,8 @@
     "build:vscode:ext": "cd packages/vscode && npm run compile",
     "build:vscode": "npm run build:vscode:web && npm run build:vscode:ext",
     "vscode:dev": "cd packages/vscode && npm run watch",
-    "vscode:package": "npm run build:vscode && node scripts/prepare-vscode-runtime.mjs && cd packages/vscode && vsce package"
+    "vscode:package": "npm run build:vscode && node scripts/prepare-vscode-runtime.mjs && cd packages/vscode && vsce package",
+    "vscode:package:pty": "npm run build:vscode && node scripts/prepare-vscode-runtime.mjs --with-pty && cd packages/vscode && vsce package"
   },
   "dependencies": {
     "@cicctencent/agent-core": "^0.1.124",
