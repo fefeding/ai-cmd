@@ -61,6 +61,11 @@ jobs:
           fi
 
       # `vsce package` runs `vscode:prepublish` (esbuild host build) and produces packages/vscode/*.vsix.
+      - name: Build app & prepare backend runtime
+        run: |
+          pnpm build-only
+          node scripts/prepare-vscode-runtime.mjs
+
       - name: Package VSIX
         working-directory: packages/vscode
         run: ../../node_modules/.bin/vsce package --out aicmd.vsix
@@ -108,6 +113,11 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: pnpm install --no-frozen-lockfile
 
+      - name: Build app & prepare backend runtime
+        run: |
+          pnpm build-only
+          node scripts/prepare-vscode-runtime.mjs
+
       - name: Package VSIX
         working-directory: packages/vscode
         run: ../../node_modules/.bin/vsce package --out aicmd.vsix
@@ -143,6 +153,11 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
         run: pnpm install --no-frozen-lockfile
+
+      - name: Build app & prepare backend runtime
+        run: |
+          pnpm build-only
+          node scripts/prepare-vscode-runtime.mjs
 
       - name: Package VSIX
         working-directory: packages/vscode

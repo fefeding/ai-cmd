@@ -15,3 +15,9 @@ node_modules/**
 
 # 打包产物本身不应被再次打进扩展
 *.vsix
+
+# 显式保留打包进扩展的后端运行时（server.js / dist / 生产 node_modules）
+# 注意：必须放在 node_modules/** 等忽略规则之后才能重新包含
+!runtime/server.js
+!runtime/dist/**
+!runtime/node_modules/**
