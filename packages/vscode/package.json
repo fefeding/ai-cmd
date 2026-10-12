@@ -2,7 +2,7 @@
   "name": "vscode-aicmd",
   "displayName": "AICmd Terminal",
   "description": "AI 驱动的 Web SSH 终端：SSH/本地终端、AI Agent、技能系统、命令审计、日志监控、批量操作与文件传输，全部在 VSCode 内运行。",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "publisher": "fefeding",
   "license": "MIT",
   "repository": {
@@ -145,7 +145,8 @@
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "type-check": "tsc --noEmit",
-    "package": "vsce package"
+    "package": "vsce package",
+    "publish": "vsce publish"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
