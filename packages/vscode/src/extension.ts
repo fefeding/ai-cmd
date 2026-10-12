@@ -281,6 +281,12 @@ function wirePanel(
   base: string,
   actualTitle: string
 ): void {
+  // 让编辑器 Tab 使用本插件图标（resources/activity-icon.png），而非默认文件图标
+  panel.iconPath = vscode.Uri.joinPath(
+    extContext.extensionUri,
+    'resources',
+    'activity-icon.png'
+  );
   panel.webview.html = buildHtml(src, actualTitle);
   panelMeta.set(panel, { base, title: actualTitle });
   panelSrc.set(panel, src);
