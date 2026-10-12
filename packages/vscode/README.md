@@ -13,6 +13,10 @@ Bring [AICmd](https://github.com/fefeding/ai-cmd) (an AI-powered web SSH termina
 
 > The extension reuses the **same project** (this repository) at runtime: it starts the project's own `server.js` as a child process and serves the project's own `dist/` front-end. No separate AICmd install is required.
 
+## Screenshot
+
+![AICmd Terminal in VSCode](https://raw.githubusercontent.com/fefeding/ai-cmd/main/docs/images/vscode-extension.png)
+
 ## How It Works
 
 ```
