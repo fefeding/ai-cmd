@@ -5,9 +5,10 @@ name: Build and Release AICmd VSIX
 # Release with the .vsix attached and publishes the extension to BOTH the VS Code
 # Marketplace (VSCODE_TOKEN) and the Open VSX Registry (OVSX_TOKEN).
 #
-# NOTE: the Electron app build (.github/workflows/build.yml) triggers on `v*` tags, while this
-# extension pipeline triggers on `aicmd-v*` tags. Keep them distinct so the two release channels
-# don't collide (and the version check here compares packages/vscode/package.json).
+# NOTE: the Electron app build (.github/workflows/build.yml) triggers on both `v*` AND
+# `aicmd-v*` tags, so a single `aicmd-v*` tag now produces BOTH the VSIX (this pipeline) and
+# the Electron client binaries (build.yml, which uploads with force:true into the same release).
+# The version check here compares packages/vscode/package.json.
 on:
   push:
     tags:
