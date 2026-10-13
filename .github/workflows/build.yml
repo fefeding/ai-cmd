@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-      - 'aicmd-v*'
   workflow_dispatch:
     inputs:
       platforms:

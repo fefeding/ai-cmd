@@ -1,14 +1,14 @@
-name: Build and Release AICmd VSIX
+name: Build and Release AICmd (VSIX + Client)
 
-# Mirrors the Database Tool extension pipeline: a .vsix is built on every push/PR to main
-# (uploaded as a CI artifact). On version tags of the form `aicmd-v*` it creates a GitHub
-# Release with the .vsix attached and publishes the extension to BOTH the VS Code
-# Marketplace (VSCODE_TOKEN) and the Open VSX Registry (OVSX_TOKEN).
+# Single pipeline that produces BOTH the VS Code extension (.vsix) and the Electron
+# desktop client (win/mac/linux) and attaches everything to one GitHub Release for tags
+# of the form `aicmd-v*`. It also publishes the extension to the VS Code Marketplace
+# (VSCODE_TOKEN) and the Open VSX Registry (OVSX_TOKEN).
 #
-# NOTE: the Electron app build (.github/workflows/build.yml) triggers on both `v*` AND
-# `aicmd-v*` tags, so a single `aicmd-v*` tag now produces BOTH the VSIX (this pipeline) and
-# the Electron client binaries (build.yml, which uploads with force:true into the same release).
-# The version check here compares packages/vscode/package.json.
+# NOTE: the standalone .github/workflows/build.yml now only triggers on plain `v*` tags
+# (a fallback channel); the `aicmd-v*` channel is fully handled by this file so the two
+# release workflows never collide. The version check below compares
+# packages/vscode/package.json.
 on:
   push:
     tags:
@@ -22,7 +22,7 @@ permissions:
   contents: write   # required by softprops/action-gh-release to create releases
 
 jobs:
-  build:
+  build-vsix:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -61,7 +61,6 @@ jobs:
             exit 1
           fi
 
-      # `vsce package` runs `vscode:prepublish` (esbuild host build) and produces packages/vscode/*.vsix.
       - name: Build app & prepare backend runtime
         run: |
           pnpm build-only
@@ -78,7 +77,7 @@ jobs:
           path: packages/vscode/aicmd.vsix
           if-no-files-found: error
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release (with VSIX)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
@@ -88,11 +87,182 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # ============================================================
+  # Windows client
+  # ============================================================
+  build-win:
+    needs: build-vsix
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build Electron app
+        env:
+          CI: 'true'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/electron-build.js --platform=win
+
+      - name: Upload artifacts to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.exe
+            release/*.blockmap
+            release/latest*.yml
+          draft: false
+          force: true
+          prerelease: ${{ contains(github.ref, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================================
+  # macOS client
+  # ============================================================
+  build-mac:
+    needs: build-vsix
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Install Rosetta (for x64 cross-compile)
+        run: softwareupdate --install-rosetta --agree-to-license
+        continue-on-error: true
+
+      - name: Build Electron app
+        env:
+          CI: 'true'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/electron-build.js --platform=mac
+
+      - name: Ad-hoc codesign (no Apple cert in CI)
+        run: |
+          find release -name "*.app" -maxdepth 3 | while read app; do
+            echo "Ad-hoc signing: $app"
+            codesign --force --deep --sign - "$app" || true
+          done
+
+      - name: Upload artifacts to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/latest*.yml
+          draft: false
+          force: true
+          prerelease: ${{ contains(github.ref, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================================
+  # Linux client
+  # ============================================================
+  build-linux:
+    needs: build-vsix
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm fakeroot
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build Electron app
+        env:
+          CI: 'true'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/electron-build.js --platform=linux
+
+      - name: Upload artifacts to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.AppImage
+            release/*.snap
+            release/*.deb
+            release/*.rpm
+            release/*.tar.gz
+            release/*.blockmap
+            release/latest*.yml
+          draft: false
+          force: true
+          prerelease: ${{ contains(github.ref, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # Publish to the VS Code Marketplace on `aicmd-v*` tags. The repository secret VSCODE_TOKEN
   # (an Azure DevOps PAT with Marketplace > Manage, owned by the publisher in package.json)
   # is mapped to VSCE_PAT, which vsce reads.
   publish-marketplace:
-    needs: build
+    needs: build-vsix
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
@@ -133,7 +303,7 @@ jobs:
   # repository secret OR a repository variable; the expression falls back to the variable when
   # the secret is empty. NOTE: repository variables are NOT masked in logs, so prefer a secret.
   publish-ovsx:
-    needs: build
+    needs: build-vsix
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
