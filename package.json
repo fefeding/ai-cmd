@@ -46,13 +46,11 @@
   "dependencies": {
     "@cicctencent/agent-core": "^0.1.124",
     "axios": "^1.20.0",
-    "dayjs": "^1.11.23",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "node-pty": "1.2.0-beta.13",
     "ssh2": "^1.17.0",
     "uuid": "^13.0.2",
-    "vue-i18n": "^11.4.10",
     "ws": "^8.21.3"
   },
   "devDependencies": {
@@ -102,6 +100,7 @@
     "vue": "^3.5.42",
     "vue-router": "^4.6.4",
     "vue-tsc": "^3.3.11",
+    "vue-i18n": "^11.4.10",
     "zmodem.js": "^0.1.10"
   },
   "bin": {

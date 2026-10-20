@@ -58,7 +58,9 @@ app.use(express.json());
 
 // 检查 server 构建产物
 const serverIndexPath = path.join(__dirname, 'dist/server/index.js');
-if (!fs.existsSync(serverIndexPath)) {
+// 打包态（VSCode 扩展 runtime）下服务端已内联进本文件，dist/server 已被删除，
+// 跳过此校验；开发态仍保留校验以提供友好报错。
+if (!process.env.AICMD_BUNDLED && !fs.existsSync(serverIndexPath)) {
   console.error(`[ERROR] 找不到 server 构建产物: ${serverIndexPath}`);
   console.error('[ERROR] 请先运行构建: pnpm run build-only');
   process.exit(1);
