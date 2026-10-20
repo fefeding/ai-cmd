@@ -85,13 +85,29 @@ export class ServerLauncher {
     }
   }
 
+  /** 打包态 runtime：后端已被 esbuild 内联为单文件 server.js，不再存在 dist/server/index.js。
+   *  由 scripts/prepare-vscode-runtime.mjs 在 runtime/package.json 写入 aicmdBundled 标记。 */
+  private isBundledRuntime(): boolean {
+    try {
+      const pkg = JSON.parse(
+        fs.readFileSync(path.join(this.projectRoot, 'package.json'), 'utf8')
+      );
+      return pkg?.aicmdBundled === true;
+    } catch {
+      return false;
+    }
+  }
+
   /** 实际的启动流程（逐个候选尝试）。 */
   private async startInternal(startPort: number): Promise<string> {
-    const distServer = path.join(this.projectRoot, 'dist', 'server', 'index.js');
-    if (!fs.existsSync(distServer)) {
-      throw new Error(
-        '未找到后端构建产物 dist/server/index.js，请先在本项目根目录执行 `pnpm build-only`（或 pnpm build）。'
-      );
+    // 打包态下后端已内联进 server.js，无需（也不存在）dist/server/index.js，跳过该预检
+    if (!this.isBundledRuntime()) {
+      const distServer = path.join(this.projectRoot, 'dist', 'server', 'index.js');
+      if (!fs.existsSync(distServer)) {
+        throw new Error(
+          '未找到后端构建产物 dist/server/index.js，请先在本项目根目录执行 `pnpm build-only`（或 pnpm build）。'
+        );
+      }
     }
     const serverJs = path.join(this.projectRoot, 'server.js');
     if (!fs.existsSync(serverJs)) {

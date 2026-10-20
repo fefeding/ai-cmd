@@ -276,12 +276,12 @@ cpSync(bundleTmp, join(runtimeDir, 'server.js'));
 rmSync(bundleTmp, { force: true });
 console.log('[prepare-vscode-runtime] backend bundled -> runtime/server.js');
 
-// 3.6) 已编译的服务端代码已内联进单文件，删除 runtime/dist/server 以节省体积
-const distServerDir = join(runtimeDir, 'dist', 'server');
-if (existsSync(distServerDir)) {
-  rmSync(distServerDir, { recursive: true, force: true });
-  console.log('[prepare-vscode-runtime] removed inlined dist/server');
-}
+// 3.6) dist/server 已内联进单文件，理论上可删除以省约 772KB。
+// 但保留它作为安全兜底：扩展宿主 server-launcher.ts 与 server.js 都有
+// 「dist/server/index.js 是否存在」的预检（前者靠 aicmdBundled 标记跳过），
+// 保留该文件可确保即便标记识别在某个环境失效，扩展也能正常启动。
+// 代价仅约 772KB（zip 后远小于此）。确认线上稳定后可再恢复删除。
+console.log('[prepare-vscode-runtime] kept dist/server as safety net (inlined, unused at runtime)');
 
 // 4) 生成 runtime/package.json：后端 JS 依赖已全部内联进 server.js，node_modules
 // 只需保留原生模块 node-pty（含其预编译二进制）。其余生产依赖不再安装。
@@ -292,6 +292,9 @@ const runtimePkg = {
   version: '0.0.0',
   description: 'Bundled AICmd backend runtime for the VSCode extension.',
   license: rootPkg.license || 'MIT',
+  // 标记：后端已打包为单文件，扩展宿主（server-launcher.ts）据此跳过
+  // dist/server/index.js 的存在性预检（该目录已内联并被删除）
+  aicmdBundled: true,
   dependencies: { 'node-pty': rootPkg.dependencies['node-pty'] },
 };
 writeFileSync(
