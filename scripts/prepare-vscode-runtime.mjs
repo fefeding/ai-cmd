@@ -262,7 +262,10 @@ await build({
   // （runtime 目录本身此刻尚无 node_modules，避免依赖隐式的向上查找）
   absWorkingDir: root,
   nodePaths: [join(root, 'node_modules')],
-  external: ['node-pty', 'cpu-features'],
+  // 注意：'.node' 原生二进制不能被 esbuild 打包（无对应 loader），必须 external。
+  // 典型如 ssh2 自带的 sshcrypto.node —— 其 require 本身包在 try/catch 中
+  // （ssh2/lib/protocol/crypto.js），缺失时自动降级为纯 JS 加密，不影响 SSH 功能。
+  external: ['node-pty', 'cpu-features', '*.node'],
   // 注入打包标记：server.js 内的构建产物校验会据此跳过（dist/server 已被内联删除）
   define: { 'process.env.AICMD_BUNDLED': '"1"' },
   minify: true,
