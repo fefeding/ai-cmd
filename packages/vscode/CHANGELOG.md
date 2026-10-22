@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.23
+
+- 修复 AI 智能体在 SSH/终端会话中**命令输出被截断、只剩提示符**的问题（更新 `@cicctencent/agent-core` 后尤为明显）：
+  - 根因 1：ANSI 清洗正则 `\x1B[^\x1B]*[a-zA-Z]` 贪婪跨正文匹配，会吞掉命令真实输出与提示符主体（如 `whoami` 的 `root`）。改为 `server/utils/ansi.ts` 按 ECMA-48 有界结构清洗。
+  - 根因 2：命令结尾用 `\n` 而非伪终端所需的 `\r`，导致 stdout 几乎不回传。已统一为 `\r`，与内部探测命令一致。
+  - 根因 3：`engine.run` 未注入 `context.custom.shell`，新版 agent-core 内置 `execute_command`/`read_terminal` 落到 noop shell。已注入真正执行器。
+  - 命令采集改为「空闲即停」（输出稳定即返回，最长兜底 10s），更完整且不空等。
+
 ## 0.1.22
 
 - 修复更新 `@cicctencent/agent-core` 后终端输出彻底捕不到的问题：
