@@ -1501,7 +1501,15 @@ Write-Output "__DOCKER__: $dockerVer"
         } else if (listener) {
           this.removeOutputListener(sessionId);
         }
-        resolve(clean(raw));
+        // 诊断：记录清洗前的原始内容，用于判断是否为 ANSI 清洗误删正文
+        const cleaned = clean(raw);
+        const jsonPreview = (s: string) => s.length > 700
+          ? `${JSON.stringify(s.slice(0, 350))} ...TAIL... ${JSON.stringify(s.slice(-350))}`
+          : JSON.stringify(s);
+        if (raw.length !== cleaned.length) {
+          console.log(`[SSH] captureIdle rawLen=${raw.length} cleanLen=${cleaned.length} raw=${jsonPreview(raw)}`);
+        }
+        resolve(cleaned);
       };
 
       idleTimer = setInterval(() => {

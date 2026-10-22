@@ -533,7 +533,9 @@ export class AIService {
       // 采用「空闲即停」采集：不再用固定 2s 窗口硬等，输出稳定下来即返回（最长 10s 兜底），
       // 避免慢命令的输出被窗口截断、只拿到尾部。
       const outputPromise = this.sshService.captureOutputIdle(sessionId, 700, 10000);
-      this.sshService.writeData(sessionId, actualCommand + '\n');
+      // 必须用 '\r'（回车）结尾，而非 '\n'：伪终端的主设备侧需要 CR 才表示「按下回车」，
+      // 服务内部所有探测命令（getSystemContext / probeCwdViaShell）都使用 '\r' 且能正常取到输出。
+      this.sshService.writeData(sessionId, actualCommand + '\r');
       const output = await outputPromise;
 
       // 诊断日志：便于排查「命令输出捕不到 / 被截断」问题
