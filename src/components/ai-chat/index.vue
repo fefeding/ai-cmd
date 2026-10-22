@@ -393,7 +393,16 @@ function handleAgentEvent(event: any) {
       msg.isRunning = false;
       msg.agentSteps = msg.agentSteps.filter(s => s.type !== 'thinking');
       if (event.content) {
-        msg.content += event.content;
+        const c = event.content;
+        // 部分 engine 在流式结束后又于 done 中重发全文，避免与已流式内容重复
+        if (msg.content.includes(c)) {
+          // 已包含完整内容，跳过
+        } else if (c.startsWith(msg.content)) {
+          // done 是流式的超集（末尾追加），用全文替换，避免重复前缀
+          msg.content = c;
+        } else {
+          msg.content += c;
+        }
       }
       isAgentRunning.value = false;
       stopElapsedTimer();

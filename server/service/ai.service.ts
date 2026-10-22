@@ -548,9 +548,13 @@ export class AIService {
   private async readTerminal(sessionId: string): Promise<string> {
     if (!this.sshService) return 'Error: SSH service not available';
     try {
-      const output = await this.sshService.captureOutput(sessionId, 500);
+      // 延长采集窗口，尽量捕获命令尾部/提示符回显；保留空行以维持输出结构；
+      // 最多取末尾 200 行，避免结构被破坏或关键输出被裁掉。
+      // 注意：captureOutput 仅采集「调用后新到达」的输出，空闲终端会返回空，
+      // 命令结果应以 execute_command 的返回为准。
+      const output = await this.sshService.captureOutput(sessionId, 1500);
       if (!output.trim()) return '(No terminal output)';
-      return output.split('\n').filter(l => l.trim()).slice(-50).join('\n');
+      return output.split('\n').slice(-200).join('\n');
     } catch (error: any) {
       return `Failed to read terminal: ${error.message}`;
     }
