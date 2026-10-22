@@ -194,6 +194,55 @@ function insertTextAtCursor(el: HTMLElement, text: string): void {
   }
 }
 
+function deleteSelectedText(): void {
+  const el = document.activeElement;
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? 0;
+    if (start === end) return;
+    el.value = el.value.slice(0, start) + el.value.slice(end);
+    el.setSelectionRange(start, start);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+}
+
+/**
+ * 快捷键级处理（Ctrl/Cmd + C / X / V）。
+ *
+ * 跨源 iframe 受权限策略限制，浏览器**根本不会派发** copy / paste 事件
+ * （终端能正常工作正是因为它直接拦截 keydown，而非依赖原生事件）。
+ * 因此这里同样以 keydown 为可靠入口：拦截后经桥接读写剪贴板，并
+ * preventDefault 抑制浏览器默认动作，避免与原生事件重复处理。
+ * 仅处理 C / X / V，其他快捷键（Ctrl+A / Z 等）一律放行。
+ */
+function handleKeydown(e: KeyboardEvent): void {
+  if (isInTerminal(e.target)) return; // 终端内部自带处理，避免重复
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  const key = (e.key || '').toLowerCase();
+  if (key !== 'c' && key !== 'x' && key !== 'v') return;
+
+  // 粘贴：需要有可编辑焦点
+  if (key === 'v') {
+    const el = document.activeElement;
+    if (!isEditableEl(el)) return; // 焦点不在输入框，放行
+    e.preventDefault();
+    const target = el as HTMLElement;
+    readClipboard()
+      .then((text) => {
+        if (text) insertTextAtCursor(target, text);
+      })
+      .catch(() => {});
+    return;
+  }
+
+  // 复制 / 剪切：需要有选中内容（含只读文本如 AI 回复）
+  const text = getSelectionText();
+  if (!text) return; // 无选区则放行，避免干扰其他快捷键语义
+  e.preventDefault();
+  writeClipboard(text).catch(() => {});
+  if (key === 'x') deleteSelectedText();
+}
+
 function handleCopyCut(e: ClipboardEvent): void {
   if (isInTerminal(e.target)) return; // 终端由自身逻辑处理，避免重复
   const text = getSelectionText();
@@ -250,7 +299,10 @@ export function installVscodeClipboardBridge(): void {
     /* 某些浏览器 navigator.clipboard 为只读 getter，忽略 */
   }
 
-  // 2) 拦截原生 copy / cut / paste 事件（capture 阶段优先于默认行为）
+  // 2) 可靠入口：直接拦截 Ctrl/Cmd + C / X / V 快捷键（不依赖可能不触发的原生事件）
+  document.addEventListener('keydown', handleKeydown as EventListener, true);
+
+  // 3) 兜底：原生 copy / cut / paste 事件（如右键菜单触发的路径）
   document.addEventListener('copy', handleCopyCut as EventListener, true);
   document.addEventListener('cut', handleCopyCut as EventListener, true);
   document.addEventListener('paste', handlePaste as EventListener, true);
