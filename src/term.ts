@@ -14,6 +14,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import './term.css';
+import { isVscodeWebviewRuntime, writeClipboard, readClipboard } from './utils/vscode-clipboard';
 import {
   createSentry,
   base64ToOctets,
@@ -58,15 +59,14 @@ function send(msg: Record<string, unknown>): void {
 function copySelection(): boolean {
   const sel = term.getSelection();
   if (!sel) return false;
-  navigator.clipboard.writeText(sel).catch(() => {
+  writeClipboard(sel).catch(() => {
     term.write('\r\n\x1b[33m[复制失败]\x1b[0m');
   });
   return true;
 }
 
 function pasteClipboard(): void {
-  navigator.clipboard
-    .readText()
+  readClipboard()
     .then((text) => {
       if (text) send({ type: 'terminal', sessionId, data: text });
     })
@@ -90,6 +90,13 @@ term.attachCustomKeyEventHandler((ev): boolean => {
   if (ev.ctrlKey && !ev.shiftKey && (ev.key === 'C' || ev.key === 'c')) {
     if (term.hasSelection()) {
       copySelection();
+      return false;
+    }
+  }
+  // VSCode WebView 跨源 iframe 里 Cmd/Ctrl+V 不会触发原生 paste 事件，需主动读取
+  if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'V' || ev.key === 'v')) {
+    if (isVscodeWebviewRuntime()) {
+      pasteClipboard();
       return false;
     }
   }

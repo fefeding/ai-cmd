@@ -89,6 +89,11 @@ import {
   buildVscodeTerminalTheme,
   onVscodeThemeChange,
 } from '@/utils/vscode-theme';
+import {
+  writeClipboard,
+  readClipboard,
+  isVscodeWebviewRuntime,
+} from '@/utils/vscode-clipboard';
 
 const { t } = useI18n();
 
@@ -272,7 +277,6 @@ function initTerminal() {
 
     if (!isCopyTrigger && !isPasteTrigger) return true; // 其他按键放行
 
-    const clip = (window as any).electronAPI?.clipboard;
     const hasSelection = !!(terminal && terminal.getSelection());
 
     // ===== 复制 =====
@@ -280,11 +284,7 @@ function initTerminal() {
       if (hasSelection) {
         // 有选中文本 → 执行复制（无论是否按了 Shift）
         const text = terminal!.getSelection();
-        if (clip) {
-          clip.writeText(text);
-        } else {
-          navigator.clipboard?.writeText(text).catch(() => {});
-        }
+        writeClipboard(text).catch(() => {});
         return false; // 阻止 xterm.js 处理
       }
       // 无选中文本：
@@ -296,11 +296,18 @@ function initTerminal() {
 
     // ===== 粘贴 =====
     if (isPasteTrigger) {
-      // 不要在这里自定义发送！Cmd+V 已经会触发原生菜单的 paste（webContents.paste），
-      // 进而触发 xterm 的 'paste' 事件把剪贴板内容写入终端（见 electron/main.js 的 Edit 菜单）。
-      // 若这里再额外通过 IPC 发送一次，就会出现重复粘贴。
-      // 右键菜单的 Paste 走 handleContextPaste（无原生 paste 事件），所以不会重复。
-      return false; // 仅阻止 xterm 把 Cmd+V 当作普通按键输入，实际粘贴交给原生 paste 事件
+      // 在 VSCode WebView 的跨源 iframe 中，不会触发原生 paste 事件，
+      // 必须主动经桥接读取剪贴板并写入终端。
+      if (isVscodeWebviewRuntime()) {
+        readClipboard()
+          .then((text) => {
+            if (text) pasteToTerminal(text);
+          })
+          .catch(() => {});
+      }
+      // 桌面 Electron 下不要在这里发送：Cmd+V 已触发原生 paste 事件，
+      // 否则会与 electron/main.js 的 Edit 菜单重复粘贴（右键菜单另走 handleContextPaste）。
+      return false; // 仅阻止 xterm 把 Cmd+V 当作普通按键输入
     }
 
     return true;
@@ -895,6 +902,11 @@ function sendToServer(msg: WSMessage) {
   }
 }
 
+// 把文本作为粘贴内容发送到终端
+function pasteToTerminal(text: string) {
+  sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data: text });
+}
+
 // 将状态信息写入终端信息流
 function writeStatusToTerminal(s: typeof status.value, detail?: string) {
   if (!terminal) return;
@@ -1101,35 +1113,18 @@ function handleContextCopy() {
   if (!terminal) return;
   const selection = terminal.getSelection();
   if (selection) {
-    const clip = (window as any).electronAPI?.clipboard;
-    if (clip) {
-      clip.writeText(selection);
-    } else {
-      navigator.clipboard?.writeText(selection).catch(() => {});
-    }
+    writeClipboard(selection).catch(() => {});
   }
 }
 
 async function handleContextPaste() {
   hideTerminalContextMenu();
   if (!terminal) return;
-  const clip = (window as any).electronAPI?.clipboard;
-  let text = '';
-  if (clip) {
-    text = clip.readText();
-    // sandbox 模式下同步读取可能失败，尝试异步读取
-    if (!text && clip.readTextAsync) {
-      text = await clip.readTextAsync();
-    }
-  } else {
-    try {
-      text = await navigator.clipboard.readText();
-    } catch {
-      // 降级：通过 paste 事件获取
-    }
-  }
-  if (text) {
-    sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data: text });
+  try {
+    const text = await readClipboard();
+    if (text) pasteToTerminal(text);
+  } catch {
+    /* ignore */
   }
 }
 

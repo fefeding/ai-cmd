@@ -302,6 +302,49 @@ function wirePanel(
     if (msg.type === 'aicmd-edit-close') {
       editPanel?.dispose();
     }
+    // 剪贴板桥接：跨源 iframe 内的 navigator.clipboard 不可用，
+    // 由扩展宿主用 vscode.env.clipboard 代为读写后回传结果。
+    if (msg.type === 'aicmd-clipboard-read-request') {
+      try {
+        const text = await vscode.env.clipboard.readText();
+        panel.webview.postMessage({
+          __aicmd_clipboard: true,
+          type: 'aicmd-clipboard-read-response',
+          reqId: msg.reqId,
+          ok: true,
+          text
+        } as any);
+      } catch (err: any) {
+        panel.webview.postMessage({
+          __aicmd_clipboard: true,
+          type: 'aicmd-clipboard-read-response',
+          reqId: msg.reqId,
+          ok: false,
+          error: String(err?.message || err)
+        } as any);
+      }
+      return;
+    }
+    if (msg.type === 'aicmd-clipboard-write-request') {
+      try {
+        await vscode.env.clipboard.writeText(msg.text || '');
+        panel.webview.postMessage({
+          __aicmd_clipboard: true,
+          type: 'aicmd-clipboard-write-response',
+          reqId: msg.reqId,
+          ok: true
+        } as any);
+      } catch (err: any) {
+        panel.webview.postMessage({
+          __aicmd_clipboard: true,
+          type: 'aicmd-clipboard-write-response',
+          reqId: msg.reqId,
+          ok: false,
+          error: String(err?.message || err)
+        } as any);
+      }
+      return;
+    }
   });
 
   panel.onDidDispose(
@@ -475,6 +518,19 @@ function buildHtml(url: string, title: string): string {
     }
     if (d.type === 'aicmd-edit-close') {
       vscode.postMessage({ type: 'aicmd-edit-close' });
+    }
+    // 剪贴板桥接：iframe 内的 navigator.clipboard 跨源不可用，
+    // 请求转发给扩展宿主（其用 vscode.env.clipboard 处理）
+    if (d.__aicmd_clipboard && (d.type === 'aicmd-clipboard-read-request' || d.type === 'aicmd-clipboard-write-request')) {
+      vscode.postMessage(d);
+      return;
+    }
+    // 剪贴板结果：扩展宿主回传后转发回 iframe
+    if (d.__aicmd_clipboard && (d.type === 'aicmd-clipboard-read-response' || d.type === 'aicmd-clipboard-write-response')) {
+      try {
+        if (frame && frame.contentWindow) frame.contentWindow.postMessage(d, '*');
+      } catch (err) {}
+      return;
     }
   });
 
