@@ -38,6 +38,62 @@
       <i class="bi bi-folder2-open"></i>
     </button>
 
+    <!-- 命令片段按钮 -->
+    <button
+      v-if="status === 'connected'"
+      class="ai-toggle-btn snippet-toggle-btn"
+      :class="{ active: showSnippets }"
+      :style="showAIChat ? { right: (aiChatWidth + 92) + 'px' } : { right: '92px' }"
+      @click="showSnippets = !showSnippets"
+      :title="t('snippet.title')"
+    >
+      <i class="bi bi-lightning-charge"></i>
+    </button>
+
+    <!-- 命令片段面板 -->
+    <div
+      v-if="showSnippets"
+      class="snippet-popover"
+      :style="{ right: showAIChat ? (aiChatWidth + 12) + 'px' : '12px' }"
+    >
+      <SnippetPanel @run="handleSnippetRun" @close="showSnippets = false" />
+    </div>
+
+    <!-- 终端搜索按钮 -->
+    <button
+      v-if="status === 'connected'"
+      class="ai-toggle-btn"
+      :class="{ active: showSearch }"
+      :style="showAIChat ? { right: (aiChatWidth + 132) + 'px' } : { right: '132px' }"
+      @click="showSearch ? closeSearch() : openSearch()"
+      :title="t('search.title') + ' (Ctrl+F)'"
+    >
+      <i class="bi bi-search"></i>
+    </button>
+
+    <!-- 终端搜索条 -->
+    <div v-if="showSearch" class="terminal-search-bar">
+      <i class="bi bi-search"></i>
+      <input
+        ref="searchInputRef"
+        v-model="searchQuery"
+        type="text"
+        class="terminal-search-input"
+        :placeholder="t('search.placeholder')"
+        @input="handleSearchInput"
+        @keydown="handleSearchKeydown"
+      />
+      <button class="search-nav-btn" :title="t('search.prev')" @click="handleSearchNav('prev')">
+        <i class="bi bi-chevron-up"></i>
+      </button>
+      <button class="search-nav-btn" :title="t('search.next')" @click="handleSearchNav('next')">
+        <i class="bi bi-chevron-down"></i>
+      </button>
+      <button class="search-nav-btn" :title="t('common.close')" @click="closeSearch">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </div>
+
     <!-- AI 对话面板 -->
     <div v-show="showAIChat" class="ai-chat-wrapper" :style="{ width: aiChatWidth + 'px' }" ref="aiChatWrapperRef">
       <div class="ai-resize-handle" @mousedown="startResize"></div>
@@ -50,6 +106,7 @@
         :getTerminalContext="getTerminalContext"
         @close="showAIChat = false"
         @ws-send="handleAISend"
+        @terminal-command="handleTerminalCommand"
         @open-settings="$emit('open-ai-settings')"
       />
     </div>
@@ -67,6 +124,18 @@
       <div class="context-menu-item" @click="handleContextPaste">
         <i class="bi bi-clipboard-check"></i>{{ t('context.paste') || 'Paste' }}
       </div>
+      <div class="context-menu-item" @click="handleContextSelectAll">
+        <i class="bi bi-textarea-t"></i>{{ t('context.selectAll') || 'Select All' }}
+      </div>
+      <div class="context-menu-item" @click="handleContextCopyAll">
+        <i class="bi bi-clipboard-data"></i>{{ t('context.copyAll') || 'Copy All Output' }}
+      </div>
+      <div class="context-menu-item" @click="handleContextClear">
+        <i class="bi bi-eraser"></i>{{ t('context.clear') || 'Clear' }}
+      </div>
+      <div class="context-menu-item" @click="handleContextReconnect">
+        <i class="bi bi-arrow-repeat"></i>{{ t('context.reconnect') || 'Reconnect' }}
+      </div>
     </div>
   </div>
 </template>
@@ -77,12 +146,14 @@ import { useI18n } from 'vue-i18n';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { SearchAddon } from '@xterm/addon-search';
 import '@xterm/xterm/css/xterm.css';
 import type { ConnectionEntity, WSMessage } from '@/typings/connection';
 import { createSentry, base64ToOctets, stringToOctets, octetsToBase64, Zmodem } from '@/utils/zmodem';
 import AIChat from '@/components/ai-chat/index.vue';
 import FileTransfer from '@/components/file-transfer.vue';
 import FileManager from '@/components/file-manager.vue';
+import SnippetPanel from '@/components/snippet-panel.vue';
 import {
   TERMINAL_THEME_DARK,
   TERMINAL_THEME_LIGHT,
@@ -124,6 +195,15 @@ const showFileManager = ref(false);
 const fmWidth = ref(360);
 const FM_MIN_WIDTH = 280;
 const FM_MAX_WIDTH_RATIO = 0.5;
+
+// 命令片段相关
+const showSnippets = ref(false);
+
+// 终端搜索相关
+const showSearch = ref(false);
+const searchQuery = ref('');
+const searchInputRef = ref<HTMLInputElement>();
+let searchAddon: SearchAddon | null = null;
 
 function startFmResize(e: MouseEvent) {
   e.preventDefault();
@@ -232,6 +312,8 @@ function initTerminal() {
   fitAddon = new FitAddon();
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(new WebLinksAddon());
+  searchAddon = new SearchAddon();
+  terminal.loadAddon(searchAddon);
 
   terminal.open(terminalContainer.value);
 
@@ -270,6 +352,18 @@ function initTerminal() {
     const isMac = (window as any).electronAPI?.platform === 'darwin' || navigator.platform.includes('Mac');
     const modKey = isMac ? event.metaKey : event.ctrlKey;
     const key = event.key.toLowerCase();
+
+    // ===== 终端搜索快捷键：Ctrl/Cmd+F 开搜索条，Esc 关（搜索条打开时） =====
+    if (event.type === 'keydown' && !event.altKey) {
+      if (modKey && key === 'f') {
+        openSearch();
+        return false;
+      }
+      if (event.key === 'Escape' && showSearch.value) {
+        closeSearch();
+        return false;
+      }
+    }
 
     // 判断是否为复制/粘贴触发键
     const isCopyTrigger = modKey && key === 'c';
@@ -1128,10 +1222,131 @@ async function handleContextPaste() {
   }
 }
 
-// 全局点击关闭右键菜单
-function onDocumentClick() {
+function handleContextSelectAll() {
+  hideTerminalContextMenu();
+  terminal?.selectAll();
+}
+
+function handleContextClear() {
+  hideTerminalContextMenu();
+  if (!terminal) return;
+  if (status.value === 'connected') {
+    // 与 Ctrl+L 同义：发送 form feed 交给 shell 清屏（readline 会重绘提示符并保留已输入内容），回滚历史保留可上滚
+    sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data: '\x0c' });
+  } else {
+    // 断连时终端已死，本地清空即可
+    terminal.clear();
+  }
+}
+
+async function handleContextCopyAll() {
+  hideTerminalContextMenu();
+  if (!terminal) return;
+  const buffer = terminal.buffer.active;
+  const lines: string[] = [];
+  for (let i = 0; i < buffer.length; i++) {
+    const line = buffer.getLine(i);
+    if (line) lines.push(line.translateToString());
+  }
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  if (!lines.length) return;
+  try {
+    await writeClipboard(lines.join('\n'));
+  } catch {
+    /* ignore */
+  }
+}
+
+function handleContextReconnect() {
+  hideTerminalContextMenu();
+  reconnectAttempts = 0; // 手动重连重置计数，允许在自动重连耗尽后恢复
+  reconnect();
+}
+
+/** AI 回复代码块的「插入终端 / 执行」处理（execute=true 时复用 handleExecuteCommand 自动回车执行） */
+function handleTerminalCommand({ command, execute }: { command: string; execute: boolean }) {
+  if (status.value !== 'connected') return;
+  if (execute) {
+    handleExecuteCommand(command);
+  } else {
+    sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data: command });
+  }
+  terminal?.focus();
+}
+
+/** 命令片段执行（点击片段即发送到终端） */
+function handleSnippetRun(command: string) {
+  if (status.value !== 'connected') return;
+  sendToServer({ type: 'terminal', sessionId: sessionId || pendingSessionId, data: command + '\n' });
+  terminal?.focus();
+}
+
+// ===== 终端搜索 =====
+/** 搜索命中高亮配色（琥珀色半透明，暗/亮主题下均可辨识） */
+const SEARCH_DECORATIONS = {
+  matchBackground: 'rgba(245, 158, 11, 0.30)',
+  matchOverviewRuler: '#f59e0b',
+  activeMatchBackground: 'rgba(245, 158, 11, 0.55)',
+  activeMatchOverviewRuler: '#f59e0b',
+  activeMatchColorOverviewRuler: '#d97706',
+};
+
+function openSearch() {
+  showSearch.value = true;
+  showSnippets.value = false; // 避免与片段浮层重叠
+  nextTick(() => {
+    searchInputRef.value?.focus();
+    searchInputRef.value?.select();
+  });
+}
+
+function closeSearch() {
+  showSearch.value = false;
+  searchAddon?.clearDecorations();
+  terminal?.focus();
+}
+
+function handleSearchInput() {
+  if (!searchAddon) return;
+  const q = searchQuery.value;
+  if (!q) {
+    searchAddon.clearDecorations();
+    return;
+  }
+  searchAddon.findNext(q, { incremental: true, decorations: SEARCH_DECORATIONS });
+}
+
+function handleSearchKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    closeSearch();
+    return;
+  }
+  if (e.key !== 'Enter' || !searchQuery.value || !searchAddon) return;
+  if (e.shiftKey) {
+    searchAddon.findPrevious(searchQuery.value, { decorations: SEARCH_DECORATIONS });
+  } else {
+    searchAddon.findNext(searchQuery.value, { decorations: SEARCH_DECORATIONS });
+  }
+}
+
+function handleSearchNav(dir: 'next' | 'prev') {
+  if (!searchQuery.value || !searchAddon) return;
+  if (dir === 'next') {
+    searchAddon.findNext(searchQuery.value, { decorations: SEARCH_DECORATIONS });
+  } else {
+    searchAddon.findPrevious(searchQuery.value, { decorations: SEARCH_DECORATIONS });
+  }
+}
+
+// 全局点击关闭右键菜单 / 命令片段面板
+function onDocumentClick(e: MouseEvent) {
   if (contextMenuVisible.value) {
     hideTerminalContextMenu();
+  }
+  if (showSnippets.value) {
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.('.snippet-popover') || target?.closest?.('.snippet-toggle-btn')) return;
+    showSnippets.value = false;
   }
 }
 </script>
@@ -1183,6 +1398,69 @@ function onDocumentClick() {
 .ai-toggle-btn.active {
   background: var(--accent);
   color: var(--accent-fg);
+}
+
+/* 命令片段浮层 */
+.snippet-popover {
+  position: absolute;
+  top: 56px;
+  width: 300px;
+  max-height: calc(100% - 72px);
+  z-index: 20;
+  background: var(--bg-menu, var(--bg-dark));
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 终端搜索条 */
+.terminal-search-bar {
+  position: absolute;
+  top: 56px;
+  right: 12px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--bg-menu, var(--bg-dark));
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+.terminal-search-bar > i.bi-search {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.terminal-search-input {
+  width: 200px;
+  background: var(--bg-input, rgb(var(--bg-input-rgb)));
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 4px 8px;
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+.terminal-search-input:focus {
+  border-color: var(--accent);
+}
+.search-nav-btn {
+  background: none;
+  border: none;
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.search-nav-btn:hover {
+  background: rgb(var(--overlay-rgb) / 12%);
+  color: var(--text-primary);
 }
 
 /* 文件管理器按钮定位在左上角 */

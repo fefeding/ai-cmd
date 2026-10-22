@@ -14,8 +14,11 @@ importers:
   .:
     dependencies:
       '@cicctencent/agent-core':
-        specifier: ^0.1.124
-        version: 0.1.124
+        specifier: ^1.0.80
+        version: 1.0.80
+      '@xterm/addon-search':
+        specifier: ^0.16.0
+        version: 0.16.0
       axios:
         specifier: ^1.20.0
         version: 1.20.0
@@ -364,8 +367,8 @@ packages:
   '@borewit/text-codec@0.2.2':
     resolution: {integrity: sha512-DDaRehssg1aNrH4+2hnj1B7vnUGEjU6OIlyRdkMd0aUdIUvKXrJfXsy8LVtXAy7DRvYVluWbMspsRhz2lcW0mQ==}
 
-  '@cicctencent/agent-core@0.1.124':
-    resolution: {integrity: sha512-qGRV+uYzsRnsdAoY4JT8+lBr3UVQTz9bT54+v6CIuvL1OqDM2YiFFnPesIsd2anZ+pBsqahLdtqiiAbBlvyg9Q==}
+  '@cicctencent/agent-core@1.0.80':
+    resolution: {integrity: sha512-nLWnTlCDYf51rZIjzJ7KTq6ZLVqVlwIV8de7em9tGlks2WW+qYWkqQRPcQKONXhkfRxyd/Hp7lLCfBJHcv+t7w==}
     engines: {node: '>=22.17.0'}
 
   '@codemirror/commands@6.11.1':
@@ -1576,6 +1579,9 @@ packages:
     resolution: {integrity: sha512-UFYkDm4HUahf2lnEyHvio51TNGiLK66mqP2JoATy7hRZeXaGMRDr00JiSF7m63vR5WKATF605yEggJKsw0JpMQ==}
     peerDependencies:
       '@xterm/xterm': ^5.0.0
+
+  '@xterm/addon-search@0.16.0':
+    resolution: {integrity: sha512-9OeuBFu0/uZJPu+9AHKY6g/w0Czyb/Ut0A5t79I4ULoU4IfU5BEpPFVGQxP4zTTMdfZEYkVIRYbHBX1xWwjeSA==}
 
   '@xterm/addon-web-links@0.11.0':
     resolution: {integrity: sha512-nIHQ38pQI+a5kXnRaTgwqSHnX7KE6+4SVoceompgHL26unAxdfP6IPqUTSYPQgSwM56hsElfoNrrW5V7BUED/Q==}
@@ -4314,7 +4320,7 @@ snapshots:
 
   '@borewit/text-codec@0.2.2': {}
 
-  '@cicctencent/agent-core@0.1.124':
+  '@cicctencent/agent-core@1.0.80':
     dependencies:
       axios: 1.20.0
       js-tiktoken: 1.0.21
@@ -5587,6 +5593,8 @@ snapshots:
   '@xterm/addon-fit@0.10.0(@xterm/xterm@5.5.0)':
     dependencies:
       '@xterm/xterm': 5.5.0
+
+  '@xterm/addon-search@0.16.0': {}
 
   '@xterm/addon-web-links@0.11.0(@xterm/xterm@5.5.0)':
     dependencies:

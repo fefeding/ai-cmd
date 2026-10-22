@@ -11,11 +11,9 @@
           <button class="ai-tab" :class="{ active: activeTab === 'audit' }" @click="activeTab = 'audit'">
             <i class="bi bi-shield-check"></i> {{ t('audit.title') }}
           </button>
-          <!-- Monitor tab temporarily hidden
           <button class="ai-tab" :class="{ active: activeTab === 'monitor' }" @click="activeTab = 'monitor'">
             <i class="bi bi-activity"></i> {{ t('monitor.title') }}
           </button>
-          -->
         </div>
       </div>
       <div class="d-flex gap-1">
@@ -26,6 +24,10 @@
           <button class="btn-ai-action" @click="toggleHistoryPanel" :title="t('ai.history')" :class="{ active: showHistoryPanel }">
             <i class="bi bi-clock-history"></i>
           </button>
+          <span v-if="sessionTokens > 0" class="ai-session-tokens" :title="t('ai.sessionTokens')">
+            <i class="bi bi-cpu"></i>
+            <span>{{ formatTokens(sessionTokens) }}</span>
+          </span>
           <span v-if="isAgentRunning" class="ai-run-status" :class="{ long: isRunningLong }">
             <span class="ai-run-dot"></span>
             <span class="ai-run-text">{{ t('ai.generating') }}</span>
@@ -45,7 +47,7 @@
     </div>
 
     <!-- 消息列表 (Chat 模式) -->
-    <div v-show="activeTab === 'chat'" class="ai-chat-messages" ref="messagesContainer">
+    <div v-show="activeTab === 'chat'" class="ai-chat-messages" ref="messagesContainer" @click="handleMessagesClick">
       <div v-if="messages.length === 0" class="ai-chat-empty">
         <i class="bi bi-robot" style="font-size: 32px; opacity: 0.5;"></i>
         <p>{{ t('ai.agentHint') }}</p>
@@ -99,6 +101,27 @@
           <!-- 等待首个响应（无思考步骤时）的加载动画 -->
           <div v-if="msg.role === 'assistant' && msg.isRunning && !msg.content && !hasThinkingStep(msg)" class="ai-msg-gen">
             <span></span><span></span><span></span>
+          </div>
+
+          <!-- 失败重试 -->
+          <div v-if="msg.role === 'assistant' && msg.isError && !msg.isRunning" class="ai-msg-error-actions">
+            <button class="msg-retry-btn" @click="retryMessage(index)">
+              <i class="bi bi-arrow-clockwise"></i>{{ t('ai.retry') }}
+            </button>
+          </div>
+
+          <!-- AI 消息底部信息：复制 / 耗时 / token 消耗 -->
+          <div v-if="msg.role === 'assistant' && !msg.isRunning && !msg.isSystemInfo && msg.content" class="ai-msg-meta">
+            <button class="msg-meta-btn" @click="copyMessage(msg, index)" :title="t('ai.copyMessage')">
+              <i :class="copiedIdx === index ? 'bi bi-check-lg' : 'bi bi-copy'"></i>
+              <span v-if="copiedIdx === index">{{ t('ai.copied') }}</span>
+            </button>
+            <span v-if="msg.durationMs != null" class="msg-meta-item" :title="t('ai.duration')">
+              <i class="bi bi-clock"></i>{{ formatDuration(msg.durationMs) }}
+            </span>
+            <span v-if="msg.tokens != null" class="msg-meta-item" :title="t('ai.tokens')">
+              <i class="bi bi-cpu"></i>{{ formatTokens(msg.tokens) }} tokens
+            </span>
           </div>
         </div>
       </div>
@@ -230,6 +253,7 @@ const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'ws-send', msg: any): void;
   (e: 'open-settings'): void;
+  (e: 'terminal-command', payload: { command: string; execute: boolean }): void;
 }>();
 
 // Skill 接口
@@ -257,7 +281,15 @@ interface ChatMessage {
   agentSteps?: AgentStep[];
   isRunning?: boolean;
   skillName?: string;
+  /** 产生该消息时选中的 Skill ID（用于失败重试） */
+  skillId?: string;
   isSystemInfo?: boolean;
+  /** 本次回复总耗时（毫秒） */
+  durationMs?: number;
+  /** 本次回复 token 消耗总数 */
+  tokens?: number;
+  /** 本次回复是否以错误结束（显示重试按钮） */
+  isError?: boolean;
 }
 
 const activeTab = ref<'chat' | 'audit' | 'monitor'>('chat');
@@ -392,6 +424,8 @@ function handleAgentEvent(event: any) {
     case 'done':
       msg.isRunning = false;
       msg.agentSteps = msg.agentSteps.filter(s => s.type !== 'thinking');
+      msg.durationMs = agentStartTime.value ? Date.now() - agentStartTime.value : undefined;
+      msg.tokens = event.usage?.totalTokens;
       if (event.content) {
         const c = event.content;
         // 部分 engine 在流式结束后又于 done 中重发全文，避免与已流式内容重复
@@ -420,6 +454,8 @@ function handleAgentEvent(event: any) {
     case 'error':
       msg.isRunning = false;
       msg.agentSteps = msg.agentSteps.filter(s => s.type !== 'thinking');
+      msg.durationMs = agentStartTime.value ? Date.now() - agentStartTime.value : undefined;
+      msg.isError = true;
       msg.content += `\n\n**错误**: ${event.error || '未知错误'}`;
       isAgentRunning.value = false;
       stopElapsedTimer();
@@ -499,14 +535,21 @@ function handleSend() {
     role: 'user',
     content: actualMessage,
     skillName: activeSkill?.name,
+    skillId: activeSkill?.id,
   });
   inputText.value = '';
   scrollToBottom();
 
-  // 获取终端上下文
+  runAgent(actualMessage, activeSkill);
+
+  // 发送后清除选中的 Skill
+  selectedSkill.value = null;
+}
+
+/** 启动 Agent 执行（handleSend 与失败重试共用） */
+function runAgent(message: string, skill?: SkillItem | null) {
   const context = props.getTerminalContext?.() || '';
 
-  // 通过 WebSocket 启动 Agent
   isAgentRunning.value = true;
   agentStartTime.value = Date.now();
   startElapsedTimer();
@@ -516,15 +559,34 @@ function handleSend() {
     type: 'ai-agent-run',
     data: {
       aiSessionId: props.sessionId,
-      message: actualMessage,
+      message,
       context: context.substring(-3000),
-      skillId: activeSkill?.id,
+      skillId: skill?.id,
       locale: locale.value,
     },
   });
+}
 
-  // 发送后清除选中的 Skill
-  selectedSkill.value = null;
+/** 失败重试：重发该助手消息之前最近的一条用户消息 */
+function retryMessage(index: number) {
+  if (isAgentRunning.value) return;
+  for (let i = index - 1; i >= 0; i--) {
+    const m = messages.value[i];
+    if (m.role === 'user' && !m.isSystemInfo) {
+      const skill = m.skillId ? skills.value.find(s => s.id === m.skillId) || null : null;
+      // 隐藏原错误消息的重试按钮，避免同一消息出现多个重试入口
+      messages.value[index].isError = false;
+      messages.value.push({
+        role: 'user',
+        content: m.content,
+        skillName: m.skillName,
+        skillId: m.skillId,
+      });
+      scrollToBottom();
+      runAgent(m.content, skill);
+      return;
+    }
+  }
 }
 
 function handleStop() {
@@ -552,7 +614,11 @@ function saveDisplayHistory() {
     role: m.role,
     content: m.content,
     skillName: m.skillName,
+    skillId: m.skillId,
     isSystemInfo: m.isSystemInfo,
+    isError: m.isError,
+    durationMs: m.durationMs,
+    tokens: m.tokens,
     agentSteps: m.agentSteps?.filter(s => s.type === 'tool_call').map(s => ({
       type: 'tool_call' as const,
       tool: s.tool,
@@ -573,7 +639,11 @@ async function loadDisplayHistory() {
         role: m.role,
         content: m.content,
         skillName: m.skillName,
+        skillId: m.skillId,
         isSystemInfo: m.isSystemInfo,
+        isError: m.isError,
+        durationMs: m.durationMs,
+        tokens: m.tokens,
         agentSteps: m.agentSteps?.map((s: any) => ({ ...s, collapsed: true })),
         isRunning: false,
       }));
@@ -632,7 +702,11 @@ async function loadPastHistory(targetSessionId: string) {
         role: m.role,
         content: m.content,
         skillName: m.skillName,
+        skillId: m.skillId,
         isSystemInfo: m.isSystemInfo,
+        isError: m.isError,
+        durationMs: m.durationMs,
+        tokens: m.tokens,
         agentSteps: m.agentSteps?.map((s: any) => ({ ...s, collapsed: true })),
         isRunning: false,
       }));
@@ -671,6 +745,76 @@ function toggleStep(step: AgentStep) {
   step.collapsed = !step.collapsed;
 }
 
+// 消息底部信息：复制 / 耗时 / token 格式化
+const copiedIdx = ref(-1);
+let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function copyMessage(msg: ChatMessage, index: number) {
+  const ok = await copyPlainText(msg.content);
+  if (!ok) return;
+  copiedIdx.value = index;
+  if (copiedTimer) clearTimeout(copiedTimer);
+  copiedTimer = setTimeout(() => { copiedIdx.value = -1; }, 1500);
+}
+
+/** 通用剪贴板写入（clipboard API 优先，降级 execCommand） */
+async function copyPlainText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    return true;
+  } catch (e) {
+    console.warn('Failed to copy text:', e);
+    return false;
+  }
+}
+
+/** 代码块操作按钮点击（事件委托：v-html 内容无法直接绑定事件） */
+function handleMessagesClick(e: MouseEvent) {
+  const target = e.target as HTMLElement;
+  const btn = target.closest?.('.code-action-btn') as HTMLElement | null;
+  if (!btn) return;
+  const codeEl = btn.closest('.code-block')?.querySelector('code');
+  const command = (codeEl?.textContent || '').trim();
+  if (!command) return;
+  const action = btn.getAttribute('data-action');
+  if (action === 'copy') {
+    copyPlainText(command);
+  } else if (action === 'insert') {
+    emit('terminal-command', { command, execute: false });
+  } else if (action === 'run') {
+    emit('terminal-command', { command, execute: true });
+  }
+}
+
+function formatDuration(ms: number): string {
+  const sec = ms / 1000;
+  if (sec < 10) return `${sec.toFixed(1)}s`;
+  if (sec < 60) return `${Math.round(sec)}s`;
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function formatTokens(tokens: number): string {
+  if (tokens < 1000) return String(tokens);
+  if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}K`;
+  return `${(tokens / 1000000).toFixed(1)}M`;
+}
+
+/** 当前会话 token 累计（全部消息 tokens 之和，含加载的历史） */
+const sessionTokens = computed(() => messages.value.reduce((sum, m) => sum + (m.tokens || 0), 0));
+
 function getToolDisplayCmd(step: AgentStep): string {
   if (step.tool === 'execute_command' && step.args?.command) {
     const cmd = step.args.command;
@@ -691,7 +835,16 @@ function renderMarkdown(text: string): string {
   const codeBlocks: string[] = [];
   let html = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
     const idx = codeBlocks.length;
-    codeBlocks.push(`<pre class="code-block"><code class="language-${lang}">${escapeHtml(code.trim())}</code></pre>`);
+    codeBlocks.push(
+      `<pre class="code-block">` +
+      `<span class="code-actions">` +
+      `<button class="code-action-btn" data-action="run" title="${t('ai.executeCommand')}" aria-label="${t('ai.executeCommand')}"><i class="bi bi-play-fill"></i></button>` +
+      `<button class="code-action-btn" data-action="insert" title="${t('ai.insertToTerminal')}" aria-label="${t('ai.insertToTerminal')}"><i class="bi bi-terminal"></i></button>` +
+      `<button class="code-action-btn" data-action="copy" title="${t('ai.copyCode')}" aria-label="${t('ai.copyCode')}"><i class="bi bi-copy"></i></button>` +
+      `</span>` +
+      `<code class="language-${lang}">${escapeHtml(code.trim())}</code>` +
+      `</pre>`
+    );
     return `\x00CODEBLOCK${idx}\x00`;
   });
 
@@ -787,6 +940,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopElapsedTimer();
+  if (copiedTimer) { clearTimeout(copiedTimer); copiedTimer = null; }
 });
 
 defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
@@ -894,6 +1048,51 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   overflow-x: auto;
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
+}
+/* 代码块操作按钮（执行 / 插入 / 复制） */
+.ai-message-text :deep(.code-block .code-actions) {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin: -4px -4px 6px;
+  user-select: none;
+}
+.ai-message-text :deep(.code-action-btn) {
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ai-message-text :deep(.code-action-btn:hover) {
+  background: rgb(var(--overlay-rgb) / 12%);
+  color: var(--accent);
+}
+
+/* 失败重试按钮 */
+.ai-msg-error-actions {
+  margin-top: 8px;
+}
+.msg-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.msg-retry-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgb(var(--accent-rgb) / 8%);
 }
 .ai-message-text :deep(.inline-code) {
   background: var(--bg-recess-strong);
@@ -1042,6 +1241,24 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   40% { transform: scale(1); }
 }
 
+/* 会话级 token 累计徽标 */
+.ai-session-tokens {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 11px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: rgb(var(--overlay-rgb) / 8%);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.ai-session-tokens i {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
 /* 头部生成状态 */
 .ai-run-status {
   display: inline-flex;
@@ -1102,6 +1319,44 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   0%, 50% { opacity: 1; }
   50.01%, 100% { opacity: 0; }
 }
+
+/* 消息底部信息行：复制 / 耗时 / token 消耗 */
+.ai-msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid rgb(var(--overlay-rgb) / 8%);
+  font-size: 11px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+.msg-meta-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.msg-meta-btn:hover {
+  color: var(--text-primary);
+  background: rgb(var(--overlay-rgb) / 8%);
+}
+.msg-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.msg-meta-item i { font-size: 11px; opacity: 0.8; }
 
 /* 工具调用执行中旋转图标 */
 .spin {

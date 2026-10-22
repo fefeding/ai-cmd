@@ -1,8 +1,8 @@
 const ALLOWED_TAGS = new Set([
-  'A', 'BR', 'CODE', 'EM', 'H2', 'H3', 'H4', 'LI', 'OL', 'PRE', 'STRONG', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'UL',
+  'A', 'BR', 'BUTTON', 'CODE', 'EM', 'H2', 'H3', 'H4', 'I', 'LI', 'OL', 'PRE', 'SPAN', 'STRONG', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'UL',
 ]);
 
-const GLOBAL_ALLOWED_ATTRS = new Set(['class']);
+const GLOBAL_ALLOWED_ATTRS = new Set(['class', 'title', 'data-action', 'aria-label']);
 const URL_ATTRS = new Set(['href']);
 
 function isSafeUrl(value: string): boolean {
