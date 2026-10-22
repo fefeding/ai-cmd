@@ -87,8 +87,19 @@ async function readClipboardVscode(): Promise<string> {
   return resp.text || '';
 }
 
-/** 写剪贴板：VSCode 走桥接，Electron 用 preload，否则 navigator.clipboard / execCommand 兜底 */
+/** 写剪贴板：扩展 WebView 走桥接，Electron 用 preload，否则 navigator.clipboard / execCommand 兜底 */
 export async function writeClipboard(text: string): Promise<void> {
+  // 扩展 WebView 的跨源 iframe 内：优先走桥接。
+  // 不能把宿主注入的 electronAPI.clipboard 放在前面——部分 VSCode 系宿主（如 CodeBuddy）
+  // 会向页面注入该对象，但它在跨源 iframe 中并不生效，命中后复制会静默失败。
+  if (isVscodeThemeHost()) {
+    try {
+      await writeClipboardVscode(text);
+      return;
+    } catch (err) {
+      console.warn('[aicmd] clipboard bridge write failed, fallback:', err);
+    }
+  }
   const clip = (window as any).electronAPI?.clipboard;
   if (clip) {
     try {
@@ -122,8 +133,17 @@ export async function writeClipboard(text: string): Promise<void> {
   }
 }
 
-/** 读剪贴板：VSCode 走桥接，Electron 用 preload，否则 navigator.clipboard 兜底 */
+/** 读剪贴板：扩展 WebView 走桥接，Electron 用 preload，否则 navigator.clipboard 兜底 */
 export async function readClipboard(): Promise<string> {
+  // 同 writeClipboard：扩展 WebView 跨源 iframe 内优先走桥接
+  if (isVscodeThemeHost()) {
+    try {
+      const text = await readClipboardVscode();
+      if (text) return text;
+    } catch (err) {
+      console.warn('[aicmd] clipboard bridge read failed, fallback:', err);
+    }
+  }
   const clip = (window as any).electronAPI?.clipboard;
   if (clip) {
     try {
@@ -282,7 +302,10 @@ function handlePaste(e: ClipboardEvent): void {
  */
 export function installVscodeClipboardBridge(): void {
   if (bridgeInstalled) return;
-  if (!isVscodeWebviewRuntime()) return;
+  // 这里必须用 isVscodeThemeHost()（iframe 是否由扩展壳加载），不能沿用
+  // isVscodeWebviewRuntime()——后者会把「存在宿主注入的 electronAPI」判定为非扩展环境，
+  // 导致 CodeBuddy 等 VSCode 系宿手下整个桥接被跳过、快捷键处理完全不生效。
+  if (!isVscodeThemeHost()) return;
   bridgeInstalled = true;
 
   // 1) polyfill navigator.clipboard，使任何直接调用它的代码也能工作
@@ -306,4 +329,9 @@ export function installVscodeClipboardBridge(): void {
   document.addEventListener('copy', handleCopyCut as EventListener, true);
   document.addEventListener('cut', handleCopyCut as EventListener, true);
   document.addEventListener('paste', handlePaste as EventListener, true);
+
+  // 便于排查宿主差异（如 CodeBuddy 注入了无效的 electronAPI.clipboard）
+  console.log('[aicmd] clipboard bridge installed', {
+    hasElectronClipboard: !!(window as any).electronAPI?.clipboard,
+  });
 }
