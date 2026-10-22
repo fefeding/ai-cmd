@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.19
+
+- 修复 CodeBuddy 等 VSCode 系宿主下 AI 对话 / AI 配置输入框复制粘贴全失效：宿主会注入 `electronAPI.clipboard`，此前错误的宿主判定会使桥接安装被跳过、且请求命中该无效实现。现统一以「iframe 是否由扩展壳加载」为准判定，宿主 preload 降级为桥接失败后的兜底。
+
 ## 0.1.18
 
 - 修复 VSCode WebView 内 AI 配置 / AI 对话等输入框仍无法复制粘贴：跨源 iframe 下浏览器不会派发 `copy`/`paste` 事件，改为直接拦截 `Ctrl/Cmd + C/X/V` 快捷键完成复制/剪切/粘贴（粘贴时按光标插入并派发 `input` 事件更新 `v-model`）。
