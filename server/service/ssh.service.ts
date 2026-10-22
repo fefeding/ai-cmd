@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getDataPath } from '../utils/data-dir';
 import { shellQuote } from '../utils/shell';
+import { stripAnsiEscapes } from '../utils/ansi';
 
 // 尝试加载 node-pty，如果可用则使用 PTY 模式
 let nodePty: any = null;
@@ -825,7 +826,7 @@ export class SSHService {
       this.writeData(sessionId, cmd + '\r');
       const output = await outputPromise;
       // Clean ANSI escape codes for more reliable marker matching
-      const cleaned = output.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1B\].*?\x07/g, '').replace(/\r/g, '');
+      const cleaned = stripAnsiEscapes(output).replace(/\r/g, '');
       // Extract our marker line
       for (const line of cleaned.split('\n')) {
         const trimmed = line.trim();
@@ -976,7 +977,7 @@ export class SSHService {
     // === 最终兜底：如果只匹配到极少信息，保留原始 MOTD 作为上下文 ===
     if (Object.keys(info).length === 0) {
       // 完全没有匹配，返回清理后的原始文本（截取前 800 字符）
-      const cleaned = motd.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').replace(/\r/g, '').trim();
+      const cleaned = stripAnsiEscapes(motd).replace(/\r/g, '').trim();
       return cleaned.substring(0, 800);
     }
 
@@ -1457,10 +1458,7 @@ Write-Output "__DOCKER__: $dockerVer"
   getOutputBuffer(sessionId: string, maxLines = 200): string {
     const session = this.sessions.get(sessionId);
     if (!session || !session.outputBuffer) return '';
-    const cleaned = session.outputBuffer
-      .replace(/\x1B\][^\x07]*\x07/g, '')
-      .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
-      .replace(/\x1B[^\x1B]*[a-zA-Z]/g, '');
+    const cleaned = stripAnsiEscapes(session.outputBuffer);
     const lines = cleaned.split('\n');
     return lines.slice(-maxLines).join('\n');
   }
@@ -1476,10 +1474,7 @@ Write-Output "__DOCKER__: $dockerVer"
    */
   captureOutputIdle(sessionId: string, idleMs = 700, maxMs = 10000): Promise<string> {
     return new Promise((resolve) => {
-      const clean = (s: string) => s
-        .replace(/\x1B\][^\x07]*\x07/g, '')
-        .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
-        .replace(/\x1B[^\x1B]*[a-zA-Z]/g, '');
+      const clean = (s: string) => stripAnsiEscapes(s);
 
       const session = this.sessions.get(sessionId);
       let raw = '';
@@ -1565,11 +1560,7 @@ Write-Output "__DOCKER__: $dockerVer"
         } else if (listener) {
           this.removeOutputListener(sessionId);
         }
-        resolve(output
-          .replace(/\x1B\][^\x07]*\x07/g, '')
-          .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
-          .replace(/\x1B[^\x1B]*[a-zA-Z]/g, '')
-        );
+        resolve(stripAnsiEscapes(output));
       };
 
       const timer = setTimeout(finish, timeoutMs);
@@ -1826,12 +1817,8 @@ Write-Output "__DOCKER__: $dockerVer"
     this.writeData(sessionId, ` printf '\\n${marker}:%s\\n' "$PWD"\r`);
     const output = await outputPromise;
     console.log(`[SSH] probeCwdViaShell: raw output: ${JSON.stringify(output.substring(0, 500))}`);
-    // 更彻底的 ANSI 清理：包括 OSC 序列、CSI 序列、以及各种控制字符
-    const cleaned = output
-      .replace(/\x1B\][^\x07]*\x07/g, '')  // OSC 序列
-      .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '') // CSI 序列
-      .replace(/\x1B[^\x1B]*[a-zA-Z]/g, '')  // 其他转义序列
-      .replace(/\r/g, '');
+    // 更彻底的 ANSI 清理：OSC / CSI / 其它有界转义（不得使用会吞正文的贪婪兜底）
+    const cleaned = stripAnsiEscapes(output).replace(/\r/g, '');
     const isCommandEcho = (text: string) => (
       text.includes('printf') ||
       text.includes('$PWD') ||
