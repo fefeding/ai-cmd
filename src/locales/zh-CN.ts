@@ -189,6 +189,8 @@ export default {
     stopAgent: '停止',
     agentDone: '任务完成',
     agentError: '执行出错',
+    generating: '生成中...',
+    runningLong: '执行较慢，可点击停止',
     maxIterations: '已达到最大执行次数',
     skills: '技能',
     selectSkill: '选择技能',

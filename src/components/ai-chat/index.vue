@@ -26,6 +26,11 @@
           <button class="btn-ai-action" @click="toggleHistoryPanel" :title="t('ai.history')" :class="{ active: showHistoryPanel }">
             <i class="bi bi-clock-history"></i>
           </button>
+          <span v-if="isAgentRunning" class="ai-run-status" :class="{ long: isRunningLong }">
+            <span class="ai-run-dot"></span>
+            <span class="ai-run-text">{{ t('ai.generating') }}</span>
+            <span class="ai-run-time">{{ elapsedText }}</span>
+          </span>
           <button v-if="isAgentRunning" class="btn-ai-action btn-stop" @click="handleStop" :title="t('ai.stopAgent')">
             <i class="bi bi-stop-circle"></i>
           </button>
@@ -78,7 +83,8 @@
                   <i :class="step.collapsed ? 'bi bi-chevron-right' : 'bi bi-chevron-down'" class="step-chevron"></i>
                   <i class="bi bi-terminal step-icon"></i>
                   <code class="step-cmd">{{ getToolDisplayCmd(step) }}</code>
-                  <i v-if="step.result" :class="step.collapsed ? 'bi bi-check-circle' : 'bi bi-check-circle-fill'" class="step-status"></i>
+                  <i v-if="step.type === 'tool_call' && !step.result && isAgentRunning" class="step-status bi bi-arrow-repeat spin"></i>
+                  <i v-else-if="step.result" :class="step.collapsed ? 'bi bi-check-circle' : 'bi bi-check-circle-fill'" class="step-status"></i>
                 </div>
                 <div v-if="!step.collapsed && step.result" class="step-result">
                   <pre>{{ step.result }}</pre>
@@ -89,6 +95,11 @@
 
           <!-- AI 回复文本 -->
           <div class="ai-message-text" v-if="msg.content" v-html="renderMarkdown(msg.content)"></div>
+          <span v-if="msg.role === 'assistant' && msg.isRunning && msg.content" class="ai-caret"></span>
+          <!-- 等待首个响应（无思考步骤时）的加载动画 -->
+          <div v-if="msg.role === 'assistant' && msg.isRunning && !msg.content && !hasThinkingStep(msg)" class="ai-msg-gen">
+            <span></span><span></span><span></span>
+          </div>
         </div>
       </div>
     </div>
@@ -198,7 +209,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, watch, nextTick, onMounted } from 'vue';
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import * as aiService from '@/service/ai';
 import AuditPanel from '@/components/audit-panel/index.vue';
@@ -257,6 +268,38 @@ const logMonitorRef = ref<InstanceType<typeof LogMonitor>>();
 const inputText = ref('');
 const isAgentRunning = ref(false);
 const messages = ref<ChatMessage[]>([]);
+
+// 执行耗时统计：用于显示「生成中 / 执行较慢」状态
+const agentStartTime = ref(0);
+const now = ref(Date.now());
+let elapsedTimer: ReturnType<typeof setInterval> | null = null;
+
+const elapsedText = computed(() => {
+  if (!agentStartTime.value) return '';
+  const sec = Math.floor((now.value - agentStartTime.value) / 1000);
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m > 0 ? `${m}:${String(s).padStart(2, '0')}` : `${s}s`;
+});
+
+// 超过 30s 视为执行较慢，提示用户可停止
+const isRunningLong = computed(() => {
+  if (!agentStartTime.value) return false;
+  return now.value - agentStartTime.value > 30000;
+});
+
+function startElapsedTimer() {
+  stopElapsedTimer();
+  now.value = Date.now();
+  elapsedTimer = setInterval(() => { now.value = Date.now(); }, 1000);
+}
+function stopElapsedTimer() {
+  if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+}
+
+function hasThinkingStep(msg: ChatMessage): boolean {
+  return !!(msg.agentSteps && msg.agentSteps.some(s => s.type === 'thinking'));
+}
 
 // Skills 相关
 const skills = ref<SkillItem[]>([]);
@@ -353,6 +396,7 @@ function handleAgentEvent(event: any) {
         msg.content += event.content;
       }
       isAgentRunning.value = false;
+      stopElapsedTimer();
       currentAssistantIdx = -1;
       saveDisplayHistory();
       break;
@@ -369,6 +413,7 @@ function handleAgentEvent(event: any) {
       msg.agentSteps = msg.agentSteps.filter(s => s.type !== 'thinking');
       msg.content += `\n\n**错误**: ${event.error || '未知错误'}`;
       isAgentRunning.value = false;
+      stopElapsedTimer();
       currentAssistantIdx = -1;
       saveDisplayHistory();
       break;
@@ -454,6 +499,8 @@ function handleSend() {
 
   // 通过 WebSocket 启动 Agent
   isAgentRunning.value = true;
+  agentStartTime.value = Date.now();
+  startElapsedTimer();
   currentAssistantIdx = -1;
 
   emit('ws-send', {
@@ -729,6 +776,10 @@ onMounted(() => {
   loadSkills();
 });
 
+onUnmounted(() => {
+  stopElapsedTimer();
+});
+
 defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
 </script>
 
@@ -980,6 +1031,76 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
 @keyframes bounce {
   0%, 80%, 100% { transform: scale(0); }
   40% { transform: scale(1); }
+}
+
+/* 头部生成状态 */
+.ai-run-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 11px;
+  font-size: 11px;
+  color: var(--warning-strong);
+  background: rgb(var(--warning-strong-rgb) / 8%);
+}
+.ai-run-status.long {
+  color: var(--danger);
+  background: rgb(var(--danger-rgb) / 12%);
+}
+.ai-run-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 1s infinite ease-in-out;
+}
+.ai-run-time {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+@keyframes pulse {
+  0%, 100% { transform: scale(0.5); opacity: 0.45; }
+  50% { transform: scale(1); opacity: 1; }
+}
+
+/* 助手消息：等待首个响应 / 流式光标 */
+.ai-msg-gen {
+  display: inline-flex;
+  gap: 3px;
+  margin-top: 4px;
+}
+.ai-msg-gen span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  animation: bounce 1.4s infinite ease-in-out both;
+}
+.ai-msg-gen span:nth-child(1) { animation-delay: -0.32s; }
+.ai-msg-gen span:nth-child(2) { animation-delay: -0.16s; }
+
+.ai-caret {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  margin-left: 2px;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  animation: blink 1s steps(2, start) infinite;
+}
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+
+/* 工具调用执行中旋转图标 */
+.spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .ai-chat-input {
