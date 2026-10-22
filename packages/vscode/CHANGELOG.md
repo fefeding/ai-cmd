@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.22
+
+- 修复更新 `@cicctencent/agent-core` 后终端输出彻底捕不到的问题：
+  - 根因：新版 agent-core 内置 `execute_command`/`read_terminal` 走 `ToolContext.shell.exec/read`，宿主须在 `engine.run` 的 `context.custom.shell` 注入真正的执行器；此前未注入，内置工具落到 noop shell（不报错但无输出）。
+  - 修复：`agentRun` 注入 `custom.shell`（exec→executeCommand、write→writeData、read→readTerminal），并使 `read_terminal` 优先读取新增的会话输出缓冲（空闲终端也能读到当前屏幕）。
+
 ## 0.1.21
 
 - AI 智能体修复：
