@@ -41,6 +41,8 @@ export interface AgentEvent {
   result?: string;
   error?: string;
   auditEntry?: any;
+  /** LLM token 消耗统计（done 事件携带） */
+  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
 }
 
 export type AgentEventCallback = (event: AgentEvent) => void;
@@ -83,6 +85,7 @@ interface HistoryFile {
 interface ISSHService {
   writeData(sessionId: string, data: string | Buffer): boolean;
   captureOutput(sessionId: string, timeoutMs?: number): Promise<string>;
+  captureOutputIdle(sessionId: string, idleMs?: number, maxMs?: number): Promise<string>;
   getOutputBuffer(sessionId: string, maxLines?: number): string;
   getSession(sessionId: string): any;
   getSystemContext(sessionId: string): Promise<string>;
@@ -527,13 +530,23 @@ export class AIService {
     if (check.rewritten) console.log(`[AIService] Safety: rewrote "${command}" -> "${actualCommand}"`);
 
     try {
-      const outputPromise = this.sshService.captureOutput(sessionId, timeout);
+      // 采用「空闲即停」采集：不再用固定 2s 窗口硬等，输出稳定下来即返回（最长 10s 兜底），
+      // 避免慢命令的输出被窗口截断、只拿到尾部。
+      const outputPromise = this.sshService.captureOutputIdle(sessionId, 700, 10000);
       this.sshService.writeData(sessionId, actualCommand + '\n');
       const output = await outputPromise;
+
+      // 诊断日志：便于排查「命令输出捕不到 / 被截断」问题
+      const preview = output.length > 600
+        ? `${JSON.stringify(output.slice(0, 300))} ...TAIL... ${JSON.stringify(output.slice(-300))}`
+        : JSON.stringify(output);
+      console.log(`[AIService] exec cmd=${JSON.stringify(actualCommand.slice(0, 80))} timeout=${timeout} rawLen=${output.length}`);
+      console.log(`[AIService] exec rawOutput=${preview}`);
 
       const lines = output.split('\n');
       if (lines.length > 0 && lines[0].trim().includes(actualCommand.trim().substring(0, 20))) lines.shift();
       const cleanOutput = lines.join('\n').trim();
+      console.log(`[AIService] exec cleanLen=${cleanOutput.length}`);
       if (!cleanOutput) return '(Command executed, no output)';
 
       const maxLength = 5000;
@@ -552,9 +565,11 @@ export class AIService {
       // 优先读取会话累积输出缓冲（当前屏幕内容），空闲终端也能拿到结果，
       // 不再依赖「调用后新到达」的采集窗口，避免一直捕不到输出。
       const buf = this.sshService.getOutputBuffer(sessionId, 200);
+      console.log(`[AIService] read_terminal bufferLen=${buf.length}`);
       if (buf && buf.trim()) return buf;
-      // 兜底：缓冲为空时，尝试采集调用后 1500ms 内新到达的输出
-      const output = await this.sshService.captureOutput(sessionId, 1500);
+      // 兜底：缓冲为空时，尝试采集调用后新到达的输出（空闲即停，最长 3s）
+      const output = await this.sshService.captureOutputIdle(sessionId, 500, 3000);
+      console.log(`[AIService] read_terminal fallbackLen=${output.length}`);
       if (!output.trim()) return '(No terminal output)';
       return output.split('\n').slice(-200).join('\n');
     } catch (error: any) {
@@ -595,7 +610,7 @@ export class AIService {
       case 'tool_call':   return { type: 'tool_call', tool: event.tool, args: event.args };
       case 'tool_result': return { type: 'tool_result', tool: event.tool, result: event.result };
       case 'message':     return { type: 'message', content: event.content };
-      case 'done':        return { type: 'done', content: event.content };
+      case 'done':        return { type: 'done', content: event.content, usage: event.usage };
       case 'error':       return { type: 'error', error: event.error };
       default:            return null;
     }

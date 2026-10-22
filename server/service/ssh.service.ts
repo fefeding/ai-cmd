@@ -1466,6 +1466,70 @@ Write-Output "__DOCKER__: $dockerVer"
   }
 
   /**
+   * 采集输出并「空闲即停」：新数据停止到达超过 idleMs 后认为本次输出结束，
+   * 最长不超过 maxMs。相比固定时间窗口，能完整拿到慢命令的输出，
+   * 又不会像定长等待那样白白浪费时间。
+   * @param sessionId 会话 ID
+   * @param idleMs 判定输出结束的静默时长，默认 700ms
+   * @param maxMs 最长等待（兜底），默认 10000ms
+   * @returns 已去除 ANSI 转义序列的输出文本
+   */
+  captureOutputIdle(sessionId: string, idleMs = 700, maxMs = 10000): Promise<string> {
+    return new Promise((resolve) => {
+      const clean = (s: string) => s
+        .replace(/\x1B\][^\x07]*\x07/g, '')
+        .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
+        .replace(/\x1B[^\x1B]*[a-zA-Z]/g, '');
+
+      const session = this.sessions.get(sessionId);
+      let raw = '';
+      let settled = false;
+      let lastLen = 0;
+      let lastChangeAt = Date.now();
+      let streamHandler: ((chunk: Buffer) => void) | null = null;
+      let listener: ((data: string) => void) | null = null;
+      let idleTimer: ReturnType<typeof setInterval> | null = null;
+      let maxTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (idleTimer) clearInterval(idleTimer);
+        if (maxTimer) clearTimeout(maxTimer);
+        if (streamHandler && session?.stream) {
+          session.stream.removeListener('data', streamHandler);
+        } else if (listener) {
+          this.removeOutputListener(sessionId);
+        }
+        resolve(clean(raw));
+      };
+
+      idleTimer = setInterval(() => {
+        if (settled) return;
+        const now = Date.now();
+        if (raw.length !== lastLen) {
+          lastLen = raw.length;
+          lastChangeAt = now;
+          return;
+        }
+        // 已有数据且静默超过 idleMs，判定本次输出结束
+        if (raw.length > 0 && now - lastChangeAt >= idleMs) finish();
+      }, 100);
+      maxTimer = setTimeout(finish, maxMs);
+
+      const onData = (text: string) => { raw += text; };
+      if (session?.stream) {
+        streamHandler = (chunk: Buffer) => onData(chunk.toString('utf-8'));
+        session.stream.on('data', streamHandler);
+      } else {
+        // 本地 shell fallback：通过 notifyOutput 机制
+        listener = onData;
+        this.addOutputListener(sessionId, listener);
+      }
+    });
+  }
+
+  /**
    * 捕获会话在指定时间内的输出
    * @param sessionId 会话 ID
    * @param timeoutMs 等待时间（毫秒），默认 2000
