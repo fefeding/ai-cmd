@@ -1496,15 +1496,7 @@ Write-Output "__DOCKER__: $dockerVer"
         } else if (listener) {
           this.removeOutputListener(sessionId);
         }
-        // 诊断：记录清洗前的原始内容，用于判断是否为 ANSI 清洗误删正文
-        const cleaned = clean(raw);
-        const jsonPreview = (s: string) => s.length > 700
-          ? `${JSON.stringify(s.slice(0, 350))} ...TAIL... ${JSON.stringify(s.slice(-350))}`
-          : JSON.stringify(s);
-        if (raw.length !== cleaned.length) {
-          console.log(`[SSH] captureIdle rawLen=${raw.length} cleanLen=${cleaned.length} raw=${jsonPreview(raw)}`);
-        }
-        resolve(cleaned);
+        resolve(clean(raw));
       };
 
       idleTimer = setInterval(() => {
@@ -1816,7 +1808,6 @@ Write-Output "__DOCKER__: $dockerVer"
     const outputPromise = this.captureOutput(sessionId, 3000, stopWhen);
     this.writeData(sessionId, ` printf '\\n${marker}:%s\\n' "$PWD"\r`);
     const output = await outputPromise;
-    console.log(`[SSH] probeCwdViaShell: raw output: ${JSON.stringify(output.substring(0, 500))}`);
     // 更彻底的 ANSI 清理：OSC / CSI / 其它有界转义（不得使用会吞正文的贪婪兜底）
     const cleaned = stripAnsiEscapes(output).replace(/\r/g, '');
     const isCommandEcho = (text: string) => (
