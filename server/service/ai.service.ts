@@ -83,6 +83,7 @@ interface HistoryFile {
 interface ISSHService {
   writeData(sessionId: string, data: string | Buffer): boolean;
   captureOutput(sessionId: string, timeoutMs?: number): Promise<string>;
+  getOutputBuffer(sessionId: string, maxLines?: number): string;
   getSession(sessionId: string): any;
   getSystemContext(sessionId: string): Promise<string>;
 }
@@ -548,16 +549,34 @@ export class AIService {
   private async readTerminal(sessionId: string): Promise<string> {
     if (!this.sshService) return 'Error: SSH service not available';
     try {
-      // 延长采集窗口，尽量捕获命令尾部/提示符回显；保留空行以维持输出结构；
-      // 最多取末尾 200 行，避免结构被破坏或关键输出被裁掉。
-      // 注意：captureOutput 仅采集「调用后新到达」的输出，空闲终端会返回空，
-      // 命令结果应以 execute_command 的返回为准。
+      // 优先读取会话累积输出缓冲（当前屏幕内容），空闲终端也能拿到结果，
+      // 不再依赖「调用后新到达」的采集窗口，避免一直捕不到输出。
+      const buf = this.sshService.getOutputBuffer(sessionId, 200);
+      if (buf && buf.trim()) return buf;
+      // 兜底：缓冲为空时，尝试采集调用后 1500ms 内新到达的输出
       const output = await this.sshService.captureOutput(sessionId, 1500);
       if (!output.trim()) return '(No terminal output)';
       return output.split('\n').slice(-200).join('\n');
     } catch (error: any) {
       return `Failed to read terminal: ${error.message}`;
     }
+  }
+
+  /**
+   * 构建注入到 agent-core ToolContext.shell 的执行器。
+   * 新版 agent-core 内置的 execute_command / read_terminal 走 ctx.shell.exec/read，
+   * 若不注入则落到 noop shell（不报错但捕不到任何输出）。这里接到本服务的 sshService，
+   * 使无论引擎使用 fshell 自有工具还是 agent-core 内置工具，都能正确执行命令与读取终端。
+   */
+  private buildShellExecutor(sessionId: string) {
+    return {
+      exec: async (command: string, timeoutMs?: number) =>
+        this.executeCommand(command, sessionId, timeoutMs || 2000),
+      write: (data: string) => {
+        this.sshService?.writeData(sessionId, data);
+      },
+      read: async (_lines?: number) => this.readTerminal(sessionId),
+    };
   }
 
   // ========== 系统环境上下文 ==========
@@ -629,10 +648,15 @@ export class AIService {
     this.abortControllers.set(sessionId, ctrl);
 
     try {
+      // 注入 shell 执行器：新版 agent-core 的内置 execute_command/read_terminal 走
+      // ctx.shell.exec/read，不注入则落到 noop shell（捕不到任何输出）。
+      const shellExecutor = this.buildShellExecutor(sessionId);
       const eventStream = engine.run({
         sessionId,
         message: userMessage,
-        context: context ? { sessionId, terminalOutput: context } : { sessionId },
+        context: context
+          ? { sessionId, terminalOutput: context, custom: { shell: shellExecutor } }
+          : { sessionId, custom: { shell: shellExecutor } },
         abortSignal: ctrl.signal,
         systemPromptOverride: systemPromptOverride || undefined,
         skillId,

@@ -41,6 +41,8 @@ interface TerminalSession {
   cwdReliable?: boolean;
   /** 未提交的输入行缓冲（xterm 逐字符发送，需累积成完整命令行才能解析 cd） */
   inputBuffer?: string;
+  /** 累积的终端输出缓冲（供 Agent 的 read_terminal / shell.read 读取当前屏幕内容，避免空闲时抓不到输出） */
+  outputBuffer?: string;
   /** 远端交互式 shell 的 PID（用于 /proc/<pid>/cwd 精确读取当前目录，不影响终端） */
   shellPid?: number;
   /** 复用的 SFTP 实例（每个会话只建一次，避免 channel 泄漏） */
@@ -1430,6 +1432,14 @@ Write-Output "__DOCKER__: $dockerVer"
    * 通知输出监听器（由 WebSocket 处理器在收到终端输出时调用）
    */
   notifyOutput(sessionId: string, data: string): void {
+    // 累积到会话输出缓冲（供 Agent 的 read_terminal / shell.read 读取）
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      let buf = (session.outputBuffer || '') + data;
+      // 限制缓冲上限，避免长会话无限增长（保留尾部约 32KB）
+      if (buf.length > 32768) buf = buf.slice(-32768);
+      session.outputBuffer = buf;
+    }
     const listener = this.outputListeners.get(sessionId);
     if (listener) {
       try {
@@ -1438,6 +1448,21 @@ Write-Output "__DOCKER__: $dockerVer"
         // 忽略监听器错误
       }
     }
+  }
+
+  /**
+   * 读取会话累积的输出缓冲（当前屏幕/历史内容），不依赖「调用后新到达」的采集窗口。
+   * @param maxLines 最多返回末尾行数，默认 200
+   */
+  getOutputBuffer(sessionId: string, maxLines = 200): string {
+    const session = this.sessions.get(sessionId);
+    if (!session || !session.outputBuffer) return '';
+    const cleaned = session.outputBuffer
+      .replace(/\x1B\][^\x07]*\x07/g, '')
+      .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
+      .replace(/\x1B[^\x1B]*[a-zA-Z]/g, '');
+    const lines = cleaned.split('\n');
+    return lines.slice(-maxLines).join('\n');
   }
 
   /**
