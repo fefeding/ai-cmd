@@ -11,6 +11,10 @@ import 'bootstrap';
 
 import toastPlugin from '@/components/toast/index';
 import modalPlugin from '@/components/modal/index';
+import { installVscodeClipboardBridge } from '@/utils/vscode-clipboard';
+
+// VSCode WebView 跨源 iframe 内：为普通输入框（AI 配置 / AI 对话等）安装剪贴板桥接
+installVscodeClipboardBridge();
 
 const app = createApp(App);
 const pinia = createPinia();

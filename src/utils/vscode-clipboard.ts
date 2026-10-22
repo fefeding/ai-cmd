@@ -145,3 +145,113 @@ export async function readClipboard(): Promise<string> {
     return '';
   }
 }
+
+/* ===================== 全局剪贴板桥接（用于普通输入框） ===================== */
+
+let bridgeInstalled = false;
+
+function isEditableEl(
+  el: EventTarget | null
+): el is HTMLInputElement | HTMLTextAreaElement {
+  const node = el as HTMLElement | null;
+  if (!node) return false;
+  if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement) return true;
+  return !!(node as HTMLElement).isContentEditable;
+}
+
+function isInTerminal(target: EventTarget | null): boolean {
+  const node = target as HTMLElement | null;
+  if (!node || typeof node.closest !== 'function') return false;
+  return !!node.closest('.xterm');
+}
+
+function getSelectionText(): string {
+  const sel = window.getSelection();
+  if (sel && sel.toString()) return sel.toString();
+  const el = document.activeElement as
+    | (HTMLInputElement & HTMLTextAreaElement)
+    | null;
+  if (el && typeof el.selectionStart === 'number' && typeof el.selectionEnd === 'number' && el.value) {
+    return el.value.slice(el.selectionStart, el.selectionEnd);
+  }
+  return '';
+}
+
+function insertTextAtCursor(el: HTMLElement, text: string): void {
+  try {
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      el.value = el.value.slice(0, start) + text + el.value.slice(end);
+      const pos = start + text.length;
+      el.setSelectionRange(pos, pos);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    } else if ((el as HTMLElement).isContentEditable) {
+      document.execCommand('insertText', false, text);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function handleCopyCut(e: ClipboardEvent): void {
+  if (isInTerminal(e.target)) return; // 终端由自身逻辑处理，避免重复
+  const text = getSelectionText();
+  if (!text) return; // 无选区，交给浏览器（通常也无内容）
+  e.preventDefault();
+  writeClipboard(text).catch(() => {});
+  // cut 在可编辑输入框内还需删除选区
+  const el = document.activeElement;
+  if (
+    e.type === 'cut' &&
+    (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)
+  ) {
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? 0;
+    el.value = el.value.slice(0, start) + el.value.slice(end);
+    el.setSelectionRange(start, start);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+}
+
+function handlePaste(e: ClipboardEvent): void {
+  if (isInTerminal(e.target)) return;
+  const el = document.activeElement;
+  if (!isEditableEl(el)) return; // 当前没有可编辑焦点，交给默认行为
+  e.preventDefault();
+  readClipboard()
+    .then((text) => {
+      if (text) insertTextAtCursor(el as HTMLElement, text);
+    })
+    .catch(() => {});
+}
+
+/**
+ * 在 VSCode 扩展的跨源 iframe 内安装全局剪贴板桥接，让所有普通输入框
+ * （AI 配置、AI 对话、文件管理等）的复制 / 粘贴都走 vscode.env.clipboard。
+ * 仅在 VSCode WebView 运行时生效，Electron / 浏览器行为不变。
+ */
+export function installVscodeClipboardBridge(): void {
+  if (bridgeInstalled) return;
+  if (!isVscodeWebviewRuntime()) return;
+  bridgeInstalled = true;
+
+  // 1) polyfill navigator.clipboard，使任何直接调用它的代码也能工作
+  try {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      enumerable: true,
+      value: {
+        writeText: (t: string) => writeClipboard(t).then(() => undefined),
+        readText: () => readClipboard(),
+      },
+    });
+  } catch {
+    /* 某些浏览器 navigator.clipboard 为只读 getter，忽略 */
+  }
+
+  // 2) 拦截原生 copy / cut / paste 事件（capture 阶段优先于默认行为）
+  document.addEventListener('copy', handleCopyCut as EventListener, true);
+  document.addEventListener('cut', handleCopyCut as EventListener, true);
+  document.addEventListener('paste', handlePaste as EventListener, true);
+}

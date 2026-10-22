@@ -14,6 +14,7 @@ import { createPinia } from 'pinia';
 import i18n from '@/utils/i18n';
 import VscodeTermWrapper from '@/vscode-term-wrapper.vue';
 import { initVscodeTheme } from '@/utils/vscode-theme';
+import { installVscodeClipboardBridge } from '@/utils/vscode-clipboard';
 
 import 'bootstrap/dist/css/bootstrap.css';
 import 'bootstrap-icons/font/bootstrap-icons.css';
@@ -25,6 +26,9 @@ import modalPlugin from '@/components/modal/index';
 
 // 跟随 VSCode 主题（非 VSCode 环境为空操作）
 initVscodeTheme();
+
+// VSCode WebView 跨源 iframe 内：为普通输入框（AI 对话 / 文件管理等）安装剪贴板桥接
+installVscodeClipboardBridge();
 
 const params = new URLSearchParams(location.search);
 const connectionId = params.get('connectionId') || '__local__';
