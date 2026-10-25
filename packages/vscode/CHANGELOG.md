@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.24
+
+- 扩展名称与说明支持中英文：通过 VSCode NLS 机制，`displayName`/`description` 改为占位符，新增 `package.nls.json`（英文默认）与 `package.nls.zh-cn.json`（简体中文），随 VSCode 界面语言自动切换。
+
 ## 0.1.23
 
 - 修复 AI 智能体在 SSH/终端会话中**命令输出被截断、只剩提示符**的问题（更新 `@cicctencent/agent-core` 后尤为明显）：
