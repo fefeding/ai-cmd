@@ -98,11 +98,14 @@ const config = defineConfig({
             name: 'fix-html-paths',
             writeBundle: async () => {
                 const publicDir = path.resolve(__dirname, './dist/public');
+                // 产物文件名为固定 [name].js（无内容哈希），WebView 极易缓存旧版本 JS，
+                // 导致重建后前端改动迟迟不生效；这里给静态资源引用加上构建时间戳强制失效缓存。
+                const assetVersion = Date.now().toString(36);
                 // HTML 输出路径随源目录变化：src/index.html -> dist/public/src/index.html
                 const htmlPath = path.join(publicDir, 'src/index.html');
                 if (fs.existsSync(htmlPath)) {
                     let html = fs.readFileSync(htmlPath, 'utf-8');
-                    html = html.replace(/\.\.\/([a-zA-Z0-9_-]+\.(js|css|woff|woff2|png|jpg|jpeg|gif|svg|ico))/g, '/public/$1');
+                    html = html.replace(/\.\.\/([a-zA-Z0-9_-]+\.(js|css|woff|woff2|png|jpg|jpeg|gif|svg|ico))/g, '/public/$1?v=' + assetVersion);
                     fs.writeFileSync(htmlPath, html);
                 }
                 // 纯终端页（VSCode 扩展 WebView 用）：留在 src/ 下被静态服务，
@@ -110,21 +113,21 @@ const config = defineConfig({
                 const termHtmlPath = path.join(publicDir, 'src/term.html');
                 if (fs.existsSync(termHtmlPath)) {
                     let termHtml = fs.readFileSync(termHtmlPath, 'utf-8');
-                    termHtml = termHtml.replace(/\.\.\/([a-zA-Z0-9_-]+\.(js|css|woff|woff2|png|jpg|jpeg|gif|svg|ico))/g, '/public/$1');
+                    termHtml = termHtml.replace(/\.\.\/([a-zA-Z0-9_-]+\.(js|css|woff|woff2|png|jpg|jpeg|gif|svg|ico))/g, '/public/$1?v=' + assetVersion);
                     fs.writeFileSync(termHtmlPath, termHtml);
                 }
                 // VSCode 扩展 WebView 专用终端页（复用 TerminalTab，含 AI 对话 / 文件浏览）
                 const vscodeHtmlPath = path.join(publicDir, 'src/vscode-term.html');
                 if (fs.existsSync(vscodeHtmlPath)) {
                     let vscodeHtml = fs.readFileSync(vscodeHtmlPath, 'utf-8');
-                    vscodeHtml = vscodeHtml.replace(/\.\.\/([a-zA-Z0-9_-]+\.(js|css|woff|woff2|png|jpg|jpeg|gif|svg|ico))/g, '/public/$1');
+                    vscodeHtml = vscodeHtml.replace(/\.\.\/([a-zA-Z0-9_-]+\.(js|css|woff|woff2|png|jpg|jpeg|gif|svg|ico))/g, '/public/$1?v=' + assetVersion);
                     fs.writeFileSync(vscodeHtmlPath, vscodeHtml);
                 }
                 // VSCode 扩展「新增 / 编辑连接」专用页（复用 ConnectionEditor）
                 const vscodeEditHtmlPath = path.join(publicDir, 'src/vscode-edit.html');
                 if (fs.existsSync(vscodeEditHtmlPath)) {
                     let vscodeEditHtml = fs.readFileSync(vscodeEditHtmlPath, 'utf-8');
-                    vscodeEditHtml = vscodeEditHtml.replace(/\.\.\/([a-zA-Z0-9_-]+\.(js|css|woff|woff2|png|jpg|jpeg|gif|svg|ico))/g, '/public/$1');
+                    vscodeEditHtml = vscodeEditHtml.replace(/\.\.\/([a-zA-Z0-9_-]+\.(js|css|woff|woff2|png|jpg|jpeg|gif|svg|ico))/g, '/public/$1?v=' + assetVersion);
                     fs.writeFileSync(vscodeEditHtmlPath, vscodeEditHtml);
                 }
                 const viewHtmlPath = path.join(publicDir, 'src/index.html');

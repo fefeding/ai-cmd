@@ -47,7 +47,7 @@
     </div>
 
     <!-- 消息列表 (Chat 模式) -->
-    <div v-show="activeTab === 'chat'" class="ai-chat-messages" ref="messagesContainer" @click="handleMessagesClick" @contextmenu="onMessagesContextMenu">
+    <div v-show="activeTab === 'chat'" class="ai-chat-messages" ref="messagesContainer" @click="handleMessagesClick">
       <div v-if="messages.length === 0" class="ai-chat-empty">
         <i class="bi bi-robot" style="font-size: 32px; opacity: 0.5;"></i>
         <p>{{ t('ai.agentHint') }}</p>
@@ -230,7 +230,7 @@
       </button>
     </div>
 
-    <!-- AI 消息右键菜单：跨源 webview 下原生右键菜单可能不出现/复制无效，自建以保证可用 -->
+    <!-- AI 面板右键菜单：跨源 webview 下原生右键菜单可能不出现/复制无效，自建以保证可用 -->
     <div
       v-if="contextMenuVisible"
       class="ai-msg-context-menu"
@@ -240,11 +240,14 @@
       <div v-if="contextMenuSelection" class="ctx-item" @click="copySelectionFromMenu">
         <i class="bi bi-clipboard-check"></i> 复制
       </div>
-      <div class="ctx-item" @click="copyMessageFromMenu">
+      <div v-if="contextMenuMsgIndex >= 0" class="ctx-item" @click="copyMessageFromMenu">
         <i class="bi bi-copy"></i> 复制消息
       </div>
-      <div class="ctx-item" @click="selectAllFromMenu">
+      <div v-if="contextMenuMsgIndex >= 0 || contextMenuInEditable" class="ctx-item" @click="selectAllFromMenu">
         <i class="bi bi-check2-square"></i> 全选
+      </div>
+      <div v-if="contextMenuInEditable" class="ctx-item" @click="pasteFromMenu">
+        <i class="bi bi-clipboard-plus"></i> 粘贴
       </div>
     </div>
   </div>
@@ -257,6 +260,7 @@ import * as aiService from '@/service/ai';
 import AuditPanel from '@/components/audit-panel/index.vue';
 import LogMonitor from '@/components/log-monitor/index.vue';
 import { escapeHtml, sanitizeHtml } from '@/utils/sanitize-html';
+import { readClipboard } from '@/utils/vscode-clipboard';
 
 const { t, locale } = useI18n();
 
@@ -807,32 +811,82 @@ async function copyPlainText(text: string): Promise<boolean> {
   }
 }
 
-// ===== AI 消息右键菜单（跨源 webview 原生右键菜单可能不出现或复制无效，自建以保证可用）=====
+// ===== AI 面板右键菜单（跨源 webview 原生右键菜单可能不出现或复制无效，自建以保证可用）=====
 const contextMenuVisible = ref(false);
 const contextMenuX = ref(0);
 const contextMenuY = ref(0);
 const contextMenuSelection = ref('');
 const contextMenuMsgIndex = ref(-1);
+const contextMenuInEditable = ref(false);
+let contextMenuTarget: HTMLTextAreaElement | HTMLInputElement | null = null;
 
-function onMessagesContextMenu(e: MouseEvent) {
+const CTX_MENU_W = 170;
+const CTX_MENU_H = 120;
+
+/**
+ * 弹出右键菜单。
+ * 触发以 mousedown(button===2) 为主、contextmenu 为辅：部分 VSCode 系宿主会吞掉
+ * contextmenu 事件（既不弹原生菜单也不向页面派发），仅依赖 contextmenu 会完全失效；
+ * mousedown 是更底层的事件，右键必定触发。
+ */
+function showCtxMenuFor(e: MouseEvent) {
   const target = e.target as HTMLElement | null;
   if (!target) return;
-  // 可编辑区域（输入框等）保留原生行为
-  if (target.closest('textarea, input, [contenteditable="true"]')) return;
+  if (!target.closest('.ai-chat-panel')) return; // 仅本面板内生效，不影响终端等其它区域
+
+  const editable = target.closest('textarea, input, [contenteditable="true"]') as
+    | HTMLTextAreaElement
+    | HTMLInputElement
+    | null;
   const msgEl = target.closest('.ai-message') as HTMLElement | null;
-  if (!msgEl) return; // 仅对消息气泡提供菜单
-  e.preventDefault();
-  contextMenuMsgIndex.value = Number(msgEl.getAttribute('data-msg-index') ?? '-1');
-  contextMenuSelection.value = window.getSelection()?.toString() || '';
-  contextMenuX.value = e.clientX;
-  contextMenuY.value = e.clientY;
+  if (!editable && !msgEl) return; // 面板空白区交给原生
+
+  contextMenuTarget = editable;
+  contextMenuInEditable.value = !!editable;
+  if (editable) {
+    const st = (editable as any).selectionStart as number | undefined;
+    const en = (editable as any).selectionEnd as number | undefined;
+    contextMenuSelection.value =
+      typeof st === 'number' && typeof en === 'number' && editable.value
+        ? editable.value.slice(st, en)
+        : '';
+  } else {
+    contextMenuSelection.value = window.getSelection()?.toString() || '';
+  }
+  contextMenuMsgIndex.value = msgEl
+    ? Number(msgEl.getAttribute('data-msg-index') ?? '-1')
+    : -1;
+
+  // 靠近视口右/下边缘时回退，避免菜单被截断
+  let x = e.clientX;
+  let y = e.clientY;
+  if (x + CTX_MENU_W > window.innerWidth) x = Math.max(0, window.innerWidth - CTX_MENU_W);
+  if (y + CTX_MENU_H > window.innerHeight) y = Math.max(0, window.innerHeight - CTX_MENU_H);
+  contextMenuX.value = x;
+  contextMenuY.value = y;
   contextMenuVisible.value = true;
+}
+
+function onDocMouseDown(e: MouseEvent) {
+  if (e.button !== 2) return; // 仅右键
+  showCtxMenuFor(e);
+}
+
+function onDocContextMenu(e: MouseEvent) {
+  const target = e.target as HTMLElement | null;
+  if (!target || !target.closest('.ai-chat-panel')) return;
+  if (!target.closest('textarea, input, [contenteditable="true"]') && !target.closest('.ai-message')) return;
+  // 抑制宿主原生菜单，避免与自建菜单冲突（内容由 showCtxMenuFor 填充）
+  e.preventDefault();
+  showCtxMenuFor(e);
 }
 
 function hideCtxMenu() {
   contextMenuVisible.value = false;
   contextMenuSelection.value = '';
   contextMenuMsgIndex.value = -1;
+  contextMenuInEditable.value = false;
+  contextMenuTarget = null;
 }
 
 async function copySelectionFromMenu() {
@@ -851,7 +905,13 @@ async function copyMessageFromMenu() {
 
 function selectAllFromMenu() {
   const idx = contextMenuMsgIndex.value;
+  const editable = contextMenuTarget;
   hideCtxMenu();
+  if (editable) {
+    editable.focus();
+    editable.select();
+    return;
+  }
   const el = messagesContainer.value?.querySelector(
     `.ai-message[data-msg-index="${idx}"] .ai-message-text`
   ) as HTMLElement | null;
@@ -861,6 +921,24 @@ function selectAllFromMenu() {
   range.selectNodeContents(el);
   sel?.removeAllRanges();
   sel?.addRange(range);
+}
+
+async function pasteFromMenu() {
+  const target = contextMenuTarget;
+  hideCtxMenu();
+  if (!target) return;
+  try {
+    const text = await readClipboard();
+    if (!text) return;
+    const start = target.selectionStart ?? target.value.length;
+    const end = target.selectionEnd ?? target.value.length;
+    target.value = target.value.slice(0, start) + text + target.value.slice(end);
+    const pos = start + text.length;
+    target.setSelectionRange(pos, pos);
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+  } catch (e) {
+    console.warn('Failed to paste text:', e);
+  }
 }
 
 function onKeydownHideCtx(e: KeyboardEvent) {
@@ -1024,6 +1102,9 @@ watch(() => props.sessionId, () => {
 onMounted(() => {
   if (props.isOpen) inputRef.value?.focus();
   loadSkills();
+  // 捕获阶段注册：mousedown 为主（宿主可能吞掉 contextmenu），contextmenu 用于抑制原生菜单
+  document.addEventListener('mousedown', onDocMouseDown as EventListener, true);
+  document.addEventListener('contextmenu', onDocContextMenu as EventListener, true);
   document.addEventListener('click', hideCtxMenu);
   document.addEventListener('keydown', onKeydownHideCtx);
   messagesContainer.value?.addEventListener('scroll', hideCtxMenu);
@@ -1032,6 +1113,8 @@ onMounted(() => {
 onUnmounted(() => {
   stopElapsedTimer();
   if (copiedTimer) { clearTimeout(copiedTimer); copiedTimer = null; }
+  document.removeEventListener('mousedown', onDocMouseDown as EventListener, true);
+  document.removeEventListener('contextmenu', onDocContextMenu as EventListener, true);
   document.removeEventListener('click', hideCtxMenu);
   document.removeEventListener('keydown', onKeydownHideCtx);
 });
@@ -1749,16 +1832,16 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   color: var(--text-secondary);
 }
 
-/* AI 消息右键菜单 */
+/* AI 面板右键菜单（颜色均带兜底值，主题变量缺失时也保证可见） */
 .ai-msg-context-menu {
   position: fixed;
-  z-index: 1000;
+  z-index: 9999;
   min-width: 150px;
-  background: rgb(var(--bg-input-rgb));
-  border: 1px solid var(--border-color);
+  background: rgb(var(--bg-input-rgb, 45 45 45));
+  border: 1px solid var(--border-color, #555);
   border-radius: 6px;
   padding: 4px 0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
   font-size: 13px;
   user-select: none;
 }
@@ -1768,11 +1851,11 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   gap: 8px;
   padding: 6px 14px;
   cursor: pointer;
-  color: var(--text-primary);
+  color: var(--text-primary, #eee);
   white-space: nowrap;
 }
 .ctx-item:hover {
-  background: rgb(var(--overlay-rgb) / 8%);
+  background: rgb(var(--overlay-rgb, 255 255 255) / 10%);
 }
 .ctx-item i {
   font-size: 13px;
