@@ -267,6 +267,18 @@ function handleCopyCut(e: ClipboardEvent): void {
   if (isInTerminal(e.target)) return; // 终端由自身逻辑处理，避免重复
   const text = getSelectionText();
   if (!text) return; // 无选区，交给浏览器（通常也无内容）
+
+  // 在 copy / cut 事件内用同步的 e.clipboardData.setData 写入剪贴板。
+  // 这是用户手势触发的复制，跨源 iframe 下同样可用（终端粘贴已验证 e.clipboardData
+  // 可访问），不依赖受限的 navigator.clipboard，也不受异步桥接时序影响，最可靠。
+  if (e.clipboardData) {
+    e.clipboardData.setData('text/plain', text);
+    e.preventDefault();
+    if (e.type === 'cut') deleteSelectedText();
+    return;
+  }
+
+  // 极端兜底：clipboardData 不可用，走桥接
   e.preventDefault();
   writeClipboard(text).catch(() => {});
   // cut 在可编辑输入框内还需删除选区
