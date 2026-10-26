@@ -47,7 +47,7 @@
     </div>
 
     <!-- 消息列表 (Chat 模式) -->
-    <div v-show="activeTab === 'chat'" class="ai-chat-messages" ref="messagesContainer" @click="handleMessagesClick">
+    <div v-show="activeTab === 'chat'" class="ai-chat-messages" ref="messagesContainer" @click="handleMessagesClick" @contextmenu="onMessagesContextMenu">
       <div v-if="messages.length === 0" class="ai-chat-empty">
         <i class="bi bi-robot" style="font-size: 32px; opacity: 0.5;"></i>
         <p>{{ t('ai.agentHint') }}</p>
@@ -56,6 +56,7 @@
         v-for="(msg, index) in messages" 
         :key="index" 
         class="ai-message"
+        :data-msg-index="index"
         :class="[msg.role, { 'system-info': msg.isSystemInfo }]"
       >
         <div class="ai-message-avatar">
@@ -227,6 +228,24 @@
       >
         <i class="bi bi-send-fill"></i>
       </button>
+    </div>
+
+    <!-- AI 消息右键菜单：跨源 webview 下原生右键菜单可能不出现/复制无效，自建以保证可用 -->
+    <div
+      v-if="contextMenuVisible"
+      class="ai-msg-context-menu"
+      :style="{ left: contextMenuX + 'px', top: contextMenuY + 'px' }"
+      @click.stop
+    >
+      <div v-if="contextMenuSelection" class="ctx-item" @click="copySelectionFromMenu">
+        <i class="bi bi-clipboard-check"></i> 复制
+      </div>
+      <div class="ctx-item" @click="copyMessageFromMenu">
+        <i class="bi bi-copy"></i> 复制消息
+      </div>
+      <div class="ctx-item" @click="selectAllFromMenu">
+        <i class="bi bi-check2-square"></i> 全选
+      </div>
     </div>
   </div>
 </template>
@@ -757,18 +776,27 @@ async function copyMessage(msg: ChatMessage, index: number) {
   copiedTimer = setTimeout(() => { copiedIdx.value = -1; }, 1500);
 }
 
-/** 通用剪贴板写入（clipboard API 优先，降级 execCommand） */
+/** 通用剪贴板写入：clipboard API 优先，失败兜底到隐藏 textarea + execCommand
+ * （用户手势内，跨源 webview 通常可用，且不依赖受限的 navigator.clipboard / 异步桥接） */
 async function copyPlainText(text: string): Promise<boolean> {
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text);
       return true;
     }
+  } catch (e) {
+    console.warn('clipboard.writeText failed, fallback to execCommand:', e);
+  }
+  // 兜底：隐藏 textarea + execCommand
+  try {
     const ta = document.createElement('textarea');
     ta.value = text;
     ta.style.position = 'fixed';
+    ta.style.top = '0';
+    ta.style.left = '0';
     ta.style.opacity = '0';
     document.body.appendChild(ta);
+    ta.focus();
     ta.select();
     document.execCommand('copy');
     document.body.removeChild(ta);
@@ -777,6 +805,66 @@ async function copyPlainText(text: string): Promise<boolean> {
     console.warn('Failed to copy text:', e);
     return false;
   }
+}
+
+// ===== AI 消息右键菜单（跨源 webview 原生右键菜单可能不出现或复制无效，自建以保证可用）=====
+const contextMenuVisible = ref(false);
+const contextMenuX = ref(0);
+const contextMenuY = ref(0);
+const contextMenuSelection = ref('');
+const contextMenuMsgIndex = ref(-1);
+
+function onMessagesContextMenu(e: MouseEvent) {
+  const target = e.target as HTMLElement | null;
+  if (!target) return;
+  // 可编辑区域（输入框等）保留原生行为
+  if (target.closest('textarea, input, [contenteditable="true"]')) return;
+  const msgEl = target.closest('.ai-message') as HTMLElement | null;
+  if (!msgEl) return; // 仅对消息气泡提供菜单
+  e.preventDefault();
+  contextMenuMsgIndex.value = Number(msgEl.getAttribute('data-msg-index') ?? '-1');
+  contextMenuSelection.value = window.getSelection()?.toString() || '';
+  contextMenuX.value = e.clientX;
+  contextMenuY.value = e.clientY;
+  contextMenuVisible.value = true;
+}
+
+function hideCtxMenu() {
+  contextMenuVisible.value = false;
+  contextMenuSelection.value = '';
+  contextMenuMsgIndex.value = -1;
+}
+
+async function copySelectionFromMenu() {
+  const text = contextMenuSelection.value;
+  hideCtxMenu();
+  if (text) await copyPlainText(text);
+}
+
+async function copyMessageFromMenu() {
+  const idx = contextMenuMsgIndex.value;
+  hideCtxMenu();
+  if (idx >= 0 && messages.value[idx]) {
+    await copyMessage(messages.value[idx], idx);
+  }
+}
+
+function selectAllFromMenu() {
+  const idx = contextMenuMsgIndex.value;
+  hideCtxMenu();
+  const el = messagesContainer.value?.querySelector(
+    `.ai-message[data-msg-index="${idx}"] .ai-message-text`
+  ) as HTMLElement | null;
+  if (!el) return;
+  const sel = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  sel?.removeAllRanges();
+  sel?.addRange(range);
+}
+
+function onKeydownHideCtx(e: KeyboardEvent) {
+  if (e.key === 'Escape') hideCtxMenu();
 }
 
 /** 代码块操作按钮点击（事件委托：v-html 内容无法直接绑定事件） */
@@ -936,11 +1024,16 @@ watch(() => props.sessionId, () => {
 onMounted(() => {
   if (props.isOpen) inputRef.value?.focus();
   loadSkills();
+  document.addEventListener('click', hideCtxMenu);
+  document.addEventListener('keydown', onKeydownHideCtx);
+  messagesContainer.value?.addEventListener('scroll', hideCtxMenu);
 });
 
 onUnmounted(() => {
   stopElapsedTimer();
   if (copiedTimer) { clearTimeout(copiedTimer); copiedTimer = null; }
+  document.removeEventListener('click', hideCtxMenu);
+  document.removeEventListener('keydown', onKeydownHideCtx);
 });
 
 defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
@@ -1654,5 +1747,35 @@ defineExpose({ handleAgentEvent, scrollToBottom, handleMonitorEvent });
   line-height: 1.6;
   white-space: pre-wrap;
   color: var(--text-secondary);
+}
+
+/* AI 消息右键菜单 */
+.ai-msg-context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 150px;
+  background: rgb(var(--bg-input-rgb));
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 4px 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  font-size: 13px;
+  user-select: none;
+}
+.ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  cursor: pointer;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.ctx-item:hover {
+  background: rgb(var(--overlay-rgb) / 8%);
+}
+.ctx-item i {
+  font-size: 13px;
+  opacity: 0.8;
 }
 </style>
