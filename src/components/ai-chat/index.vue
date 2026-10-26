@@ -877,6 +877,12 @@ function onDocMouseDown(e: MouseEvent) {
   showCtxMenuFor(e);
 }
 
+function onDocMouseUp(e: MouseEvent) {
+  if (e.button !== 2) return; // 仅右键
+  // mousedown 可能被宿主吞掉时的兜底触发（幂等，与 mousedown 重复触发无害）
+  showCtxMenuFor(e);
+}
+
 function onDocContextMenu(e: MouseEvent) {
   const target = e.target as HTMLElement | null;
   if (!target || !target.closest('.ai-chat-panel')) return;
@@ -1108,6 +1114,7 @@ onMounted(() => {
   loadSkills();
   // 捕获阶段注册：mousedown 为主（宿主可能吞掉 contextmenu），contextmenu 用于抑制原生菜单
   document.addEventListener('mousedown', onDocMouseDown as EventListener, true);
+  document.addEventListener('mouseup', onDocMouseUp as EventListener, true);
   document.addEventListener('contextmenu', onDocContextMenu as EventListener, true);
   document.addEventListener('click', hideCtxMenu);
   document.addEventListener('keydown', onKeydownHideCtx);
@@ -1118,6 +1125,7 @@ onUnmounted(() => {
   stopElapsedTimer();
   if (copiedTimer) { clearTimeout(copiedTimer); copiedTimer = null; }
   document.removeEventListener('mousedown', onDocMouseDown as EventListener, true);
+  document.removeEventListener('mouseup', onDocMouseUp as EventListener, true);
   document.removeEventListener('contextmenu', onDocContextMenu as EventListener, true);
   document.removeEventListener('click', hideCtxMenu);
   document.removeEventListener('keydown', onKeydownHideCtx);

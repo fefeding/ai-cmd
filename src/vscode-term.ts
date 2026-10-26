@@ -15,6 +15,7 @@ import i18n from '@/utils/i18n';
 import VscodeTermWrapper from '@/vscode-term-wrapper.vue';
 import { initVscodeTheme } from '@/utils/vscode-theme';
 import { installVscodeClipboardBridge } from '@/utils/vscode-clipboard';
+import { installSelectionCopy } from '@/utils/selection-copy';
 
 import 'bootstrap/dist/css/bootstrap.css';
 import 'bootstrap-icons/font/bootstrap-icons.css';
@@ -29,6 +30,9 @@ initVscodeTheme();
 
 // VSCode WebView 跨源 iframe 内：为普通输入框（AI 对话 / 文件管理等）安装剪贴板桥接
 installVscodeClipboardBridge();
+
+// 宿主可能不向页面派发右键事件（无原生菜单也无 contextmenu），安装「选中即浮现复制按钮」
+installSelectionCopy();
 
 const params = new URLSearchParams(location.search);
 const connectionId = params.get('connectionId') || '__local__';
