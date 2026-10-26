@@ -839,7 +839,12 @@ function showCtxMenuFor(e: MouseEvent) {
     | HTMLInputElement
     | null;
   const msgEl = target.closest('.ai-message') as HTMLElement | null;
-  if (!editable && !msgEl) return; // 面板空白区交给原生
+  // 诊断日志：若右键后控制台没有任何 [aicmd][ctx] 输出，说明宿主根本没向页面派发右键事件
+  console.log('[aicmd][ctx] right-click in ai panel', {
+    hasMsg: !!msgEl,
+    isEditable: !!editable,
+    tag: (target.tagName || '').toLowerCase(),
+  });
 
   contextMenuTarget = editable;
   contextMenuInEditable.value = !!editable;
@@ -875,7 +880,6 @@ function onDocMouseDown(e: MouseEvent) {
 function onDocContextMenu(e: MouseEvent) {
   const target = e.target as HTMLElement | null;
   if (!target || !target.closest('.ai-chat-panel')) return;
-  if (!target.closest('textarea, input, [contenteditable="true"]') && !target.closest('.ai-message')) return;
   // 抑制宿主原生菜单，避免与自建菜单冲突（内容由 showCtxMenuFor 填充）
   e.preventDefault();
   showCtxMenuFor(e);

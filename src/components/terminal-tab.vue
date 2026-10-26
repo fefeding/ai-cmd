@@ -322,11 +322,18 @@ function initTerminal() {
     termElement.addEventListener('contextmenu', showTerminalContextMenu);
   }
 
+  // 粘贴去重：记录「最近一次原生 paste 事件」与「最近一次粘贴快捷键」的时间戳。
+  // 部分宿主（VSCode 系 WebView）可能不派发原生 paste 事件，此时由快捷键分支补发一次，
+  // 从而在任何环境下都保证「恰好粘贴一次」：既不重复，也不会完全没反应。
+  let lastNativePasteAt = 0;
+  let lastPasteKeyDownAt = 0;
+
   // 统一粘贴处理：在捕获阶段拦截终端 textarea 的原生 paste 事件，
   // 直接从 e.clipboardData 同步读取（跨源 webview 亦可，不依赖受限的 navigator.clipboard），
   // 并阻止事件继续传播到 xterm 的默认粘贴监听，从根上避免 Ctrl/Cmd+V 重复粘贴。
   if (terminalContainer.value) {
     terminalContainer.value.addEventListener('paste', (e: ClipboardEvent) => {
+      lastNativePasteAt = Date.now();
       if (e.defaultPrevented) return; // 已被上层（如全局剪贴板桥接）接管，跳过
       e.preventDefault();
       e.stopPropagation();
@@ -407,11 +414,20 @@ function initTerminal() {
 
     // ===== 粘贴 =====
     if (isPasteTrigger) {
-      // 粘贴统一由 initTerminal 中注册的「捕获阶段 paste 监听」处理（见下方）：
-      // 它直接从 e.clipboardData 同步读取，并阻止事件冒泡到 xterm 默认粘贴监听，
-      // 从根上避免 Ctrl/Cmd+V 被粘贴两次（原生 paste 一次 + 这里手动桥接再贴一次）。
-      // 此处仅拦截 xterm 把该组合键当作普通按键输入（避免插入字面 '^V'）。
-      return false;
+      // 优先由 initTerminal 中注册的「捕获阶段 paste 监听」处理（即时、同步读取 clipboardData）。
+      // 但部分宿主会吞掉 keydown 的默认粘贴动作导致原生 paste 事件根本不派发，
+      // 那样会造成「完全粘贴不了」。因此这里补一道保险：
+      // 若该窗口期内没有原生 paste 事件到来，则延时经桥接补发一次。
+      // 两条路径互斥（依据 lastNativePasteAt 时间戳去重），保证恰好粘贴一次。
+      lastPasteKeyDownAt = Date.now();
+      const kbAt = lastPasteKeyDownAt;
+      setTimeout(() => {
+        if (lastNativePasteAt >= kbAt) return; // 原生 paste 事件已处理，跳过补发
+        readClipboard()
+          .then((text) => { if (text) pasteToTerminal(text); })
+          .catch(() => {});
+      }, 150);
+      return false; // 阻止 xterm 把该组合键当作普通按键输入（避免插入字面 '^V'）
     }
 
     return true;
