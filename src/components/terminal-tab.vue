@@ -163,7 +163,6 @@ import {
 import {
   writeClipboard,
   readClipboard,
-  isVscodeWebviewRuntime,
 } from '@/utils/vscode-clipboard';
 
 const { t } = useI18n();
@@ -323,6 +322,24 @@ function initTerminal() {
     termElement.addEventListener('contextmenu', showTerminalContextMenu);
   }
 
+  // 统一粘贴处理：在捕获阶段拦截终端 textarea 的原生 paste 事件，
+  // 直接从 e.clipboardData 同步读取（跨源 webview 亦可，不依赖受限的 navigator.clipboard），
+  // 并阻止事件继续传播到 xterm 的默认粘贴监听，从根上避免 Ctrl/Cmd+V 重复粘贴。
+  if (terminalContainer.value) {
+    terminalContainer.value.addEventListener('paste', (e: ClipboardEvent) => {
+      if (e.defaultPrevented) return; // 已被上层（如全局剪贴板桥接）接管，跳过
+      e.preventDefault();
+      e.stopPropagation();
+      const text = e.clipboardData?.getData('text/plain') || '';
+      if (text) {
+        pasteToTerminal(text);
+      } else {
+        // 极端情况下 e.clipboardData 为空，回退到桥接读取
+        readClipboard().then((t) => { if (t) pasteToTerminal(t); }).catch(() => {});
+      }
+    }, true);
+  }
+
   // 自适应大小
   nextTick(() => {
     fitAddon?.fit();
@@ -390,18 +407,11 @@ function initTerminal() {
 
     // ===== 粘贴 =====
     if (isPasteTrigger) {
-      // 在 VSCode WebView 的跨源 iframe 中，不会触发原生 paste 事件，
-      // 必须主动经桥接读取剪贴板并写入终端。
-      if (isVscodeWebviewRuntime()) {
-        readClipboard()
-          .then((text) => {
-            if (text) pasteToTerminal(text);
-          })
-          .catch(() => {});
-      }
-      // 桌面 Electron 下不要在这里发送：Cmd+V 已触发原生 paste 事件，
-      // 否则会与 electron/main.js 的 Edit 菜单重复粘贴（右键菜单另走 handleContextPaste）。
-      return false; // 仅阻止 xterm 把 Cmd+V 当作普通按键输入
+      // 粘贴统一由 initTerminal 中注册的「捕获阶段 paste 监听」处理（见下方）：
+      // 它直接从 e.clipboardData 同步读取，并阻止事件冒泡到 xterm 默认粘贴监听，
+      // 从根上避免 Ctrl/Cmd+V 被粘贴两次（原生 paste 一次 + 这里手动桥接再贴一次）。
+      // 此处仅拦截 xterm 把该组合键当作普通按键输入（避免插入字面 '^V'）。
+      return false;
     }
 
     return true;
