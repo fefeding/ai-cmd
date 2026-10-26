@@ -113,20 +113,34 @@ function onMouseUp(e: MouseEvent): void {
     hidePill();
     return;
   }
+
+  // 同步捕获选区文本与位置：mouseup 之后浏览器可能折叠/清空选区
+  // （selectionchange 会在此时触发），若只在延时回调里读取就会拿到空选区。
+  const selNow = window.getSelection();
+  const textNow = selNow ? selNow.toString() : '';
+  let rectNow: DOMRect | null = null;
+  try {
+    rectNow = selNow && selNow.rangeCount > 0 ? selNow.getRangeAt(0).getBoundingClientRect() : null;
+  } catch {
+    rectNow = null;
+  }
+
   // 延迟一拍，等选区状态在 mouseup 后稳定
   setTimeout(() => {
     const sel = window.getSelection();
-    const text = sel ? sel.toString() : '';
-    if (!sel || sel.isCollapsed || !text || !text.trim() || isExcludedTarget(e.target)) {
+    // 选区若已被清空，回退到 mouseup 时同步捕获的文本
+    const text = (sel ? sel.toString() : '') || textNow;
+    if (!text || !text.trim()) {
       hidePill();
       return;
     }
     let rect: DOMRect | null = null;
     try {
-      rect = sel.getRangeAt(0).getBoundingClientRect();
+      rect = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).getBoundingClientRect() : null;
     } catch {
       rect = null;
     }
+    if (!rect || (!rect.width && !rect.height)) rect = rectNow;
 
     const p = ensurePill();
     p.dataset.text = text;
@@ -156,11 +170,6 @@ function onDismissMouseDown(e: MouseEvent): void {
   hidePill();
 }
 
-function onSelectionChange(): void {
-  const sel = window.getSelection();
-  if (!sel || sel.isCollapsed || !sel.toString()) hidePill();
-}
-
 /**
  * 安装全局选中复制工具条。仅在扩展壳加载的 WebView 内生效；重复调用幂等。
  */
@@ -170,7 +179,8 @@ export function installSelectionCopy(): void {
   installed = true;
   document.addEventListener('mouseup', onMouseUp as EventListener, true);
   document.addEventListener('mousedown', onDismissMouseDown as EventListener, true);
-  document.addEventListener('selectionchange', onSelectionChange);
+  // 注意：不用 selectionchange 隐藏按钮——mouseup 之后浏览器会折叠选区并触发
+  // selectionchange，若据此隐藏，按钮会「刚出现就消失」，用户完全看不到。
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') hidePill();
   });
