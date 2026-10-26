@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.25
+
+- 修复终端 `Ctrl/Cmd+V` 粘贴内容重复，并保证任何宿主环境下都**恰好粘贴一次**：
+  - 粘贴统一由捕获阶段的 `paste` 监听处理（同步读取 `e.clipboardData`，跨源 WebView 亦可），避免 xterm 默认粘贴与手动桥接各贴一次；
+  - 部分宿主会吞掉 `keydown` 的默认粘贴动作导致原生 `paste` 事件不派发，故快捷键分支增加延时兜底：若窗口期内无原生 `paste` 事件到达则经 `readClipboard` 补发一次，两条路径按时间戳互斥去重。
+- 修复 AI 对话输出无法复制的问题（右键复制无效）：
+  - `copy`/`cut` 事件内改用**同步** `e.clipboardData.setData` 写入剪贴板（原实现只用异步桥接，易静默失败导致剪贴板为空），桥接保留为兜底；
+  - AI 对话框自建右键菜单（复制 / 复制消息 / 全选），输入框内额外提供粘贴；触发以 `mousedown`/`mouseup` 为主、`contextmenu` 为辅，兼容不派发 `contextmenu` 的宿主。
+- 新增**全局「选中即浮现复制」工具条**：在 AI 输出、AI 设置窗口及所有弹窗中用鼠标选中文字后，选区上方自动浮现「复制」按钮，点击即复制（`navigator.clipboard` 优先，隐藏 textarea + `execCommand` 兜底）。用于替代在部分宿主（如 CodeBuddy WebView）中被吞掉、无法使用的右键复制。
+- 修复 WebView 加载旧版前端资源的问题：构建产物文件名为固定 `[name].js`（无内容哈希），WebView 常命中缓存导致改动不生效；现为 HTML 中的 js/css/字体/图片引用统一附加构建时间戳 `?v=` 强制失效缓存。
+
 ## 0.1.24
 
 - 扩展名称与说明支持中英文：通过 VSCode NLS 机制，`displayName`/`description` 改为占位符，新增 `package.nls.json`（英文默认）与 `package.nls.zh-cn.json`（简体中文），随 VSCode 界面语言自动切换。
