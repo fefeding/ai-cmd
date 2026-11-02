@@ -28,6 +28,19 @@
         </div>
 
         <div class="mb-3">
+          <label class="form-label fw-bold"><i class="bi bi-cpu me-1"></i>{{ t('connection.platform') }}</label>
+          <select class="form-select" v-model="form.platform">
+            <option value="auto">{{ t('connection.platformAuto') }}</option>
+            <option value="linux">{{ t('connection.platformLinux') }}</option>
+            <option value="macos">{{ t('connection.platformMacos') }}</option>
+            <option value="windows">{{ t('connection.platformWindows') }}</option>
+          </select>
+          <small class="form-text text-muted d-block">
+            <i class="bi bi-info-circle me-1"></i>{{ t('connection.platformHint') }}
+          </small>
+        </div>
+
+        <div class="mb-3">
           <label class="form-label fw-bold"><i class="bi bi-person me-1"></i>{{ t('connection.username') }} <span class="text-danger">*</span></label>
           <input type="text" class="form-control" v-model="form.username" :placeholder="t('connection.usernamePlaceholder')" :required="form.type === 'ssh'">
         </div>
@@ -211,6 +224,7 @@ const defaultForm = () => ({
   host: '',
   port: 22,
   username: 'root',
+  platform: 'auto' as 'auto' | 'linux' | 'macos' | 'windows',
   authType: 'auto' as 'auto' | 'password' | 'privateKey',
   password: '',
   privateKey: '',
@@ -235,6 +249,8 @@ function open(connection?: any) {
   if (connection) {
     editingConnection.value = connection.id;
     Object.assign(form, defaultForm(), connection);
+    // 老连接可能没有 platform 字段，确保下拉框有合法默认值
+    if (!form.platform) form.platform = 'auto';
     showStartupScript.value = !!connection.startupScript || !!connection.forwardAgent;
     // 从 options 中提取保活配置
     if (connection.options?.keepaliveInterval !== undefined) {

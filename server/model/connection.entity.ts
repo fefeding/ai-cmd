@@ -12,6 +12,15 @@ export class ConnectionEntity {
   /** 连接类型：ssh 或 local（本地 shell） */
   type: 'ssh' | 'local' = 'ssh';
 
+  /**
+   * 目标平台提示（用于 Windows/macOS 远程主机的正确处理）。
+   * - 'auto'（默认）：连接后自动探测（通过 exec 通道运行 uname 判断）
+   * - 'linux'：Linux（默认 shell 为 bash/sh，CWD 走 /proc）
+   * - 'macos'：macOS（默认 shell 为 zsh/bash，CWD 走 lsof）
+   * - 'windows'：Windows（默认 shell 为 PowerShell，CWD 走注入式探测）
+   */
+  platform?: 'auto' | 'linux' | 'macos' | 'windows';
+
   /** 主机地址 */
   host!: string;
 

@@ -310,6 +310,17 @@ AI Agent 内置了命令级安全防护，降低破坏性操作的风险：
 
 AI Agent 自动检测目标操作系统并选择合适的命令。
 
+### 连接 Windows / macOS 远程主机
+
+本工具通过标准 SSH 协议连接任意开启了 SSH 服务的主机，因此**无需在目标机上安装任何客户端**。前提是目标机已启用 SSH 服务（默认都是关闭的）：
+
+- **macOS**：系统设置 → 通用 → 共享 → 打开「远程登录」（Remote Login）。连接后默认 shell 为 zsh/bash，CWD 跟踪走 `lsof`。
+- **Windows 10/11**：设置 → 应用 → 可选功能 → 添加功能 → 安装 **OpenSSH 服务器**；然后在 PowerShell（管理员）执行 `Start-Service sshd` 并将启动类型设为自动，放行 22 端口防火墙。连接后默认 shell 为 PowerShell。
+
+连接时可在「目标平台」中选择 Windows / macOS 以获得更精准的系统信息采集、目录跟踪与文件传输路径；选「自动」也会在连接后自动探测（通过 `uname` 判断）。
+
+> Windows OpenSSH 的 SFTP 子系统以 `C:/Users/name/file` 形式表示路径，工具已自动转换，无需手动处理。
+
 ## 许可证
 
 MIT

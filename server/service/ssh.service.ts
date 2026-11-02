@@ -54,6 +54,12 @@ interface TerminalSession {
   lastCwdRefreshAt?: number;
   /** 是否正在刷新 CWD（避免并发 exec） */
   cwdRefreshing?: boolean;
+  /** 用户配置的目标平台提示（来自 connection.platform） */
+  osHint?: 'auto' | 'linux' | 'macos' | 'windows';
+  /** 探测/推断出的远端操作系统：'unix'（Linux/macOS/BSD）或 'windows' */
+  os?: 'unix' | 'windows';
+  /** 是否以无 PTY 降级模式运行（Windows 某些 OpenSSH 配置下 PTY 不可用时） */
+  noPty?: boolean;
 }
 
 /**
@@ -205,6 +211,19 @@ const SESSION_PROBE_SCRIPT = [
   '[ -n "$best_xfer" ] && echo "XFER:$best_xfer"',
   'exit 0',
 ].join('\n');
+
+/**
+ * 判断一个路径是否为有效的绝对路径（跨平台）。
+ * - Unix：以 '/' 开头
+ * - Windows：盘符形式 `C:\...` / `C:/...`，或以 `\\` 开头的 UNC 路径
+ */
+function isAbsolutePath(p?: string): boolean {
+  if (!p) return false;
+  if (p.startsWith('/')) return true;
+  if (/^[A-Za-z]:[\\/]/.test(p)) return true;
+  if (p.startsWith('\\\\')) return true;
+  return false;
+}
 
 /** Session 元数据（用于在 server 端持久化 tab 信息） */
 interface SessionMetadata {
@@ -395,6 +414,8 @@ export class SSHService {
               pty: ptyProcess,
               createdAt: new Date(),
               cwd: homeDir,
+              os: isWindows ? 'windows' : 'unix',
+              osHint: isWindows ? 'windows' : 'linux',
             };
 
             this.sessions.set(sessionId, session);
@@ -489,25 +510,20 @@ export class SSHService {
           shellOpts.agentForward = true;
         }
 
-        client.shell(shellOpts, (err: Error | undefined, stream: ClientChannel) => {
-          if (err) {
-            log(`打开 shell 失败: ${err.message}`);
-            client.end();
-            reject(err);
-            return;
-          }
+        const session: TerminalSession = {
+          id: sessionId,
+          connectionId,
+          type: 'ssh',
+          name: sessionName,
+          client,
+          createdAt: new Date(),
+          osHint: connection.platform,
+        };
 
-          log(`Shell 会话已建立`);
+        this.openShell(client, shellOpts, connection, session).then((stream) => {
+          session.stream = stream;
 
-          const session: TerminalSession = {
-            id: sessionId,
-            connectionId,
-            type: 'ssh',
-            name: sessionName,
-            client,
-            stream,
-            createdAt: new Date(),
-          };
+          log(`Shell 会话已建立${session.noPty ? '（无 PTY 降级模式）' : ''}`);
 
           this.sessions.set(sessionId, session);
 
@@ -541,6 +557,10 @@ export class SSHService {
           }
 
           resolve(session);
+        }).catch((err: Error) => {
+          log(`打开 shell 失败: ${err.message}`);
+          client.end();
+          reject(err);
         });
       }).on('error', (err: Error) => {
         clearTimeout(timeout);
@@ -548,6 +568,76 @@ export class SSHService {
         reject(err);
       }).connect(sshConfig);
     });
+  }
+
+  /**
+   * 打开远端 shell，并在 PTY 不可用时优雅降级。
+   *
+   * 某些 Windows OpenSSH 配置 / 老旧版本对 pty-req 支持不完整，直接 `client.shell({term})`
+   * 会失败。这里依次尝试多个 term 类型，再尝试不带 term 的 shell；
+   * 全部失败则降级到「无 PTY 模式」（`client.exec` 启动默认 shell）——交互体验受限
+   * （无回显 / 行编辑），但命令仍可执行。降级时会在 session 上标记 noPty。
+   */
+  private openShell(
+    client: Client,
+    shellOpts: any,
+    connection: ConnectionEntity,
+    session?: TerminalSession,
+  ): Promise<ClientChannel> {
+    return new Promise<ClientChannel>((resolve, reject) => {
+      const termCandidates = [shellOpts.term, 'xterm', 'vt100'];
+      let ti = 0;
+      const tryShell = () => {
+        const opts = { ...shellOpts, term: termCandidates[ti] } as any;
+        if (!opts.term) delete opts.term;
+        client.shell(opts, (err: Error | undefined, stream: ClientChannel) => {
+          if (!err) return resolve(stream);
+          if (ti < termCandidates.length - 1) {
+            ti += 1;
+            return tryShell();
+          }
+          // 所有 term 候选都失败：尝试不带 term 的 shell 请求
+          client.shell({ ...shellOpts, term: undefined } as any, (e2, s2) => {
+            if (!e2 && s2) return resolve(s2);
+            // 最终降级：以无 PTY 方式执行默认 shell（交互体验受限，但命令可执行）
+            const fallbackShell = connection.platform === 'windows'
+              ? 'powershell.exe -NoProfile -NonInteractive -NoLogo'
+              : (process.platform === 'win32' ? 'powershell.exe' : '/bin/bash -i');
+            client.exec(fallbackShell, (e3, s3) => {
+              if (!e3 && s3) {
+                if (session) session.noPty = true;
+                console.warn('[SSH] PTY 不可用，已降级到无 PTY 模式（exec 默认 shell）');
+                return resolve(s3);
+              }
+              reject(err || e2 || e3 || new Error('无法打开远程 shell'));
+            });
+          });
+        });
+      };
+      tryShell();
+    });
+  }
+
+  /**
+   * 解析远端操作系统类型（'unix' | 'windows'），结果缓存到 session。
+   * 优先使用连接配置中的 platform 提示；为 'auto' 时通过独立 exec 通道运行
+   * `uname -s` 探测（不污染交互式终端）：能取到内核名即为类 Unix，否则视为 Windows。
+   */
+  private async resolveSessionOs(sessionId: string): Promise<'unix' | 'windows'> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return 'unix';
+    if (session.os) return session.os;
+    const hint = session.osHint;
+    if (hint === 'windows') { session.os = 'windows'; return 'windows'; }
+    if (hint === 'linux' || hint === 'macos') { session.os = 'unix'; return 'unix'; }
+    try {
+      const out = await this.execRemote(sessionId, 'uname -s');
+      const s = (out || '').trim().toLowerCase();
+      session.os = /linux|darwin|freebsd|openbsd|netbsd|sunos/.test(s) ? 'unix' : 'windows';
+    } catch {
+      session.os = 'unix'; // 探测失败时按类 Unix 处理（最常见的远端）
+    }
+    return session.os;
   }
 
   /**
@@ -817,8 +907,13 @@ export class SSHService {
    * Sends a compact command to the remote terminal and captures the output
    */
   private async activeCollectRemoteSystemInfo(sessionId: string): Promise<string> {
+    const os = await this.resolveSessionOs(sessionId);
     const marker = '__AICMD_SYS__';
-    const cmd = `echo "${marker}:$(uname -s 2>/dev/null || echo unknown):$(uname -r 2>/dev/null || echo unknown):$(hostname 2>/dev/null || echo unknown):$(whoami 2>/dev/null || echo unknown):$SHELL:$(uname -m 2>/dev/null || echo unknown)"`;
+    // Windows（PowerShell）与类 Unix（bash/sh）使用不同的采集命令；
+    // 二者都通过同一个 __AICMD_SYS__ marker 回传，便于统一解析。
+    const cmd = os === 'windows'
+      ? `Write-Output "${marker}:Windows:$(Get-CimInstance Win32_OperatingSystem | Select-Object -ExpandProperty Version):$(hostname):$env:USERNAME:PowerShell:$(Get-CimInstance Win32_Processor | Select-Object -ExpandProperty Architecture)"`
+      : `echo "${marker}:$(uname -s 2>/dev/null || echo unknown):$(uname -r 2>/dev/null || echo unknown):$(hostname 2>/dev/null || echo unknown):$(whoami 2>/dev/null || echo unknown):$SHELL:$(uname -m 2>/dev/null || echo unknown)"`;
     try {
       // Start capture, then send the command
       // Use longer timeout (5s) to account for slow SSH connections and MOTD output
@@ -828,10 +923,11 @@ export class SSHService {
       // Clean ANSI escape codes for more reliable marker matching
       const cleaned = stripAnsiEscapes(output).replace(/\r/g, '');
       // Extract our marker line
+      const echoPrefixes = ['echo', 'Write-Output'];
       for (const line of cleaned.split('\n')) {
         const trimmed = line.trim();
         // Handle possible command echo: skip lines that still contain the raw command prefix
-        if (trimmed.includes(marker + ':') && !trimmed.startsWith('echo')) {
+        if (trimmed.includes(marker + ':') && !echoPrefixes.some(p => trimmed.startsWith(p))) {
           const markerIdx = trimmed.indexOf(marker + ':');
           const markerLine = trimmed.substring(markerIdx);
           const parts = markerLine.split(':');
@@ -894,6 +990,22 @@ export class SSHService {
     if (!info['OS']) {
       const genericWelcome = motd.match(/Welcome to (.+?)(?:\s*[\(\n])/);
       if (genericWelcome) info['OS'] = genericWelcome[1].trim();
+    }
+    // Windows（OpenSSH Server / cmd 横幅）："Microsoft Windows [Version 10.0.19041.1]"
+    if (!info['OS']) {
+      const winVer = motd.match(/Microsoft Windows.*?Version\s+([\d.]+)/i)
+        || motd.match(/\bWindows Server\b|\bWindows\b/i);
+      if (winVer) {
+        info['OS'] = winVer[1] ? `Windows ${winVer[1]}` : 'Windows';
+        const verMatch = motd.match(/Version\s+([\d.]+)/i);
+        if (verMatch) info['Kernel'] = verMatch[1];
+      }
+    }
+    // macOS（部分系统登录横幅含 Darwin 内核信息）
+    if (!info['OS'] && /Darwin/i.test(motd)) {
+      info['OS'] = 'macOS (Darwin)';
+      const darwinMatch = motd.match(/Darwin[^\n]*?([\d.]+)/i);
+      if (darwinMatch) info['Kernel'] = darwinMatch[1];
     }
 
     // === 系统指标（Ubuntu landscape 格式，键值对可能在不同行） ===
@@ -1195,10 +1307,17 @@ Write-Output "__DOCKER__: $dockerVer"
         continue;
       }
       let next: string | undefined;
-      if (target.startsWith('/')) {
-        next = target;
-      } else if (session.cwd && session.cwd.startsWith('/')) {
-        next = path.posix.resolve(session.cwd, target);
+      const os = session.os ?? (session.osHint === 'windows' ? 'windows' : 'unix');
+      if (target.startsWith('/') || /^[A-Za-z]:[\\/]/.test(target) || target.startsWith('\\\\')) {
+        // 绝对路径（Unix 的 '/' 或 Windows 的盘符 / UNC）
+        next = os === 'windows'
+          ? target.replace(/\//g, '\\') // 统一为 Windows 反斜杠分隔符
+          : target;
+      } else if (isAbsolutePath(session.cwd)) {
+        // 相对路径：基于当前目录拼接（跨平台使用对应 path 模块）
+        next = os === 'windows'
+          ? path.win32.resolve(session.cwd, target)
+          : path.posix.resolve(session.cwd, target);
       } else {
         // 当前目录未知，无法拼接相对路径，重置为未知
         next = undefined;
@@ -1215,7 +1334,25 @@ Write-Output "__DOCKER__: $dockerVer"
     if (!session) return;
     // 只探测 SSH 会话；本地会话的 cwd 由 cd 跟踪维护
     if (session.type !== 'ssh' || !session.client) return;
-    if (session.shellPid && session.cwd && session.cwd.startsWith('/')) return;
+    const os = await this.resolveSessionOs(sessionId);
+    if (os === 'windows') {
+      // Windows 无 /proc，后台刷新无法获取 CWD；改用注入式探测拿到初始目录，
+      // 以便后续 cd 跟踪能拼接相对路径。
+      if (isAbsolutePath(session.cwd)) return;
+      try {
+        const cwd = await this.probeCwdViaShell(sessionId);
+        if (cwd) {
+          session.cwd = cwd;
+          session.cwdAt = Date.now();
+          session.cwdReliable = true;
+          console.log(`[SSH] seeded windows cwd for ${sessionId}: ${cwd}`);
+        }
+      } catch {
+        // 忽略，上传时再探测
+      }
+      return;
+    }
+    if (session.shellPid && isAbsolutePath(session.cwd)) return;
     try {
       await this.refreshCwd(sessionId);
       if (session.cwd) console.log(`[SSH] seeded cwd for ${sessionId}: ${session.cwd} (pid=${session.shellPid || '-'})`);
@@ -1267,7 +1404,7 @@ Write-Output "__DOCKER__: $dockerVer"
         if (probe.shellPid) session.shellPid = probe.shellPid;
         cwd = probe.shellCwd;
       }
-      if (cwd && cwd.startsWith('/')) {
+      if (cwd && isAbsolutePath(cwd)) {
         // 用户刚刚敲过 cd（cd 跟踪值很新鲜）时，不覆盖它：
         // cd 是用户的显式意图，比推断出的进程目录更可信，
         // 也能避免探测到错误进程时把正确目录改回成家目录。
@@ -1279,9 +1416,9 @@ Write-Output "__DOCKER__: $dockerVer"
           session.cwdAt = Date.now();
         }
       }
-      return session.cwd && session.cwd.startsWith('/') ? session.cwd : '';
+      return session.cwd && isAbsolutePath(session.cwd) ? session.cwd : '';
     } catch {
-      return session.cwd && session.cwd.startsWith('/') ? session.cwd : '';
+      return session.cwd && isAbsolutePath(session.cwd) ? session.cwd : '';
     } finally {
       session.cwdRefreshing = false;
       session.lastCwdRefreshAt = Date.now();
@@ -1304,7 +1441,7 @@ Write-Output "__DOCKER__: $dockerVer"
     const comm = lines[0];
     const cwd = lines[1];
     const stdin = lines[2];
-    if (!cwd.startsWith('/')) return '';
+    if (!isAbsolutePath(cwd)) return '';
     if (!/^(bash|sh|zsh|fish|dash|ksh|ksh93|mksh|tcsh|csh|ash|busybox|rz|sz|lrz|lsz)$/.test(comm)) return '';
     // 交互式 shell / rz 的 stdin 一定是 tty；exec 通道（及其子 shell）是 pipe/socket，
     // 这里再校验一次，避免 PID 复用时读到无关进程的目录（通常是 $HOME）。
@@ -1673,7 +1810,7 @@ Write-Output "__DOCKER__: $dockerVer"
     const session = this.sessions.get(sessionId);
     if (!session) return { cwd: '', reliable: false };
 
-    const cached = session.cwd && session.cwd.startsWith('/') ? session.cwd : '';
+    const cached = session.cwd && isAbsolutePath(session.cwd) ? session.cwd : '';
     const cacheFresh = !!cached && !!session.cwdAt && (Date.now() - session.cwdAt) < CWD_CACHE_TTL;
 
     const commit = (cwd: string, reliable: boolean) => {
@@ -1695,17 +1832,17 @@ Write-Output "__DOCKER__: $dockerVer"
       if (allowShellProbe) {
         let probed = await this.probeCwdViaShell(sessionId);
         if (!probed) probed = await this.probeCwdViaShell(sessionId);
-        if (probed.startsWith('/')) return commit(probed, true);
+        if (isAbsolutePath(probed)) return commit(probed, true);
       }
 
       // 0.2) 进程探测：rz/sz 自己的 cwd 最权威（它就是文件要写入的目录）。
       if (session.type === 'ssh' && session.client) {
         const probe = await this.probeSessionProcess(sessionId);
         if (probe.shellPid) session.shellPid = probe.shellPid;
-        if (probe.xferCwd.startsWith('/')) return commit(probe.xferCwd, true);
+        if (isAbsolutePath(probe.xferCwd)) return commit(probe.xferCwd, true);
 
         // 可信的 shell 进程目录（能读到所有同源进程）：直接用，无需再麻烦用户。
-        if (probe.shellCwd.startsWith('/') && probe.reliable) {
+        if (isAbsolutePath(probe.shellCwd) && probe.reliable) {
           return commit(probe.shellCwd, true);
         }
         // 不可信（sudo su 等只读到部分进程）：优先用「用户刚敲的 cd」跟踪值，
@@ -1713,7 +1850,7 @@ Write-Output "__DOCKER__: $dockerVer"
         // 当成当前目录（那会让文件传到错误的位置）。
         const trackedFresh = !!cached && !!session.cwdAt && (Date.now() - session.cwdAt) < CWD_TRACK_GRACE;
         if (trackedFresh) return commit(cached, true);
-        if (probe.shellCwd.startsWith('/')) return commit(probe.shellCwd, probe.reliable);
+        if (isAbsolutePath(probe.shellCwd)) return commit(probe.shellCwd, probe.reliable);
       }
 
       const forcedFallback = cacheFresh ? cached : '';
@@ -1772,7 +1909,7 @@ Write-Output "__DOCKER__: $dockerVer"
     if (allowShellProbe) {
       let cwd = await this.probeCwdViaShell(sessionId);
       if (!cwd) cwd = await this.probeCwdViaShell(sessionId);
-      if (cwd.startsWith('/')) return commit(cwd, true);
+      if (isAbsolutePath(cwd)) return commit(cwd, true);
     }
 
     // 注入式探测也失败：退回进程推断值（有总比没有强，前端会提示用户核对）
@@ -1787,11 +1924,12 @@ Write-Output "__DOCKER__: $dockerVer"
     return { cwd: fallback, reliable: false };
   }
 
-  /** 向交互式 shell 注入 printf $PWD 探测 CWD（会先 Ctrl+C 打断前台进程） */
+  /** 向交互式 shell 注入命令探测 CWD（会先 Ctrl+C 打断前台进程） */
   private async probeCwdViaShell(sessionId: string): Promise<string> {
+    const os = await this.resolveSessionOs(sessionId);
     const marker = `__AICmd_CWD_${Date.now()}__`;
     // 先发送 Ctrl+C 中断可能正在运行的前台进程（如 rz、vim、top 等），
-    // 否则 printf 命令会被前台进程吞掉，shell 不会执行
+    // 否则命令会被前台进程吞掉，shell 不会执行
     this.writeData(sessionId, '\x03');
     await new Promise(r => setTimeout(r, 200));
     // Ctrl+U 清空当前输入行：若行内还有残留字符，注入的命令会被拼接成无效命令而拿不到结果
@@ -1806,18 +1944,25 @@ Write-Output "__DOCKER__: $dockerVer"
       return after.includes('\n') || after.length > 80;
     };
     const outputPromise = this.captureOutput(sessionId, 3000, stopWhen);
-    this.writeData(sessionId, ` printf '\\n${marker}:%s\\n' "$PWD"\r`);
+    // 类 Unix：printf 输出 $PWD（绝对路径以 '/' 开头）
+    // Windows（PowerShell）：$PWD 自动变量即当前位置，字符串化为盘符路径（如 C:\Users\me）
+    if (os === 'windows') {
+      this.writeData(sessionId, ` Write-Output "${marker}:$PWD"\r`);
+    } else {
+      this.writeData(sessionId, ` printf '\\n${marker}:%s\\n' "$PWD"\r`);
+    }
     const output = await outputPromise;
     // 更彻底的 ANSI 清理：OSC / CSI / 其它有界转义（不得使用会吞正文的贪婪兜底）
     const cleaned = stripAnsiEscapes(output).replace(/\r/g, '');
     const isCommandEcho = (text: string) => (
       text.includes('printf') ||
+      text.includes('Write-Output') ||
       text.includes('$PWD') ||
       text.includes('%s') ||
       text.includes('echo') ||
       text.includes('$(pwd)')
     );
-    const isValidCwd = (cwd: string) => cwd.startsWith('/') && !isCommandEcho(cwd);
+    const isValidCwd = (cwd: string) => isAbsolutePath(cwd) && !isCommandEcho(cwd);
 
     for (const line of cleaned.split('\n')) {
       const trimmed = line.trim();
@@ -1878,14 +2023,32 @@ Write-Output "__DOCKER__: $dockerVer"
     // 解析相对路径：必须通过交互式 shell 获取当前 CWD。
     // 注意：不能 fallback 到 SFTP realpath('.')，它通常是登录 home 目录，会导致文件传错位置。
     let fullPath = remotePath;
-    if (!remotePath.startsWith('/')) {
-      console.log(`[SSH] Getting shell CWD...`);
-      const cwd = await this.getSessionCwd(sessionId);
-      console.log(`[SSH] Shell CWD: '${cwd}'`);
-      if (!cwd || !cwd.startsWith('/')) {
-        throw new Error('无法获取当前终端目录，请确认终端处于正常 Shell 提示符状态后重试');
+    const uploadOs = await this.resolveSessionOs(sessionId);
+    if (uploadOs === 'windows') {
+      // Win32-OpenSSH 的 SFTP 子系统以正斜杠 + 盘符形式表示路径（如 C:/Users/name/file），
+      // 与 PowerShell $PWD 返回的反斜杠路径不同，需统一转换为正斜杠。
+      const norm = (p: string) => p.replace(/\\/g, '/');
+      if (/^[A-Za-z]:[\\/]/.test(remotePath) || remotePath.startsWith('\\\\')) {
+        fullPath = norm(remotePath);
+      } else {
+        console.log(`[SSH] Getting shell CWD (windows)...`);
+        const cwd = await this.getSessionCwd(sessionId);
+        console.log(`[SSH] Shell CWD: '${cwd}'`);
+        if (!isAbsolutePath(cwd)) {
+          throw new Error('无法获取当前终端目录，请确认终端处于正常 Shell 提示符状态后重试');
+        }
+        fullPath = `${norm(cwd).replace(/\/$/, '')}/${norm(remotePath)}`;
       }
-      fullPath = `${cwd.replace(/\/$/, '')}/${remotePath}`;
+    } else {
+      if (!remotePath.startsWith('/')) {
+        console.log(`[SSH] Getting shell CWD...`);
+        const cwd = await this.getSessionCwd(sessionId);
+        console.log(`[SSH] Shell CWD: '${cwd}'`);
+        if (!cwd || !cwd.startsWith('/')) {
+          throw new Error('无法获取当前终端目录，请确认终端处于正常 Shell 提示符状态后重试');
+        }
+        fullPath = `${cwd.replace(/\/$/, '')}/${remotePath}`;
+      }
     }
     console.log(`[SSH] SFTP upload path: ${remotePath} -> ${fullPath}`);
 
