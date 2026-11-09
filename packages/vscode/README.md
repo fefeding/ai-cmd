@@ -1,21 +1,40 @@
-# AICmd Terminal — VSCode Extension
+# AICmd Terminal — AI SSH Client & Agent for VS Code
 
-Bring [AICmd](https://github.com/fefeding/ai-cmd) (an AI-powered web SSH terminal) directly into VSCode. The extension launches AICmd's backend service (Express + WebSocket) inside the VSCode extension host and loads its front-end SPA through a WebView, so **every AICmd feature works inside VSCode with zero changes to any business code**:
+**An AI-powered SSH terminal right inside VS Code.** Connect to remote servers or a local shell, let an AI agent run commands and analyze logs in natural language, transfer files with SFTP / ZMODEM, audit every command, and run batch jobs across servers — without leaving your editor.
 
-## Screenshot
+[中文文档](https://github.com/fefeding/ai-cmd/blob/main/README.zh.md) · [GitHub 仓库](https://github.com/fefeding/ai-cmd) · [问题反馈](https://github.com/fefeding/ai-cmd/issues)
 
-![AICmd Terminal in VSCode](https://raw.githubusercontent.com/fefeding/ai-cmd/main/docs/images/vscode-extension.png)
+![AICmd: SSH terminal, AI assistant and file manager inside VS Code](https://raw.githubusercontent.com/fefeding/ai-cmd/main/docs/images/vscode-extension.png)
 
-- SSH / local terminal (xterm.js + ssh2 / node-pty)
-- Autonomous AI Agent (OpenAI function-calling protocol)
-- Skills system (built-in skills + custom `/skill`)
-- Command audit & replay (timeline / stats / export)
-- Real-time log monitoring + AI anomaly detection
-- Batch operations (parallel multi-server execution)
-- Jump host & SSH agent forwarding
-- File transfer (rz/sz ZMODEM, SFTP upload/download)
+## Features
 
-> The extension reuses the **same project** (this repository) at runtime: it starts the project's own `server.js` as a child process and serves the project's own `dist/` front-end. No separate AICmd install is required.
+| | |
+|---|---|
+| **SSH & local terminal** | Full xterm.js terminal (256 colors, tabs, auto-reconnect) over `ssh2` / `node-pty` |
+| **AI Agent** | OpenAI-compatible function calling (OpenAI / DeepSeek / Qwen / any compatible endpoint): the agent reads terminal output, executes commands and iterates until the task is done |
+| **Skills** | Built-in ops playbooks plus your own `/skill` markdown playbooks |
+| **File transfer** | SFTP upload / download and `rz` / `sz` ZMODEM with a native Save As dialog |
+| **Command audit & replay** | Every AI-executed command is recorded with output, duration and status; timeline, statistics and JSON / CSV export |
+| **Log monitoring** | `tail -f` with anomaly detection and AI-powered analysis |
+| **Batch operations** | Run one command on multiple servers in parallel and aggregate the results |
+| **Jump host & SSH agent forwarding** | Per-connection startup scripts and automatic local SSH agent detection |
+
+> 中文用户：这是 VS Code 里的 **AI SSH 终端 / 运维智能体**，支持 SSH 远程连接、本地 Shell、SFTP 文件传输、命令审计、日志监控与多服务器批量执行；连接配置与桌面版 / CLI 共用 `~/.aicmd`。
+
+## Quick Start
+
+1. Install the extension (from the Marketplace, or `code --install-extension fefeding.vscode-aicmd`), then click the **AICmd** icon in the Activity Bar.
+2. Click **Open Local Shell** for a local terminal, or **+** to add an SSH connection (host, port, password / private key). Click a connection to open its terminal.
+3. *Optional*: click the robot icon, set an OpenAI-compatible API Key + Base URL, then ask the agent things like *"check disk usage and find the biggest log files"*.
+
+No separate AICmd installation is needed — the distributed extension ships its own front-end and backend, starts the backend on demand on `127.0.0.1`, and stops it when the last panel closes.
+
+## Why AICmd instead of a plain terminal?
+
+- **SSH + AI ops in one place**: a real remote terminal *and* an agent that can act on what it sees, instead of copy-pasting output into a chatbot.
+- **Auditable by default**: every command executed by the AI is recorded, with a timeline, statistics and export for review.
+- **Fleet-aware**: batch commands, log monitoring and jump-host / agent-forwarding workflows across multiple servers.
+- **Shared configuration**: connections, sessions and AI settings live in `~/.aicmd` and are shared with the standalone desktop / CLI AICmd.
 
 ## How It Works
 
@@ -33,8 +52,8 @@ VSCode Extension Host
 
 ## Requirements
 
-- VSCode `^1.75.0` or later.
-- A built AICmd project (front-end + backend) — see [Local Development](#local-development).
+- VS Code `^1.75.0` or later (Windows / macOS / Linux).
+- A published build of the extension already includes its own front-end and backend runtime — **no separate AICmd install is required**. Only source development needs a locally built project, see [Local Development](#local-development).
 - Node.js available to launch the backend. The extension locates a `node` binary automatically (see [Environment Variables](#environment-variables)); you normally do not need to set anything.
 
 ## Installing the Extension
@@ -144,10 +163,16 @@ vsce package           # produce a .vsix
 vsce publish
 ```
 
-> The distributed package must include the runtime (`server.js`, `dist/`, `data/skills`, and `node_modules` with the native `node-pty`). The current layout targets **in-repo development / source distribution**. For cross-machine installation, copy the runtime into `packages/vscode/runtime/` (`server.js`, `dist`, `data`) before running `vsce package` — the extension automatically prefers that directory when present.
+> The distributed package must include the runtime (`server.js`, `dist/`, `data/skills`, and `node_modules` with the native `node-pty`). Marketplace / Open VSX releases are built by CI, which runs `node scripts/prepare-vscode-runtime.mjs` to copy the runtime into `packages/vscode/runtime/` before packaging. For a local manual build, run that script before `vsce package` — the extension automatically prefers that directory when present.
 
 ## Notes
 
 - The extension's backend listens only on `127.0.0.1`, and the WebView loads the front-end from the same origin, so no network exposure or token is required.
 - Backend logs are written to the **Output** panel → channel **AICmd** for troubleshooting startup issues.
 - The WebView follows your VSCode color theme (light / dark / high-contrast) automatically.
+
+## Support & Feedback
+
+- Questions: the **Q&A** tab on the [Marketplace page](https://marketplace.visualstudio.com/items?itemName=fefeding.vscode-aicmd).
+- Bugs & feature requests: [GitHub Issues](https://github.com/fefeding/ai-cmd/issues).
+- Chinese documentation: [README.zh.md](https://github.com/fefeding/ai-cmd/blob/main/README.zh.md).

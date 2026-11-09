@@ -1,4 +1,4 @@
 {
-  "displayName": "AICmd Terminal",
-  "description": "AI-powered Web SSH terminal: SSH/local terminals, AI Agent, skill system, command auditing, log monitoring, batch operations and file transfer, all running inside VSCode."
+  "displayName": "AICmd - AI SSH Terminal & Agent",
+  "description": "AI SSH terminal & agent for VS Code: remote SSH and local shell, SFTP/ZMODEM file transfer, AI command execution, log monitoring, command audit and multi-server batch ops."
 }

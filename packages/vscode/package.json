@@ -2,27 +2,58 @@
   "name": "vscode-aicmd",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "publisher": "fefeding",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/fefeding/ai-cmd"
   },
+  "homepage": "https://github.com/fefeding/ai-cmd#readme",
+  "bugs": {
+    "url": "https://github.com/fefeding/ai-cmd/issues"
+  },
   "engines": {
     "vscode": "^1.75.0"
   },
   "categories": [
-    "Other",
-    "AI"
+    "AI",
+    "Other"
   ],
   "keywords": [
     "ssh",
+    "ssh client",
+    "remote ssh",
     "terminal",
+    "terminal emulator",
+    "shell",
+    "local shell",
+    "xterm",
+    "sftp",
+    "file transfer",
+    "zmodem",
     "ai",
+    "ai agent",
+    "llm",
+    "devops",
+    "linux",
+    "server management",
+    "remote development",
+    "remote",
+    "log monitoring",
+    "command audit",
+    "batch commands",
+    "jump host",
     "agent",
-    "remote"
+    "ssh 终端",
+    "运维"
   ],
+  "galleryBanner": {
+    "color": "#0F4C75",
+    "theme": "light"
+  },
+  "pricing": "Free",
+  "qna": "marketplace",
   "icon": "resources/activity-icon.png",
   "main": "./dist/extension.js",
   "activationEvents": [

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.26
+
+- 优化 VS Code Marketplace 展示与可发现性：显示名加入 SSH 关键词、keywords 扩充至 26 个、主分类改为 AI；新增 `galleryBanner` / `homepage` / `bugs` / Q&A / 免费标识；重写 README 首屏（价值主张、功能表、快速上手、差异化对比）并补充支持入口。
+
 ## 0.1.25
 
 - 修复终端 `Ctrl/Cmd+V` 粘贴内容重复，并保证任何宿主环境下都**恰好粘贴一次**：
