@@ -4,7 +4,7 @@
 export interface ConnectionEntity {
   id?: string;
   name: string;
-  type?: 'ssh' | 'local';
+  type?: 'ssh' | 'local' | 'rdp';
   host?: string;
   port?: number;
   username?: string;
@@ -49,7 +49,7 @@ export interface TerminalTab {
  * WebSocket 消息协议
  */
 export interface WSMessage {
-  type: 'terminal' | 'resize' | 'create' | 'reconnect' | 'close' | 'status' | 'error' | 'conn-log' | 'zmodem' | 'ai-agent-event' | 'ai-agent-run' | 'ai-agent-stop' | 'monitor-event' | 'file-upload' | 'file-upload-result' | 'file-upload-start' | 'file-upload-chunk' | 'file-upload-end' | 'file-upload-progress';
+  type: 'terminal' | 'resize' | 'create' | 'reconnect' | 'close' | 'status' | 'error' | 'conn-log' | 'zmodem' | 'ai-agent-event' | 'ai-agent-run' | 'ai-agent-stop' | 'monitor-event' | 'file-upload' | 'file-upload-result' | 'file-upload-start' | 'file-upload-chunk' | 'file-upload-end' | 'file-upload-progress' | 'rdp-create' | 'rdp-input' | 'rdp-size' | 'rdp-close' | 'rdp-frame' | 'rdp-ready';
   sessionId?: string;
   data?: any;
   binary?: boolean;

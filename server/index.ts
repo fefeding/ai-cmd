@@ -5,10 +5,12 @@ import { SkillService } from './service/skill.service';
 import { AuditService } from './service/audit.service';
 import { MonitorService } from './service/monitor.service';
 import { BatchService } from './service/batch.service';
+import { RdpService } from './service/rdp.service';
 
 // 初始化服务实例
 const connectionService = new ConnectionService();
 const sshService = new SSHService(connectionService);
+const rdpService = new RdpService(connectionService);
 const skillService = new SkillService();
 const auditService = new AuditService();
 const monitorService = new MonitorService(connectionService);
@@ -331,6 +333,14 @@ export async function handleRoutes(pathname: string, body: any) {
       return await sshService.getDefaultDirectory(sessionId);
     }
 
+    // RDP: 健康检查与会话状态
+    if (pathname === '/api/rdp/checkGuacd') {
+      return await rdpService.checkGuacd(body?.host, body?.port);
+    }
+    if (pathname === '/api/rdp/getSessions') {
+      return rdpService.getSessions();
+    }
+
     throw Error('API endpoint not found');
   } catch (error: any) {
     if (error?.detail) error.message += ' ' + error.detail;
@@ -339,4 +349,4 @@ export async function handleRoutes(pathname: string, body: any) {
 }
 
 // 导出服务实例供 WebSocket 使用
-export { connectionService, sshService, aiService, skillService, auditService, monitorService, batchService };
+export { connectionService, sshService, rdpService, aiService, skillService, auditService, monitorService, batchService };

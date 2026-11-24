@@ -9,8 +9,8 @@ export class ConnectionEntity {
   /** 连接名称 */
   name!: string;
 
-  /** 连接类型：ssh 或 local（本地 shell） */
-  type: 'ssh' | 'local' = 'ssh';
+  /** 连接类型：ssh / local（本地 shell）/ rdp（Windows 远程桌面） */
+  type: 'ssh' | 'local' | 'rdp' = 'ssh';
 
   /**
    * 目标平台提示（用于 Windows/macOS 远程主机的正确处理）。

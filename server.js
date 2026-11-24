@@ -346,6 +346,32 @@ wss.on('connection', async (ws, req) => {
     console.log(`[WS] Session ${sessionId} connected, status sent`);
   }
 
+  // 创建 RDP 会话（Guacamole 协议帧经 WebSocket 转发）
+  async function createRdpSession(sid, data) {
+    const { rdpService } = require('./dist/server/index.js');
+    const { connectionId, width, height } = data || {};
+    if (!connectionId) {
+      safeSend(JSON.stringify({ type: 'error', data: '缺少 connectionId' }));
+      return;
+    }
+    sessionId = sid || `rdp-${Date.now()}-${Math.random().toString(36).substr(2, 8)}`;
+    console.log(`[WS] Creating RDP session: ${sessionId}, connectionId: ${connectionId}`);
+    const sendLog = (msg) => safeSend(JSON.stringify({ type: 'conn-log', sessionId, data: msg }));
+    try {
+      await rdpService.createSession(sessionId, connectionId, width || 1280, height || 800, {
+        onFrame: (inst) => safeSend(JSON.stringify({ type: 'rdp-frame', sessionId, data: inst }), true),
+        onReady: () => safeSend(JSON.stringify({ type: 'rdp-ready', sessionId, data: 'connected' })),
+        onClose: (reason) => safeSend(JSON.stringify({ type: 'close', sessionId, data: reason })),
+        onLog: sendLog,
+      });
+      safeSend(JSON.stringify({ type: 'status', sessionId, data: 'connected' }));
+      wsBySessionId.set(sessionId, ws);
+    } catch (err) {
+      console.error(`[WS] RDP session creation failed: ${err.message}`);
+      safeSend(JSON.stringify({ type: 'error', sessionId, data: err.message || 'RDP 连接失败' }));
+    }
+  }
+
   ws.on('message', async (raw) => {
     console.log(`[WS] Received raw message: ${raw.toString().substring(0, 200)}`);
     let msg;
@@ -420,11 +446,41 @@ wss.on('connection', async (ws, req) => {
           break;
         }
 
+        case 'rdp-create': {
+          // 创建 RDP 会话（Guacamole 协议）
+          try {
+            await createRdpSession(sid, data);
+          } catch (err) {
+            safeSend(JSON.stringify({ type: 'error', sessionId: sid, data: err.message || 'RDP 连接失败' }));
+          }
+          break;
+        }
+
+        case 'rdp-input': {
+          // 前端 Guacamole 客户端发出的鼠标/键盘/剪贴板指令
+          const { rdpService } = serverModule;
+          if (sid && data && rdpService) rdpService.sendInput(sid, data);
+          break;
+        }
+
+        case 'rdp-size': {
+          const { rdpService } = serverModule;
+          if (sid && data && rdpService) rdpService.resize(sid, data.width, data.height);
+          break;
+        }
+
+        case 'rdp-close': {
+          const { rdpService } = serverModule;
+          if (sid && rdpService) rdpService.closeSession(sid);
+          break;
+        }
+
         case 'close': {
-          // 关闭会话
+          // 关闭会话（SSH 与 RDP 都调用，按 sessionId 清理）
           if (sid) {
             console.log(`[WS] Closing session: ${sid}`);
             sshService.closeSession(sid);
+            if (serverModule.rdpService) serverModule.rdpService.closeSession(sid);
           }
           break;
         }
@@ -623,6 +679,7 @@ wss.on('connection', async (ws, req) => {
           serverModule.monitorService.stopSessionMonitors(sessionId);
         }
         serverModule.sshService.closeSession(sessionId);
+        if (serverModule.rdpService) serverModule.rdpService.closeSession(sessionId);
       } catch (e) {
         // ignore
       }

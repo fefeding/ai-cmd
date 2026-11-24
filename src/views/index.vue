@@ -65,8 +65,15 @@
             class="terminal-pane"
             :class="{ active: tab.id === store.activeTabId }"
           >
+            <RdpTabComp
+              v-if="getConnection(tab.connectionId)?.type === 'rdp' && (tab.id === store.activeTabId || renderedTabs.has(tab.id))"
+              :tabId="tab.id"
+              :connection="getConnection(tab.connectionId)"
+              :active="tab.id === store.activeTabId"
+              @status-change="(s, sid) => handleStatusChange(tab.id, s, sid)"
+            />
             <TerminalTabComp
-              v-if="tab.id === store.activeTabId || renderedTabs.has(tab.id)"
+              v-else-if="tab.id === store.activeTabId || renderedTabs.has(tab.id)"
               :ref="el => setTermRef(tab.id, el)"
               :tabId="tab.id"
               :connection="getConnection(tab.connectionId)"
@@ -150,6 +157,7 @@ import { useTerminalStore } from '@/stores/terminal';
 import * as terminalService from '@/service/terminal';
 import TerminalSidebar from '@/components/terminal-sidebar.vue';
 import TerminalTabComp from '@/components/terminal-tab.vue';
+import RdpTabComp from '@/components/rdp-tab.vue';
 import ConnectionEditor from '@/components/connection-editor/index.vue';
 import AISettings from '@/components/ai-settings/index.vue';
 import BatchPanel from '@/components/batch-panel/index.vue';

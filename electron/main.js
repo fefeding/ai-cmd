@@ -72,6 +72,7 @@ function getServices() {
     console.log(`[Electron] Server module loaded, keys: ${Object.keys(serverModule).join(', ')}`);
     _services = {
       sshService: serverModule.sshService,
+      rdpService: serverModule.rdpService,
       connectionService: serverModule.connectionService,
       aiService: serverModule.aiService,
       monitorService: serverModule.monitorService,
@@ -221,7 +222,7 @@ function setupTerminalIPC() {
       send({ type: 'error', data: 'Services not available (dev mode - use Vite WebSocket instead)' });
       return;
     }
-    const { sshService, aiService, monitorService } = services;
+    const { sshService, rdpService, aiService, monitorService } = services;
 
     try {
       switch (type) {
@@ -346,9 +347,52 @@ function setupTerminalIPC() {
           break;
         }
 
+        case 'rdp-create': {
+          const { connectionId, width, height } = data || {};
+          if (!connectionId) {
+            send({ type: 'error', data: 'Missing connectionId' });
+            return;
+          }
+          const sessionId = sid || `rdp-${Date.now()}-${Math.random().toString(36).substr(2, 8)}`;
+          if (!windowSessions.has(win.id)) windowSessions.set(win.id, new Set());
+          windowSessions.get(win.id).add(sessionId);
+          if (!rdpService) {
+            send({ type: 'error', sessionId, data: 'RDP service unavailable' });
+            return;
+          }
+          try {
+            await rdpService.createSession(sessionId, connectionId, width || 1280, height || 800, {
+              onFrame: (inst) => send({ type: 'rdp-frame', sessionId, data: inst }),
+              onReady: () => send({ type: 'rdp-ready', sessionId, data: 'connected' }),
+              onClose: (reason) => send({ type: 'close', sessionId, data: reason }),
+              onLog: (msg) => send({ type: 'conn-log', sessionId, data: msg }),
+            });
+            send({ type: 'status', sessionId, data: 'connected' });
+          } catch (err) {
+            send({ type: 'error', sessionId, data: err.message || 'RDP 连接失败' });
+          }
+          break;
+        }
+
+        case 'rdp-input': {
+          if (sid && data && rdpService) rdpService.sendInput(sid, data);
+          break;
+        }
+
+        case 'rdp-size': {
+          if (sid && data && rdpService) rdpService.resize(sid, data.width, data.height);
+          break;
+        }
+
+        case 'rdp-close': {
+          if (sid && rdpService) rdpService.closeSession(sid);
+          break;
+        }
+
         case 'close': {
           if (sid) {
             sshService.deleteSession(sid);
+            if (rdpService) rdpService.closeSession(sid);
             const sessions = windowSessions.get(win.id);
             if (sessions) sessions.delete(sid);
           }
@@ -413,6 +457,7 @@ function cleanupWindow(win) {
           services.monitorService.stopSessionMonitors(sid);
           // 仅关闭连接，不删除元数据（保留 sessions.json 供下次启动恢复）
           services.sshService.closeSession(sid);
+          if (services.rdpService) services.rdpService.closeSession(sid);
         } catch (e) { /* ignore */ }
       });
     }

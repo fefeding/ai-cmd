@@ -15,11 +15,22 @@
         <input type="text" class="form-control" v-model="form.name" :placeholder="t('connection.namePlaceholder')" required>
       </div>
 
-      <!-- SSH 连接配置 -->
+      <!-- 连接类型 -->
+      <div class="mb-3">
+        <label class="form-label fw-bold"><i class="bi bi-diagram-3 me-1"></i>{{ t('connection.connType') }}</label>
+        <div class="btn-group w-100" role="group">
+          <input type="radio" class="btn-check" name="connType" id="type-ssh" value="ssh" v-model="form.type">
+          <label class="btn btn-outline-primary" for="type-ssh"><i class="bi bi-terminal me-1"></i>{{ t('connection.typeSsh') }}</label>
+          <input type="radio" class="btn-check" name="connType" id="type-rdp" value="rdp" v-model="form.type">
+          <label class="btn btn-outline-primary" for="type-rdp"><i class="bi bi-display me-1"></i>{{ t('connection.typeRdp') }}</label>
+        </div>
+      </div>
+
+      <!-- SSH / RDP 连接配置 -->
         <div class="row mb-3">
           <div class="col-8">
             <label class="form-label fw-bold"><i class="bi bi-server me-1"></i>{{ t('connection.host') }} <span class="text-danger">*</span></label>
-            <input type="text" class="form-control" v-model="form.host" :placeholder="t('connection.hostPlaceholder')" :required="form.type === 'ssh'">
+            <input type="text" class="form-control" v-model="form.host" :placeholder="t('connection.hostPlaceholder')" :required="form.type !== 'local'">
           </div>
           <div class="col-4">
             <label class="form-label fw-bold"><i class="bi bi-door-closed me-1"></i>{{ t('connection.port') }}</label>
@@ -27,7 +38,7 @@
           </div>
         </div>
 
-        <div class="mb-3">
+        <div class="mb-3" v-if="form.type === 'ssh'">
           <label class="form-label fw-bold"><i class="bi bi-cpu me-1"></i>{{ t('connection.platform') }}</label>
           <select class="form-select" v-model="form.platform">
             <option value="auto">{{ t('connection.platformAuto') }}</option>
@@ -42,11 +53,39 @@
 
         <div class="mb-3">
           <label class="form-label fw-bold"><i class="bi bi-person me-1"></i>{{ t('connection.username') }} <span class="text-danger">*</span></label>
-          <input type="text" class="form-control" v-model="form.username" :placeholder="t('connection.usernamePlaceholder')" :required="form.type === 'ssh'">
+          <input type="text" class="form-control" v-model="form.username" :placeholder="t('connection.usernamePlaceholder')" :required="form.type !== 'local'">
         </div>
 
-        <!-- 认证方式 -->
-        <div class="mb-3">
+        <!-- RDP 专用设置 -->
+        <div v-if="form.type === 'rdp'" class="mb-3 p-3 border rounded">
+          <div class="fw-bold mb-2"><i class="bi bi-display me-1"></i>{{ t('connection.rdpSettings') }}</div>
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label">{{ t('connection.rdpDomain') }}</label>
+              <input type="text" class="form-control form-control-sm" v-model="rdpOptions.domain" :placeholder="t('connection.rdpDomainPlaceholder')">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">{{ t('connection.rdpWidth') }}</label>
+              <input type="number" class="form-control form-control-sm" v-model.number="rdpOptions.width" min="640" max="4096">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">{{ t('connection.rdpHeight') }}</label>
+              <input type="number" class="form-control form-control-sm" v-model.number="rdpOptions.height" min="480" max="2160">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">{{ t('connection.rdpGuacdHost') }}</label>
+              <input type="text" class="form-control form-control-sm" v-model="guacdOptions.host" placeholder="127.0.0.1">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">{{ t('connection.rdpGuacdPort') }}</label>
+              <input type="number" class="form-control form-control-sm" v-model.number="guacdOptions.port" min="1" max="65535" placeholder="4822">
+            </div>
+          </div>
+          <small class="form-text text-muted d-block mt-2"><i class="bi bi-info-circle me-1"></i>{{ t('connection.rdpHint') }}</small>
+        </div>
+
+        <!-- 认证方式（RDP 固定用密码，此处仅 SSH 显示） -->
+        <div class="mb-3" v-if="form.type === 'ssh'">
           <label class="form-label fw-bold"><i class="bi bi-shield-lock me-1"></i>{{ t('connection.authType') }}</label>
           <div class="btn-group w-100" role="group">
             <input type="radio" class="btn-check" name="authType" id="auth-auto" value="auto" v-model="form.authType">
@@ -61,8 +100,8 @@
           </small>
         </div>
 
-        <!-- 密码认证 -->
-        <div v-if="form.authType === 'password'" class="mb-3">
+        <!-- 密码认证（SSH password 模式 或 RDP 固定） -->
+        <div v-if="isRdp || form.authType === 'password'" class="mb-3">
           <label class="form-label fw-bold">{{ t('connection.passwordLabel') }}</label>
           <input type="password" class="form-control" v-model="form.password" :placeholder="t('connection.passwordPlaceholder')">
         </div>
@@ -82,8 +121,8 @@
           </div>
         </div>
 
-      <!-- 连接后自动执行脚本 -->
-      <div class="card mb-3">
+      <!-- 连接后自动执行脚本（SSH 专用） -->
+      <div class="card mb-3" v-if="form.type === 'ssh'">
         <div class="card-header" @click="showStartupScript = !showStartupScript" style="cursor: pointer;">
           <i class="bi bi-lightning-charge me-1"></i>{{ t('connection.startupScript') }}
           <i :class="showStartupScript ? 'bi bi-chevron-up float-end' : 'bi bi-chevron-down float-end'"></i>
@@ -105,8 +144,8 @@
         </div>
       </div>
 
-      <!-- 保活配置 -->
-      <div class="card mb-3">
+      <!-- 保活配置（SSH 专用） -->
+      <div class="card mb-3" v-if="form.type === 'ssh'">
         <div class="card-header" @click="showKeepaliveConfig = !showKeepaliveConfig" style="cursor: pointer;">
           <i class="bi bi-heart-pulse me-1"></i>{{ t('connection.keepaliveConfig') }}
           <i :class="showKeepaliveConfig ? 'bi bi-chevron-up float-end' : 'bi bi-chevron-down float-end'"></i>
@@ -136,8 +175,8 @@
         </div>
       </div>
 
-      <!-- 终端配置 -->
-      <div class="card mb-3">
+      <!-- 终端配置（SSH 专用） -->
+      <div class="card mb-3" v-if="form.type === 'ssh'">
         <div class="card-header" @click="showTerminalConfig = !showTerminalConfig" style="cursor: pointer;">
           <i class="bi bi-terminal me-1"></i>{{ t('connection.terminalConfig') }}
           <i :class="showTerminalConfig ? 'bi bi-chevron-up float-end' : 'bi bi-chevron-down float-end'"></i>
@@ -193,7 +232,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, reactive } from 'vue';
+import { ref, reactive, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Modal from '@/components/modal/index.vue';
 import { ConnectionService } from '@/service/connection';
@@ -220,7 +259,7 @@ const keepaliveCountMax = ref(3);
 
 const defaultForm = () => ({
   name: '',
-  type: 'ssh' as 'ssh',
+  type: 'ssh' as 'ssh' | 'rdp' | 'local',
   host: '',
   port: 22,
   username: 'root',
@@ -242,6 +281,12 @@ const defaultForm = () => ({
 });
 
 const form = reactive(defaultForm());
+
+const isRdp = computed(() => (form.type as string) === 'rdp');
+
+// RDP 专用配置（保存时写入 options.rdp / options.guacd）
+const rdpOptions = reactive({ domain: '', width: 1280, height: 800 });
+const guacdOptions = reactive({ host: '127.0.0.1', port: 4822 });
 
 const connectionService = new ConnectionService();
 
@@ -266,6 +311,16 @@ function open(connection?: any) {
     // 保活启用状态：如果 options 中有保活配置，则认为已启用
     keepaliveEnabled.value = connection.options?.keepaliveInterval !== undefined || connection.options?.keepaliveCountMax !== undefined;
     showKeepaliveConfig.value = keepaliveEnabled.value;
+    // RDP 配置回填
+    const rOpts = connection.options?.rdp || {};
+    rdpOptions.domain = rOpts.domain || '';
+    rdpOptions.width = rOpts.width || 1280;
+    rdpOptions.height = rOpts.height || 800;
+    const gOpts = connection.options?.guacd || {};
+    guacdOptions.host = gOpts.host || '127.0.0.1';
+    guacdOptions.port = gOpts.port || 4822;
+    // RDP 连接默认端口 3389
+    if (connection.type === 'rdp' && !connection.port) form.port = 3389;
   } else {
     editingConnection.value = null;
     Object.assign(form, defaultForm());
@@ -274,6 +329,11 @@ function open(connection?: any) {
     keepaliveEnabled.value = true;
     keepaliveInterval.value = 10000;
     keepaliveCountMax.value = 3;
+    rdpOptions.domain = '';
+    rdpOptions.width = 1280;
+    rdpOptions.height = 800;
+    guacdOptions.host = '127.0.0.1';
+    guacdOptions.port = 4822;
   }
   if (!props.embedded) connectionModal.value?.show();
 }
@@ -306,7 +366,17 @@ async function saveConnection() {
   }
   saving.value = true;
   try {
-    // 将保活配置写入 options
+    // RDP 连接：写入 rdp/guacd 配置，固定密码认证，默认端口 3389
+    if (form.type === 'rdp') {
+      form.port = form.port || 3389;
+      form.authType = 'password';
+      form.options = {
+        ...form.options,
+        rdp: { ...rdpOptions },
+        guacd: { ...guacdOptions },
+      };
+    }
+    // 将保活配置写入 options（仅 SSH 有意义）
     if (keepaliveEnabled.value) {
       form.options = {
         ...form.options,
