@@ -2,6 +2,7 @@ import * as net from 'net';
 import * as tls from 'tls';
 import type { WebSocket } from 'ws';
 import { ConnectionService } from './connection.service';
+import { connectWithProxy } from '../utils/proxy';
 
 /**
  * RDCleanPath WebSocket 代理。
@@ -228,52 +229,60 @@ function connectRdpTls(
   sessionId: string,
   log: (msg: string) => void,
   tlsOptions: tls.ConnectionOptions = {},
+  createSocket?: () => Promise<net.Socket>,
 ): Promise<RdpHandshakeResult> {
   return new Promise((resolve, reject) => {
     let settled = false;
     const done = (fn: () => void) => { if (!settled) { settled = true; fn(); } };
-    const tcpSocket = net.createConnection({ host, port }, () => {
+    // createSocket 由连接配置的代理设置决定；每次握手（含 TLS 降级重试）都建立新 socket
+    const openSocket: Promise<net.Socket> = createSocket
+      ? createSocket()
+      : new Promise<net.Socket>((resolveSocket, rejectSocket) => {
+        const socket = net.createConnection({ host, port }, () => resolveSocket(socket));
+        socket.once('error', rejectSocket);
+      });
+    openSocket.then((tcpSocket) => {
       log(`session ${sessionId}: TCP connected`);
       tcpSocket.write(x224ConnectionRequest, () => {
         log(`session ${sessionId}: sent X.224 Connection Request (${x224ConnectionRequest.length} bytes)`);
       });
-    });
-    tcpSocket.once('error', (err) => done(() => reject(new Error(`TCP 连接失败: ${err.message}`))));
-    tcpSocket.once('data', (x224Response: Buffer) => {
-      log(`session ${sessionId}: received X.224 Connection Confirm (${x224Response.length} bytes)`);
-      if (x224Response.length === 0) {
-        done(() => { tcpSocket.destroy(); reject(new Error('RDP 服务器关闭连接且未返回 X.224 响应')); });
-        return;
-      }
-      tcpSocket.removeAllListeners('error');
-      tcpSocket.removeAllListeners('data');
-      // SNI 只能用于域名（RFC 6066），IP 地址需省略避免 Node 弃用警告
-      const sniHost = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
-      const isIp = net.isIP(sniHost) !== 0;
-      const tlsSocket = tls.connect({
-        socket: tcpSocket,
-        ...(isIp ? {} : { servername: sniHost }),
-        rejectUnauthorized: false, // RDP 服务器普遍自签名
-        ...tlsOptions,
-      }, () => {
-        tcpSocket.setTimeout(0);
-        // 握手阶段的临时 error 监听必须摘掉，否则后续中继阶段的错误会先被这里
-        // 消费掉（settled 已 true，不会 reject，但错误被静默吞掉）
-        tlsSocket.removeAllListeners('error');
-        log(`session ${sessionId}: TLS handshake completed`);
-        const certChain = extractCertChain(tlsSocket.getPeerCertificate(true));
-        log(`session ${sessionId}: extracted ${certChain.length} certificate(s)`);
-        done(() => resolve({ x224Response: Buffer.from(x224Response), certChain, tlsSocket }));
+      tcpSocket.once('error', (err) => done(() => reject(new Error(`TCP 连接失败: ${err.message}`))));
+      tcpSocket.once('data', (x224Response: Buffer) => {
+        log(`session ${sessionId}: received X.224 Connection Confirm (${x224Response.length} bytes)`);
+        if (x224Response.length === 0) {
+          done(() => { tcpSocket.destroy(); reject(new Error('RDP 服务器关闭连接且未返回 X.224 响应')); });
+          return;
+        }
+        tcpSocket.removeAllListeners('error');
+        tcpSocket.removeAllListeners('data');
+        // SNI 只能用于域名（RFC 6066），IP 地址需省略避免 Node 弃用警告
+        const sniHost = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+        const isIp = net.isIP(sniHost) !== 0;
+        const tlsSocket = tls.connect({
+          socket: tcpSocket,
+          ...(isIp ? {} : { servername: sniHost }),
+          rejectUnauthorized: false, // RDP 服务器普遍自签名
+          ...tlsOptions,
+        }, () => {
+          tcpSocket.setTimeout(0);
+          // 握手阶段的临时 error 监听必须摘掉，否则后续中继阶段的错误会先被这里
+          // 消费掉（settled 已 true，不会 reject，但错误被静默吞掉）
+          tlsSocket.removeAllListeners('error');
+          log(`session ${sessionId}: TLS handshake completed`);
+          const certChain = extractCertChain(tlsSocket.getPeerCertificate(true));
+          log(`session ${sessionId}: extracted ${certChain.length} certificate(s)`);
+          done(() => resolve({ x224Response: Buffer.from(x224Response), certChain, tlsSocket }));
+        });
+        tlsSocket.once('error', (err) => done(() => {
+          tlsSocket.destroy();
+          tcpSocket.destroy();
+          reject(new Error(`TLS 握手失败: ${err.message}`));
+        }));
       });
-      tlsSocket.once('error', (err) => done(() => {
-        tlsSocket.destroy();
-        tcpSocket.destroy();
-        reject(new Error(`TLS 握手失败: ${err.message}`));
-      }));
-    });
-    tcpSocket.setTimeout(15000, () => {
-      done(() => { tcpSocket.destroy(); reject(new Error('RDP 握手超时')); });
-    });
+      tcpSocket.setTimeout(15000, () => {
+        done(() => { tcpSocket.destroy(); reject(new Error('RDP 握手超时')); });
+      });
+    }).catch((err: any) => done(() => reject(new Error(`TCP 连接失败: ${err.message}`))));
   });
 }
 
@@ -348,10 +357,12 @@ export class RdpTunnelService {
         const port = Number(connection.port || 3389);
         if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`无效 RDP 端口: ${port}`);
         log(`session ${sessionId}: connecting to configured RDP server ${host}:${port}`);
+        // 每次握手都按连接配置重新建链（直连 / 系统代理 / 自定义代理）
+        const createSocket = () => connectWithProxy(connection, host, port, 15000, log);
 
         let handshake: RdpHandshakeResult | null = null;
         try {
-          handshake = await connectRdpTls(host, port, request.x224ConnectionRequest, sessionId, log);
+          handshake = await connectRdpTls(host, port, request.x224ConnectionRequest, sessionId, log, {}, createSocket);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           log(`session ${sessionId}: 首次 TLS 握手失败: ${message}`);
@@ -362,7 +373,7 @@ export class RdpTunnelService {
           let lastError: unknown = err;
           for (const options of RDP_TLS_FALLBACKS) {
             try {
-              handshake = await connectRdpTls(host, port, request.x224ConnectionRequest, sessionId, log, options);
+              handshake = await connectRdpTls(host, port, request.x224ConnectionRequest, sessionId, log, options, createSocket);
               break;
             } catch (fallbackErr) {
               lastError = fallbackErr;

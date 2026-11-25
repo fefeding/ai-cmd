@@ -481,10 +481,11 @@ export class SSHService {
   /**
    * 创建 SSH 会话
    */
-  private createSSHSession(sessionId: string, connectionId: string, connection: ConnectionEntity, cols: number, rows: number, name?: string, onLog?: (msg: string) => void): Promise<TerminalSession> {
+  private async createSSHSession(sessionId: string, connectionId: string, connection: ConnectionEntity, cols: number, rows: number, name?: string, onLog?: (msg: string) => void): Promise<TerminalSession> {
     const log = (msg: string) => { console.log(`[SSH] ${msg}`); onLog?.(msg); };
+    // 代理握手是异步的，需在创建 ssh2 Client 前完成
+    const sshConfig = await this.connectionService.getSSHConfig(connection, onLog);
     return new Promise<TerminalSession>((resolve, reject) => {
-      const sshConfig = this.connectionService.getSSHConfig(connection, onLog);
       const client = new Client();
       const sessionName = name || connection.name || 'SSH';
 

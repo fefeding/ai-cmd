@@ -204,6 +204,61 @@
         </div>
       </div>
 
+      <!-- 代理配置（SSH / RDP 通用），默认收起 -->
+      <div class="card mb-3">
+        <div class="card-header" @click="showProxyConfig = !showProxyConfig" style="cursor: pointer;">
+          <i class="bi bi-shuffle me-1"></i>{{ t('connection.proxyConfig') }}
+          <span v-if="proxyOptions.mode !== 'direct'" class="badge bg-secondary ms-2">{{ proxyModeLabel }}</span>
+          <i :class="showProxyConfig ? 'bi bi-chevron-up float-end' : 'bi bi-chevron-down float-end'"></i>
+        </div>
+        <div class="card-body" v-show="showProxyConfig">
+          <label class="form-label">{{ t('connection.proxyMode') }}</label>
+          <select class="form-select form-select-sm" v-model="proxyOptions.mode">
+            <option value="direct">{{ t('connection.proxyModeDirect') }}</option>
+            <option value="system">{{ t('connection.proxyModeSystem') }}</option>
+            <option value="custom">{{ t('connection.proxyModeCustom') }}</option>
+          </select>
+          <small class="form-text text-muted d-block">
+            <i class="bi bi-info-circle me-1"></i>{{ t('connection.proxyModeHint') }}
+          </small>
+
+          <template v-if="proxyOptions.mode === 'custom'">
+            <div class="row g-2 mt-2">
+              <div class="col-md-8">
+                <label class="form-label">{{ t('connection.proxyHost') }} <span class="text-danger">*</span></label>
+                <input type="text" class="form-control form-control-sm" v-model="proxyOptions.host" :placeholder="t('connection.proxyHostPlaceholder')">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">{{ t('connection.proxyPort') }}</label>
+                <input type="number" class="form-control form-control-sm" v-model.number="proxyOptions.port" min="1" max="65535">
+              </div>
+            </div>
+            <div class="row g-2 mt-2">
+              <div class="col-md-6">
+                <label class="form-label">{{ t('connection.proxyType') }}</label>
+                <select class="form-select form-select-sm" v-model="proxyOptions.type">
+                  <option value="http">HTTP</option>
+                  <option value="https">HTTPS</option>
+                  <option value="socks4">SOCKS4</option>
+                  <option value="socks5">SOCKS5</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label">{{ t('connection.proxyUsername') }}</label>
+                <input type="text" class="form-control form-control-sm" v-model="proxyOptions.username" autocomplete="off">
+              </div>
+            </div>
+            <div class="mt-2" v-if="proxyOptions.type !== 'socks4'">
+              <label class="form-label">{{ t('connection.proxyPassword') }}</label>
+              <input type="password" class="form-control form-control-sm" v-model="proxyOptions.password" autocomplete="new-password">
+            </div>
+            <small class="form-text text-muted d-block mt-2">
+              <i class="bi bi-info-circle me-1"></i>{{ t('connection.proxyCustomHint') }}
+            </small>
+          </template>
+        </div>
+      </div>
+
       <!-- 操作按钮 -->
       <div class="d-flex justify-content-between">
         <button type="button" class="btn btn-outline-secondary" @click="testConn" :disabled="testing">
@@ -241,6 +296,7 @@ const editingConnection = ref<string | null>(null);
 const showTerminalConfig = ref(false);
 const showStartupScript = ref(false);
 const showKeepaliveConfig = ref(false);
+const showProxyConfig = ref(false);
 const testing = ref(false);
 const saving = ref(false);
 
@@ -274,6 +330,34 @@ const defaultForm = () => ({
 
 const form = reactive(defaultForm());
 
+type ProxyMode = 'direct' | 'system' | 'custom';
+type ProxyType = 'http' | 'https' | 'socks4' | 'socks5';
+
+const defaultProxy = () => ({
+  mode: 'system' as ProxyMode,
+  type: 'http' as ProxyType,
+  host: '',
+  port: 8080,
+  username: '',
+  password: '',
+});
+const proxyOptions = reactive(defaultProxy());
+const proxyModeLabel = computed(() => {
+  if (proxyOptions.mode === 'system') return t('connection.proxyModeSystem');
+  if (proxyOptions.mode === 'custom') return t('connection.proxyModeCustom');
+  return '';
+});
+
+function syncProxyToForm() {
+  (form as any).proxy = { ...proxyOptions };
+}
+
+function proxyValid(): boolean {
+  if (proxyOptions.mode !== 'custom' || proxyOptions.host.trim()) return true;
+  toast.warning(t('connection.proxyHostRequired'));
+  return false;
+}
+
 // 回填/初始化期间跳过类型联动，避免覆盖已保存连接的端口与用户名
 let skipTypeWatch = false;
 
@@ -305,6 +389,7 @@ function open(connection?: any) {
   if (connection) {
     editingConnection.value = connection.id;
     Object.assign(form, defaultForm(), connection);
+    Object.assign(proxyOptions, defaultProxy(), connection.proxy || {});
     // 老连接可能没有 platform 字段，确保下拉框有合法默认值
     if (!form.platform) form.platform = 'auto';
     showStartupScript.value = !!connection.startupScript || !!connection.forwardAgent;
@@ -332,6 +417,7 @@ function open(connection?: any) {
   } else {
     editingConnection.value = null;
     Object.assign(form, defaultForm());
+    Object.assign(proxyOptions, defaultProxy());
     showStartupScript.value = false;
     showKeepaliveConfig.value = false;
     keepaliveEnabled.value = true;
@@ -341,6 +427,8 @@ function open(connection?: any) {
     rdpOptions.width = 1280;
     rdpOptions.height = 800;
   }
+  // 代理配置默认收起，即使编辑已有代理的连接
+  showProxyConfig.value = false;
   //  watch 是异步 flush，等本次同步回填完成后再恢复
   nextTick(() => { skipTypeWatch = false; });
   if (!props.embedded) connectionModal.value?.show();
@@ -372,6 +460,8 @@ async function saveConnection() {
     toast.warning(t('connection.hostUsernameRequired'));
     return;
   }
+  if (!proxyValid()) return;
+  syncProxyToForm();
   saving.value = true;
   try {
     // RDP 连接：写入 rdp 配置（IronRDP-WASM 直连，无需 guacd），固定密码认证，默认端口 3389
@@ -418,6 +508,8 @@ async function testConn() {
     toast.warning(t('connection.hostUsernameTestRequired'));
     return;
   }
+  if (!proxyValid()) return;
+  syncProxyToForm();
   testing.value = true;
   try {
     const result = await connectionService.testConnection({ ...form } as any);

@@ -1,4 +1,12 @@
 {
   "displayName": "AICmd - AI SSH/RDP 终端与运维智能体",
-  "description": "VS Code 内的 AI SSH 终端、Windows 远程桌面（RDP）与本地 Shell：SFTP/ZMODEM 与 RDP 剪贴板文件传输、AI 执行命令、日志监控、命令审计与多服务器批量运维。"
+  "description": "VS Code 内的 AI SSH 终端、Windows 远程桌面（RDP）与本地 Shell：SFTP/ZMODEM 与 RDP 剪贴板文件传输、AI 执行命令、日志监控、命令审计与多服务器批量运维。",
+  "view.connections": "连接",
+  "command.openTerminal": "打开连接（终端 / 远程桌面）",
+  "command.refresh": "刷新连接",
+  "command.addConnection": "新增连接",
+  "command.editConnection": "编辑连接",
+  "command.deleteConnection": "删除连接",
+  "config.dataDir.description": "AICmd 的数据目录（连接配置 / 会话 / AI 配置 / 审计日志）。留空则复用桌面端 / CLI 的 ~/.aicmd，与独立运行的 AICmd 服务共用同一份 connections.json 等文件。",
+  "config.startPort.description": "VSCode 内启动 AICmd 服务时使用的起始端口（如被占用会自动向后寻找可用端口）。"
 }

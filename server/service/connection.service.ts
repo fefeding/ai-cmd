@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { ConnectionEntity } from '../model/connection.entity';
 import { getDataPath } from '../utils/data-dir';
+import { connectWithProxy } from '../utils/proxy';
 import { execSync } from 'child_process';
 
 const ENCRYPTED_PREFIX = 'enc:v1:';
@@ -127,6 +128,16 @@ export class ConnectionService {
         delete (updates as any)[field];
       }
     }
+    // 代理密码同样按空值不覆盖处理（前端编辑时若留空，保留已存密码）
+    if (updates.proxy && !updates.proxy.password) {
+      const existingPassword = connections[index].proxy?.password;
+      if (existingPassword) {
+        updates.proxy = { ...updates.proxy, password: existingPassword };
+      } else {
+        const { password: _ignored, ...rest } = updates.proxy;
+        updates.proxy = rest;
+      }
+    }
 
     connections[index] = { ...connections[index], ...updates, updatedAt: new Date() } as ConnectionEntity;
     await this.saveConnections(connections);
@@ -153,6 +164,8 @@ export class ConnectionService {
   async testConnection(connection: ConnectionEntity): Promise<boolean> {
     try {
       const { Client } = require('ssh2');
+      // 代理握手失败时直接返回 false，不要进入 ssh2 的 error 流程
+      const sshConfig = await this.getSSHConfig(connection);
       return new Promise<boolean>((resolve) => {
         const conn = new Client();
         const timeout = setTimeout(() => {
@@ -168,7 +181,7 @@ export class ConnectionService {
           clearTimeout(timeout);
           console.error('SSH 连接测试失败:', err.message);
           resolve(false);
-        }).connect(this.getSSHConfig(connection));
+        }).connect(sshConfig);
       });
     } catch (error) {
       console.error('SSH 连接测试异常:', error);
@@ -180,7 +193,7 @@ export class ConnectionService {
    * 从连接实体提取 ssh2 连接配置
    * @param onLog 可选的日志回调，用于将连接过程信息推送到前端终端
    */
-  getSSHConfig(connection: ConnectionEntity, onLog?: (msg: string) => void): any {
+  async getSSHConfig(connection: ConnectionEntity, onLog?: (msg: string) => void): Promise<any> {
     const log = (msg: string) => { console.log(`[SSH] ${msg}`); onLog?.(msg); };
 
     const config: any = {
@@ -234,7 +247,15 @@ export class ConnectionService {
       }
     };
 
-    return { ...config, ...connection.options };
+    const sshConfig: any = { ...config, ...connection.options };
+    // ssh2 的 sock 要求是一个已连接的 stream；直连/代理的差异全部封装在 connectWithProxy
+    try {
+      sshConfig.sock = await connectWithProxy(connection, connection.host, connection.port || 22, 30000, log);
+    } catch (err: any) {
+      log(`建立连接通道失败: ${err.message}`);
+      throw err;
+    }
+    return sshConfig;
   }
 
   /**
@@ -455,6 +476,9 @@ export class ConnectionService {
         encrypted[field] = this.encryptSecret(value);
       }
     }
+    if (encrypted.proxy?.password && !String(encrypted.proxy.password).startsWith(ENCRYPTED_PREFIX)) {
+      encrypted.proxy = { ...encrypted.proxy, password: this.encryptSecret(String(encrypted.proxy.password)) };
+    }
     return encrypted as ConnectionEntity;
   }
 
@@ -465,6 +489,9 @@ export class ConnectionService {
       if (typeof value === 'string' && value.startsWith(ENCRYPTED_PREFIX)) {
         decrypted[field] = this.decryptSecret(value);
       }
+    }
+    if (typeof decrypted.proxy?.password === 'string' && decrypted.proxy.password.startsWith(ENCRYPTED_PREFIX)) {
+      decrypted.proxy = { ...decrypted.proxy, password: this.decryptSecret(decrypted.proxy.password) };
     }
     return decrypted as ConnectionEntity;
   }

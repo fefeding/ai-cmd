@@ -1,4 +1,17 @@
 /**
+ * 连接代理配置
+ * - direct：直连；system：系统代理（环境变量）；custom：自定义代理
+ */
+export interface ConnectionProxy {
+  mode: 'direct' | 'system' | 'custom';
+  type: 'http' | 'https' | 'socks4' | 'socks5';
+  host?: string;
+  port?: number;
+  username?: string;
+  password?: string;
+}
+
+/**
  * 连接配置接口
  */
 export interface ConnectionEntity {
@@ -27,6 +40,8 @@ export interface ConnectionEntity {
     cursorStyle: 'block' | 'underline' | 'bar';
   };
   options?: Record<string, any>;
+  /** 网络代理配置（SSH / RDP 均支持） */
+  proxy?: ConnectionProxy;
   enabled?: boolean;
   createdAt?: Date;
   updatedAt?: Date;

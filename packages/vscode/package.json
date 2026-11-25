@@ -83,38 +83,38 @@
       "aicmd": [
         {
           "id": "aicmd.explorer",
-          "name": "连接"
+          "name": "%view.connections%"
         }
       ]
     },
     "commands": [
       {
         "command": "aicmd.openTerminal",
-        "title": "打开连接（终端 / 远程桌面）",
+        "title": "%command.openTerminal%",
         "category": "AICmd",
         "icon": "$(remote)"
       },
       {
         "command": "aicmd.refresh",
-        "title": "刷新连接",
+        "title": "%command.refresh%",
         "category": "AICmd",
         "icon": "$(refresh)"
       },
       {
         "command": "aicmd.addConnection",
-        "title": "新增连接",
+        "title": "%command.addConnection%",
         "category": "AICmd",
         "icon": "$(add)"
       },
       {
         "command": "aicmd.editConnection",
-        "title": "编辑连接",
+        "title": "%command.editConnection%",
         "category": "AICmd",
         "icon": "$(edit)"
       },
       {
         "command": "aicmd.deleteConnection",
-        "title": "删除连接",
+        "title": "%command.deleteConnection%",
         "category": "AICmd",
         "icon": "$(trash)"
       }
@@ -169,12 +169,12 @@
         "aicmd.dataDir": {
           "type": "string",
           "default": "",
-          "description": "AICmd 的数据目录（连接配置 / 会话 / AI 配置 / 审计日志）。留空则复用桌面端 / CLI 的 ~/.aicmd，与独立运行的 AICmd 服务共用同一份 connections.json 等文件。"
+          "description": "%config.dataDir.description%"
         },
         "aicmd.startPort": {
           "type": "number",
           "default": 9802,
-          "description": "VSCode 内启动 AICmd 服务时使用的起始端口（如被占用会自动向后寻找可用端口）。"
+          "description": "%config.startPort.description%"
         }
       }
     }

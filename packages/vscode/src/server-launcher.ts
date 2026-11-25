@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
+import { t } from './i18n';
 
 /** 连接配置（与后端 connections.json 字段对齐的子集）。 */
 export interface AicmdConnection {
@@ -105,13 +106,16 @@ export class ServerLauncher {
       const distServer = path.join(this.projectRoot, 'dist', 'server', 'index.js');
       if (!fs.existsSync(distServer)) {
         throw new Error(
-          '未找到后端构建产物 dist/server/index.js，请先在本项目根目录执行 `pnpm build-only`（或 pnpm build）。'
+          t(
+            '未找到后端构建产物 dist/server/index.js，请先在本项目根目录执行 `pnpm build-only`（或 pnpm build）。',
+            'Backend build dist/server/index.js not found. Run `pnpm build-only` (or `pnpm build`) in the project root first.'
+          )
         );
       }
     }
     const serverJs = path.join(this.projectRoot, 'server.js');
     if (!fs.existsSync(serverJs)) {
-      throw new Error('找不到 server.js：' + serverJs);
+      throw new Error(t('找不到 server.js：', 'server.js not found: ') + serverJs);
     }
     // 每次启动生成一次性令牌，作为 ping 健康检查的依据，规避端口被其它进程占用时误判
     this.launchToken = crypto.randomBytes(16).toString('hex');
@@ -143,7 +147,10 @@ export class ServerLauncher {
       errors.push(`${nodeBin} → ${err}`);
       this.stop();
     }
-    throw new Error('AICmd 服务启动失败，已依次尝试: ' + errors.join(' | '));
+    throw new Error(
+      t('AICmd 服务启动失败，已依次尝试: ', 'Failed to start AICmd service. Tried: ') +
+        errors.join(' | ')
+    );
   }
 
   /**
@@ -229,7 +236,10 @@ export class ServerLauncher {
       this.log(`[aicmd-server] exited with code ${code}`, true);
       this.started = false;
       if (!this.spawnError) {
-        this.spawnError = `进程提前退出(code=${code})`;
+        this.spawnError = t(
+          `进程提前退出(code=${code})`,
+          `Process exited early (code=${code})`
+        );
       }
       // 非主动停止且退出的是当前活动子进程 → 视为意外崩溃
       if (!this.intentionalStop && exited === this.child) {
@@ -245,11 +255,16 @@ export class ServerLauncher {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (await this.ping()) return undefined;
-      if (this.spawnError) return '无法启动进程: ' + this.spawnError;
+      if (this.spawnError) {
+        return t('无法启动进程: ', 'Failed to start process: ') + this.spawnError;
+      }
       await new Promise((r) => setTimeout(r, 300));
     }
     this.stop();
-    return `启动超时${this.lastStderr ? '，最后输出: ' + this.lastStderr : ''}`;
+    return (
+      t('启动超时', 'Startup timed out') +
+      (this.lastStderr ? t('，最后输出: ', ', last output: ') + this.lastStderr : '')
+    );
   }
 
   private ping(): Promise<boolean> {
@@ -305,7 +320,7 @@ export class ServerLauncher {
     for (let p = start; p < start + 200; p++) {
       if (await this.isPortFree(p)) return p;
     }
-    throw new Error('找不到可用端口');
+    throw new Error(t('找不到可用端口', 'No available port found'));
   }
 
   private isPortFree(port: number): Promise<boolean> {
@@ -361,7 +376,9 @@ export class ServerLauncher {
               const json = JSON.parse(data);
               // 后端出错时返回 { ret: 500, msg }，必须显式抛出，否则删除等操作会被误判为成功
               if (json && json.ret !== undefined && json.ret !== 0) {
-                return reject(new Error(json.msg || `AICmd 服务错误(${json.ret})`));
+                return reject(
+                  new Error(json.msg || t(`AICmd 服务错误(${json.ret})`, `AICmd service error (${json.ret})`))
+                );
               }
               resolve(json?.data !== undefined ? json.data : json);
             } catch (e) {
@@ -370,7 +387,7 @@ export class ServerLauncher {
           });
         }
       );
-      req.on('timeout', () => req.destroy(new Error('请求超时')));
+      req.on('timeout', () => req.destroy(new Error(t('请求超时', 'Request timed out'))));
       req.on('error', reject);
       req.write(payload);
       req.end();

@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ConnectionService } from './connection.service';
 import { ConnectionEntity } from '../model/connection.entity';
+import { connectWithProxy } from '../utils/proxy';
 
 /**
  * 监控会话
@@ -364,7 +365,13 @@ export class MonitorService {
         }
       }
 
-      client.connect(connectConfig);
+      // 监控也走与终端一致的连接通道（直连 / 系统代理 / 自定义代理）
+      connectWithProxy(conn, conn.host, conn.port || 22, 10000)
+        .then((sock) => {
+          connectConfig.sock = sock;
+          client.connect(connectConfig);
+        })
+        .catch((err: any) => reject(new Error(`SSH 连接失败: ${err.message}`)));
     });
   }
 

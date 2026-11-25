@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { ServerLauncher, AicmdConnection } from './server-launcher';
+import { t } from './i18n';
 
 /**
  * 侧边栏树：列出与桌面端 / CLI 共用的连接配置，点击任一节点在 VSCode 内打开终端。
@@ -51,17 +52,22 @@ export class AICmdTreeProvider
   async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
     if (element) return [];
 
+    const localShell = t('本地 Shell', 'Local Shell');
+    const openLocalShell = t('打开本地 Shell', 'Open Local Shell');
     const openAll = new vscode.TreeItem(
-      '打开本地 Shell',
+      openLocalShell,
       vscode.TreeItemCollapsibleState.None
     );
     openAll.iconPath = this.treeIcon('terminal');
     openAll.command = {
       command: 'aicmd.openTerminal',
-      title: '打开本地 Shell',
-      arguments: [undefined, '本地 Shell']
+      title: openLocalShell,
+      arguments: [undefined, localShell]
     };
-    openAll.tooltip = '在 VSCode 内打开一个本地 Shell 终端';
+    openAll.tooltip = t(
+      '在 VSCode 内打开一个本地 Shell 终端',
+      'Open a local shell terminal inside VS Code'
+    );
 
     try {
       const conns = await this.loadConnections();
@@ -71,7 +77,7 @@ export class AICmdTreeProvider
         const isLocal = c.type === 'local';
         const isRdp = c.type === 'rdp';
         const item = new vscode.TreeItem(
-          c.name || (isLocal ? '本地 Shell' : c.host) || c.id,
+          c.name || (isLocal ? localShell : c.host) || c.id,
           vscode.TreeItemCollapsibleState.None
         );
         // 给 TreeItem 一个稳定身份，使右键菜单命令能正确取到 id
@@ -82,23 +88,28 @@ export class AICmdTreeProvider
           isLocal ? 'terminal' : isRdp ? 'display' : 'hdd-network'
         );
         item.description = isLocal
-          ? '本地 Shell'
+          ? localShell
           : `${c.host || ''}${c.username ? ' · ' + c.username : ''}`;
         item.tooltip = `${c.name || ''}\n${
-          isLocal ? '本地 Shell' : (isRdp ? '远程桌面 · ' : '') + (c.host || '') + ' ' + (c.username || '')
+          isLocal
+            ? localShell
+            : (isRdp ? t('远程桌面 · ', 'Remote Desktop · ') : '') +
+              (c.host || '') +
+              ' ' +
+              (c.username || '')
         }`;
         // 点击连接节点 → 打开 WebView tab（SSH 终端或 RDP 远程桌面）
         item.command = {
           command: 'aicmd.openTerminal',
-          title: '打开',
-          arguments: [c.id, c.name || (isLocal ? '本地 Shell' : c.host), c.type]
+          title: t('打开', 'Open'),
+          arguments: [c.id, c.name || (isLocal ? localShell : c.host), c.type]
         };
         items.push(item);
       }
 
       if (conns.length === 0) {
         const hint = new vscode.TreeItem(
-          '暂无连接，点击上方按钮添加',
+          t('暂无连接，点击上方按钮添加', 'No connections yet. Click + to add one.'),
           vscode.TreeItemCollapsibleState.None
         );
         hint.contextValue = 'hint';
@@ -108,18 +119,21 @@ export class AICmdTreeProvider
     } catch (e: any) {
       const msg = e?.message || String(e);
       const err = new vscode.TreeItem(
-        '服务未启动，点击刷新',
+        t('服务未启动，点击刷新', 'Service not started. Click refresh.'),
         vscode.TreeItemCollapsibleState.None
       );
       err.iconPath = new vscode.ThemeIcon('error');
       err.contextValue = 'error';
-      err.command = { command: 'aicmd.refresh', title: '刷新' };
+      err.command = { command: 'aicmd.refresh', title: t('刷新', 'Refresh') };
       // 直接把原因显示出来，避免必须悬停才能看到
       err.description = msg.length > 80 ? msg.slice(0, 80) + '…' : msg;
       err.tooltip =
-        '启动 AICmd 服务失败：' +
+        t('启动 AICmd 服务失败：', 'Failed to start AICmd service: ') +
         msg +
-        '\n详情请查看「输出」面板中的 [aicmd-server] 日志。';
+        t(
+          '\n详情请查看「输出」面板中的 [aicmd-server] 日志。',
+          '\nSee [aicmd-server] logs in the Output panel for details.'
+        );
       return [openAll, err];
     }
   }

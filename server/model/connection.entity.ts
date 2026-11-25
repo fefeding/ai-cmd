@@ -1,4 +1,20 @@
 /**
+ * 连接代理配置
+ * - direct：直连，不使用代理
+ * - system：系统代理（读取 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY，遵循 NO_PROXY）
+ * - custom：自定义 HTTP / HTTPS / SOCKS4 / SOCKS5 代理
+ */
+export interface ConnectionProxy {
+  mode: 'direct' | 'system' | 'custom';
+  type: 'http' | 'https' | 'socks4' | 'socks5';
+  host?: string;
+  port?: number;
+  username?: string;
+  /** 代理密码（加密存储） */
+  password?: string;
+}
+
+/**
  * 连接配置实体
  * 实际数据保存在本地 JSON 文件中（~/.aicmd/connections.json）
  */
@@ -67,6 +83,9 @@ export class ConnectionEntity {
     theme: 'dark',
     cursorStyle: 'block',
   };
+
+  /** 网络代理配置（SSH / RDP 均支持） */
+  proxy?: ConnectionProxy;
 
   /** 扩展选项（keepalive 间隔等） */
   options: Record<string, any> = {};

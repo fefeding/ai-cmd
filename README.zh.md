@@ -61,6 +61,7 @@
 
 ### 通用
 - **连接管理**：可视化 SSH 连接配置（增删改查），支持密钥、密码和自动认证。支持启动脚本和 Agent 转发用于跳板机工作流。
+- **连接代理**：SSH / RDP 连接可单独配置直连、系统代理或自定义代理（HTTP、HTTPS、SOCKS4、SOCKS5），自动读取系统代理并支持绕过规则。详见[代理配置指南](./docs/proxy.md)。
 - **国际化**：中文 / 英文 UI，运行时语言切换。
 - **桌面应用**：通过 Electron 提供跨平台桌面客户端（Windows、macOS、Linux）。
 - **聊天历史**：持久化 AI 对话历史，支持跨会话浏览和恢复。
@@ -248,6 +249,7 @@ tags: [deploy, ops]
 
 - [架构设计](./docs/ARCHITECTURE.md) — 核心架构、Agent 循环、技能系统、MCP 集成
 - [跳板机指南](./docs/jump-host.md) — SSH 跳板机和 Agent 转发配置
+- [代理配置指南](./docs/proxy.md) — SSH / RDP 的直连、系统代理与自定义代理配置
 - [部署指南](./docs/deployment.md) — Docker、npm、Electron、CI/CD 部署方式
 - [自定义技能指南](./docs/skills-guide.md) — 如何创建和编写自定义 AI 技能
 

@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { ServerLauncher } from './server-launcher';
 import { AICmdTreeProvider } from './tree-provider';
+import { isChinese, t } from './i18n';
 
 let launcher: ServerLauncher;
 let treeProvider: AICmdTreeProvider;
@@ -88,15 +89,19 @@ export function activate(context: vscode.ExtensionContext): void {
     async (id?: unknown) => {
       const cid = toId(id);
       if (!cid) return;
+      const deleteLabel = t('删除', 'Delete');
       const answer = await vscode.window.showWarningMessage(
-        '确定删除该连接吗？',
+        t('确定删除该连接吗？', 'Delete this connection?'),
         { modal: true },
-        '删除'
+        deleteLabel
       );
-      if (answer !== '删除') return;
+      if (answer !== deleteLabel) return;
       try {
         await vscode.window.withProgress(
-          { location: vscode.ProgressLocation.Notification, title: '正在删除…' },
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: t('正在删除…', 'Deleting…')
+          },
           async () => {
             await launcher.ensureStarted(startPort);
             await launcher.deleteConnection(cid);
@@ -107,7 +112,7 @@ export function activate(context: vscode.ExtensionContext): void {
         if (panels.size === 0) launcher.stop();
       } catch (e: any) {
         vscode.window.showErrorMessage(
-          '删除失败：' + (e?.message || String(e))
+          t('删除失败：', 'Failed to delete: ') + (e?.message || String(e))
         );
       }
     }
@@ -115,9 +120,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // 后端进程意外退出：通知用户并关闭所有面板（面板已无法正常工作）
   launcher.onUnexpectedExit = () => {
-    output.appendLine('[aicmd] 后端进程意外退出');
+    output.appendLine(t('[aicmd] 后端进程意外退出', '[aicmd] backend exited unexpectedly'));
     vscode.window.showErrorMessage(
-      'AICmd 后端进程意外退出，请重新打开终端。'
+      t(
+        'AICmd 后端进程意外退出，请重新打开终端。',
+        'The AICmd backend exited unexpectedly. Please reopen the terminal.'
+      )
     );
     for (const p of [...panels]) {
       try {
@@ -135,9 +143,14 @@ export function activate(context: vscode.ExtensionContext): void {
         e.affectsConfiguration('aicmd.dataDir') ||
         e.affectsConfiguration('aicmd.startPort')
       ) {
-        output.appendLine('[aicmd] 配置已变更，重启扩展后生效');
+        output.appendLine(
+          t('[aicmd] 配置已变更，重启扩展后生效', '[aicmd] configuration changed; reload to apply')
+        );
         vscode.window.showInformationMessage(
-          'AICmd 配置已变更，请重新加载窗口以生效。'
+          t(
+            'AICmd 配置已变更，请重新加载窗口以生效。',
+            'AICmd configuration changed. Reload the window to apply.'
+          )
         );
       }
     })
@@ -190,8 +203,8 @@ async function openTerminal(
       {
         location: vscode.ProgressLocation.Notification,
         title: connectionId
-          ? `正在连接 ${name || connectionId}…`
-          : '正在启动 AICmd 服务…'
+          ? t(`正在连接 ${name || connectionId}…`, `Connecting to ${name || connectionId}…`)
+          : t('正在启动 AICmd 服务…', 'Starting AICmd service…')
       },
       async () => {
         await launcher.ensureStarted(startPort);
@@ -200,7 +213,7 @@ async function openTerminal(
     showTerminalPanel(context, launcher.url, connectionId, name, connectionType);
   } catch (e: any) {
     vscode.window.showErrorMessage(
-      '启动 AICmd 失败：' + (e?.message || String(e))
+      t('启动 AICmd 失败：', 'Failed to start AICmd: ') + (e?.message || String(e))
     );
   }
 }
@@ -215,7 +228,7 @@ async function openEdit(
     await vscode.window.withProgress(
       {
         location: vscode.ProgressLocation.Notification,
-        title: '正在启动 AICmd 服务…'
+        title: t('正在启动 AICmd 服务…', 'Starting AICmd service…')
       },
       async () => {
         await launcher.ensureStarted(startPort);
@@ -227,10 +240,10 @@ async function openEdit(
         )}`
       : `${launcher.url}/public/src/vscode-edit.html`;
     editPanel?.dispose();
-    editPanel = showPanel(context, url, 'AICmd 连接编辑');
+    editPanel = showPanel(context, url, t('AICmd 连接编辑', 'AICmd Connection Editor'));
   } catch (e: any) {
     vscode.window.showErrorMessage(
-      '启动 AICmd 失败：' + (e?.message || String(e))
+      t('启动 AICmd 失败：', 'Failed to start AICmd: ') + (e?.message || String(e))
     );
   }
 }
@@ -246,15 +259,16 @@ function showTerminalPanel(
   // 但不带侧边栏 / Tab 栏）。指定连接时带 connectionId + name + type，
   // 不指定时（顶部「打开本地 Shell」）默认打开本地 Shell。
   // RDP 连接由 WebView 内的 IronRDP-WASM 组件渲染远程桌面。
+  const localShell = t('本地 Shell', 'Local Shell');
   const typeParam = connectionType ? `&type=${encodeURIComponent(connectionType)}` : '';
   const src = connectionId
     ? `${url}/public/src/vscode-term.html?connectionId=${encodeURIComponent(
         connectionId
       )}&name=${encodeURIComponent(name || connectionId)}${typeParam}`
     : `${url}/public/src/vscode-term.html?connectionId=__local__&name=${encodeURIComponent(
-        name || '本地 Shell'
+        name || localShell
       )}`;
-  showPanel(context, src, name || '本地 Shell');
+  showPanel(context, src, name || localShell);
 }
 
 /** 创建 WebView 面板并加载指定地址。 */
@@ -289,7 +303,7 @@ function wirePanel(
 ): void {
   // 让编辑器 Tab 使用本插件图标（resources/activity-icon.png），而非默认文件图标
   panel.iconPath = vscode.Uri.joinPath(
-    extContext.extensionUri,
+    extContext!.extensionUri,
     'resources',
     'activity-icon.png'
   );
@@ -391,9 +405,10 @@ function buildHtml(url: string, title: string): string {
     `script-src 'unsafe-inline';`,
     `frame-src http://127.0.0.1:* http://localhost:*;`
   ].join(' ');
+  const locale = encodeURIComponent(vscode.env.language || 'en');
 
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="${isChinese ? 'zh-CN' : 'en'}">
 <head>
 <meta charset="utf-8" />
 <meta http-equiv="Content-Security-Policy" content="${csp}" />
@@ -577,6 +592,7 @@ function buildHtml(url: string, title: string): string {
   frame.addEventListener('load', function () { push(true); });
   frame.src = BASE + (BASE.indexOf('?') >= 0 ? '&' : '?') +
     'aicmd_vscode=1' +
+    '&locale=${locale}' +
     '&vkind=' + encodeURIComponent(first.kind) +
     '&vbg=' + encodeURIComponent(first.bg) +
     '&vfg=' + encodeURIComponent(first.fg);

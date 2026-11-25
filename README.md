@@ -61,6 +61,7 @@ An AI-powered web SSH terminal that combines a full-featured terminal emulator w
 
 ### General
 - **Connection Management**: Visual SSH connection configuration (CRUD) with key-based, password, and auto auth. Supports startup scripts and agent forwarding for jump host workflows.
+- **Connection Proxy**: Per-connection direct / system / custom proxy (HTTP, HTTPS, SOCKS4, SOCKS5) for SSH and RDP, including automatic OS proxy detection and bypass rules. See [Proxy Guide](./docs/proxy.md).
 - **i18n**: Chinese / English UI with runtime language switching.
 - **Desktop App**: Cross-platform desktop client via Electron (Windows, macOS, Linux).
 - **Chat History**: Persistent AI conversation history with browsing and restoration across sessions.
@@ -265,6 +266,7 @@ Then trigger with `/deploy-my-app` in the chat.
 
 - [Architecture Design](./docs/ARCHITECTURE.md) — Core architecture, Agent loop, skills system, MCP integration
 - [Jump Host Guide](./docs/jump-host.md) — SSH jump host and agent forwarding configuration
+- [Proxy Guide](./docs/proxy.md) — Direct / system / custom proxy configuration for SSH and RDP
 - [Deployment Guide](./docs/deployment.md) — Docker, npm, Electron, and CI/CD deployment
 - [Custom Skills Guide](./docs/skills-guide.md) — How to create and author custom AI skills
 
