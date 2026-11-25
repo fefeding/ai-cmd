@@ -344,6 +344,30 @@ The terminal and AI agent work on:
 
 The AI agent automatically detects the target OS and selects appropriate commands.
 
+### Windows Remote Desktop (RDP) Connections
+
+In addition to SSH terminals, this tool supports connecting to Windows via a **graphical desktop** (using the Guacamole protocol). The target machine only needs its built-in Remote Desktop enabled — **no third-party software required**.
+
+**1. Enable Remote Desktop** on the target Windows (Settings → System → Remote Desktop → Enable), and ensure port 3389 is reachable.
+
+**2. Deploy guacd** (the Apache Guacamole daemon that handles the RDP protocol and screen encoding). The easiest way is Docker:
+
+```bash
+docker run -d --name guacd -p 4822:4822 guacamole/guacd:1.5.5
+```
+
+guacd listens on `127.0.0.1:4822` by default. If hosted elsewhere, set its address/port in the connection config.
+
+> Note: the official guacd image is amd64-only. Under QEMU emulation on Apple Silicon (ARM) Macs, screen encoding may misbehave (black screen); deploy guacd on an x86 machine or server instead.
+
+**3. Create a connection**: choose "Windows Remote Desktop (RDP)" as the type, fill in host, port (3389), username, password, and domain (for domain accounts; leave blank for local). Screen size defaults to 1280×800. Set the guacd address/port if non-default.
+
+**4. Use it**: mouse click/move, full keyboard input (including modifier keys and function keys), and adaptive resolution are supported. The toolbar provides:
+- Clipboard button: copy local clipboard text to the remote desktop; text copied on the remote is synced back to the local clipboard automatically.
+- Reconnect / fit-to-window buttons.
+
+> Clipboard sync is plain text (UTF-8); use the SSH connection's SFTP for file transfer.
+
 ## License
 
 MIT

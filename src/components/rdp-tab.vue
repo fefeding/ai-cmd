@@ -3,6 +3,9 @@
     <div class="rdp-toolbar">
       <span class="rdp-title"><i class="bi bi-display me-1"></i>{{ connection?.name || '远程桌面' }}</span>
       <span class="rdp-status" :class="status">{{ statusText }}</span>
+      <button class="rdp-btn" :title="t('rdp.paste')" @click="pasteClipboard">
+        <i class="bi bi-clipboard"></i>
+      </button>
       <button class="rdp-btn" :title="t('rdp.reconnect')" @click="reconnect">
         <i class="bi bi-arrow-clockwise"></i>
       </button>
@@ -23,7 +26,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { RdpRenderer, buildInstruction, keySym } from '../utils/rdp-renderer';
+import Guacamole from '../vendor/guacamole-common';
+import { RdpRenderer, buildInstruction } from '../utils/rdp-renderer';
 import type { ConnectionEntity, WSMessage } from '../typings/connection';
 
 const props = defineProps<{
@@ -57,8 +61,7 @@ let sessionId: string | null = null;
 let mouseButtons = 0;
 let connecting = false;
 let resizeObserver: ResizeObserver | null = null;
-let keyHandler: ((e: KeyboardEvent) => void) | null = null;
-let keyUpHandler: ((e: KeyboardEvent) => void) | null = null;
+let guacKeyboard: any = null;
 let remoteW = 1280;
 let remoteH = 800;
 
@@ -161,10 +164,21 @@ function initRenderer() {
   remoteW = opts.width || 1280;
   remoteH = opts.height || 800;
 
-  renderer = new RdpRenderer(viewportEl.value, remoteW, remoteH, (timestamp) => {
-    // guacd 推 sync 后需要回传 ack，否则停止推帧
-    sendInput(buildInstruction('sync', timestamp));
-  });
+  renderer = new RdpRenderer(
+    viewportEl.value,
+    remoteW,
+    remoteH,
+    (timestamp) => {
+      // guacd 推 sync 后需要回传 ack，否则停止推帧
+      sendInput(buildInstruction('sync', timestamp));
+    },
+    (text) => {
+      // 远端剪贴板变化 -> 写入本地剪贴板
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).catch(() => { /* ignore permission errors */ });
+      }
+    },
+  );
 
   const el = renderer.getElement();
 
@@ -183,20 +197,32 @@ function initRenderer() {
   });
   el.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  // 键盘
-  keyHandler = (e: KeyboardEvent) => {
-    const sym = keySym(e.key);
-    if (sym) { sendInput(renderer!.key(1, sym)); e.preventDefault(); }
+  // 键盘：用 Guacamole.Keyboard 处理完整 keysym 映射与修饰键状态
+  guacKeyboard = new (Guacamole as any).Keyboard(document);
+  guacKeyboard.onkeydown = (keysym: number) => {
+    sendInput(renderer!.key(1, keysym));
+    return true;
   };
-  keyUpHandler = (e: KeyboardEvent) => {
-    const sym = keySym(e.key);
-    if (sym) { sendInput(renderer!.key(0, sym)); e.preventDefault(); }
+  guacKeyboard.onkeyup = (keysym: number) => {
+    sendInput(renderer!.key(0, keysym));
+    return true;
   };
-  window.addEventListener('keydown', keyHandler);
-  window.addEventListener('keyup', keyUpHandler);
 
   resizeObserver = new ResizeObserver(() => fitDisplay());
   resizeObserver.observe(viewportEl.value);
+}
+
+/** 把本地剪贴板文本写入远端 */
+async function pasteClipboard() {
+  if (status.value !== 'connected' || !renderer) return;
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text) return;
+    for (const inst of renderer.clipboardWrite(text)) sendInput(inst);
+  } catch {
+    // 无剪贴板权限：提示用户
+    console.warn('[RDP] 无法读取本地剪贴板（可能是权限被拒）');
+  }
 }
 
 function fitDisplay() {
@@ -226,8 +252,7 @@ function start() {
 }
 
 function cleanup(emitClose = true) {
-  if (keyHandler) { window.removeEventListener('keydown', keyHandler); keyHandler = null; }
-  if (keyUpHandler) { window.removeEventListener('keyup', keyUpHandler); keyUpHandler = null; }
+  if (guacKeyboard) { try { guacKeyboard.onkeydown = null; guacKeyboard.onkeyup = null; } catch { /* */ } guacKeyboard = null; }
   if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
   if (sessionId && emitClose) sendToServer({ type: 'rdp-close', sessionId });
   if (renderer) { renderer.dispose(); renderer = null; }

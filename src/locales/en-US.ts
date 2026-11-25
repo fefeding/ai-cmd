@@ -45,6 +45,7 @@ export default {
   },
   rdp: {
     reconnect: 'Reconnect',
+    paste: 'Paste local clipboard to remote desktop',
     fit: 'Fit to Window',
     connecting: 'Establishing remote desktop...',
     connectFailed: 'Remote desktop connection failed',

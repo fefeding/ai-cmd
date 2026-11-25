@@ -17,21 +17,30 @@ interface PendingImage {
   data: string;
 }
 
-/** 键码 -> X11 keysym 的最小映射（覆盖常见按键） */
-const KEY_SYMBOLS: Record<string, number> = {
-  Backspace: 0xff08, Tab: 0xff09, Enter: 0xff0d, Escape: 0xff1b,
-  Delete: 0xffff, Home: 0xff50, ArrowLeft: 0xff51, ArrowUp: 0xff52,
-  ArrowRight: 0xff53, ArrowDown: 0xff54, PageUp: 0xff55, PageDown: 0xff56,
-  Shift: 0xffe1, Control: 0xffe3, Alt: 0xffe9, Meta: 0xffeb,
-  ' ': 0x20,
-};
+/** 剪贴板流（服务端 -> 客户端） */
+interface PendingClipboard {
+  mimetype: string;
+  data: string;
+}
 
-export function keySym(key: string): number {
-  if (KEY_SYMBOLS[key] !== undefined) return KEY_SYMBOLS[key];
-  if (/^[a-zA-Z]$/.test(key)) return key.charCodeAt(0);
-  if (/^[0-9]$/.test(key)) return key.charCodeAt(0);
-  if (/^F\d+$/.test(key)) return 0xffbe + parseInt(key.slice(1), 10) - 1;
-  return key.charCodeAt(0) || 0xfffd;
+/** UTF-8 文本转 base64（用于剪贴板写入） */
+function utf8ToBase64(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = '';
+  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary);
+}
+
+/** base64 转 UTF-8 文本（用于剪贴板读取） */
+function base64ToUtf8(base64: string): string {
+  try {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return '';
+  }
 }
 
 function elem(value: string | number): string {
@@ -72,9 +81,19 @@ export class RdpRenderer {
   private cursorX = 0;
   private cursorY = 0;
   private onSyncAck?: (timestamp: string) => void;
+  private onClipboard?: (text: string) => void;
+  private pendingClipboard = new Map<number, PendingClipboard>();
+  private clipStreamCounter = 100;
 
-  constructor(container: HTMLElement, width: number, height: number, onSyncAck?: (t: string) => void) {
+  constructor(
+    container: HTMLElement,
+    width: number,
+    height: number,
+    onSyncAck?: (t: string) => void,
+    onClipboard?: (text: string) => void,
+  ) {
     this.onSyncAck = onSyncAck;
+    this.onClipboard = onClipboard;
     this.canvas = document.createElement('canvas');
     this.canvas.width = width;
     this.canvas.height = height;
@@ -121,11 +140,21 @@ export class RdpRenderer {
           data: '',
         });
         break;
+      case 'clipboard': {
+        // clipboard,stream,mimetype — 服务端剪贴板变化
+        this.pendingClipboard.set(parseInt(a[0], 10), {
+          mimetype: a[1] || 'UTF8_STRING',
+          data: '',
+        });
+        break;
+      }
       case 'blob': {
-        // blob,stream,base64
+        // blob,stream,base64 — 图片流或剪贴板流
         const stream = parseInt(a[0], 10);
         const img = this.pending.get(stream);
-        if (img) img.data += a[1];
+        if (img) { img.data += a[1]; break; }
+        const clip = this.pendingClipboard.get(stream);
+        if (clip) clip.data += a[1];
         break;
       }
       case 'end': {
@@ -135,6 +164,12 @@ export class RdpRenderer {
         if (img) {
           this.pending.delete(stream);
           this.drawImage(img);
+        }
+        const clip = this.pendingClipboard.get(stream);
+        if (clip) {
+          this.pendingClipboard.delete(stream);
+          const text = base64ToUtf8(clip.data);
+          if (text && this.onClipboard) this.onClipboard(text);
         }
         break;
       }
@@ -180,8 +215,23 @@ export class RdpRenderer {
     return buildInstruction('size', width, height, 96);
   }
 
+  /**
+   * 生成「把本地文本写入远端剪贴板」的指令序列。
+   * Guacamole 剪贴板写入：clipboard,stream,mimetype → blob,stream,base64 → end,stream
+   */
+  clipboardWrite(text: string): string[] {
+    const stream = this.clipStreamCounter++;
+    const base64 = utf8ToBase64(text);
+    return [
+      buildInstruction('clipboard', stream, 'UTF8_STRING'),
+      buildInstruction('blob', stream, base64),
+      buildInstruction('end', stream),
+    ];
+  }
+
   dispose(): void {
     this.pending.clear();
+    this.pendingClipboard.clear();
     this.streams.clear();
   }
 }

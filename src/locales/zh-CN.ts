@@ -45,6 +45,7 @@ export default {
   },
   rdp: {
     reconnect: '重新连接',
+    paste: '粘贴本地剪贴板到远程桌面',
     fit: '适应窗口',
     connecting: '正在建立远程桌面...',
     connectFailed: '远程桌面连接失败',
