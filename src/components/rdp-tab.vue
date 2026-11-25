@@ -62,6 +62,7 @@ let mouseButtons = 0;
 let connecting = false;
 let resizeObserver: ResizeObserver | null = null;
 let guacKeyboard: any = null;
+let domListeners: Array<{ target: EventTarget; type: string; handler: EventListener }> = [];
 let remoteW = 1280;
 let remoteH = 800;
 
@@ -180,31 +181,36 @@ function initRenderer() {
     },
   );
 
-  const el = renderer.getElement();
+  const r = renderer; // 局部捕获，避免 cleanup 置空后回调访问 null
+  const el = r.getElement();
+  const add = (target: EventTarget, type: string, handler: EventListener) => {
+    target.addEventListener(type, handler);
+    domListeners.push({ target, type, handler });
+  };
 
   // 鼠标：按下/移动/松开（左键=1，中键=2，右键=4）
-  el.addEventListener('mousedown', (e: MouseEvent) => {
+  add(el, 'mousedown', ((e: MouseEvent) => {
     mouseButtons |= 1 << e.button;
-    sendInput(renderer!.mouse(mouseButtons, e.offsetX, e.offsetY));
+    sendInput(r.mouse(mouseButtons, e.offsetX, e.offsetY));
     e.preventDefault();
-  });
-  window.addEventListener('mouseup', (e: MouseEvent) => {
+  }) as EventListener);
+  add(window, 'mouseup', ((e: MouseEvent) => {
     mouseButtons &= ~(1 << e.button);
-    sendInput(renderer!.mouse(mouseButtons, e.offsetX, e.offsetY));
-  });
-  el.addEventListener('mousemove', (e: MouseEvent) => {
-    sendInput(renderer!.mouse(mouseButtons, e.offsetX, e.offsetY));
-  });
-  el.addEventListener('contextmenu', (e) => e.preventDefault());
+    sendInput(r.mouse(mouseButtons, e.offsetX, e.offsetY));
+  }) as EventListener);
+  add(el, 'mousemove', ((e: MouseEvent) => {
+    sendInput(r.mouse(mouseButtons, e.offsetX, e.offsetY));
+  }) as EventListener);
+  add(el, 'contextmenu', ((e: Event) => e.preventDefault()) as EventListener);
 
   // 键盘：用 Guacamole.Keyboard 处理完整 keysym 映射与修饰键状态
   guacKeyboard = new (Guacamole as any).Keyboard(document);
   guacKeyboard.onkeydown = (keysym: number) => {
-    sendInput(renderer!.key(1, keysym));
+    sendInput(r.key(1, keysym));
     return true;
   };
   guacKeyboard.onkeyup = (keysym: number) => {
-    sendInput(renderer!.key(0, keysym));
+    sendInput(r.key(0, keysym));
     return true;
   };
 
@@ -253,6 +259,11 @@ function start() {
 
 function cleanup(emitClose = true) {
   if (guacKeyboard) { try { guacKeyboard.onkeydown = null; guacKeyboard.onkeyup = null; } catch { /* */ } guacKeyboard = null; }
+  // 移除所有 DOM 监听器（尤其是绑在 window 上的 mouseup），避免 renderer 置空后仍触发
+  for (const l of domListeners) {
+    try { l.target.removeEventListener(l.type, l.handler); } catch { /* ignore */ }
+  }
+  domListeners = [];
   if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
   if (sessionId && emitClose) sendToServer({ type: 'rdp-close', sessionId });
   if (renderer) { renderer.dispose(); renderer = null; }
