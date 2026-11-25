@@ -80,23 +80,22 @@ export class AICmdTreeProvider
           c.name || (isLocal ? localShell : c.host) || c.id,
           vscode.TreeItemCollapsibleState.None
         );
-        // 给 TreeItem 一个稳定身份，使右键菜单命令能正确取到 id
+        // 给 TreeItem 一个稳定身份，使内联图标 / 右键菜单命令都能正确取到 id
         // （view/item/context 触发时 VSCode 会把本对象作为首个参数传入）
         item.id = String(c.id);
         item.contextValue = 'connection';
         item.iconPath = this.treeIcon(
           isLocal ? 'terminal' : isRdp ? 'display' : 'hdd-network'
         );
-        item.description = isLocal
-          ? localShell
-          : `${c.host || ''}${c.username ? ' · ' + c.username : ''}`;
+        // 与 Web 端连接列表一致：副标题显示 username@host:port
+        const remoteDetail = `${[c.username, c.host].filter(Boolean).join('@')}${
+          c.port ? `:${c.port}` : ''
+        }`;
+        item.description = isLocal ? localShell : remoteDetail;
         item.tooltip = `${c.name || ''}\n${
           isLocal
             ? localShell
-            : (isRdp ? t('远程桌面 · ', 'Remote Desktop · ') : '') +
-              (c.host || '') +
-              ' ' +
-              (c.username || '')
+            : (isRdp ? t('远程桌面 · ', 'Remote Desktop · ') : '') + remoteDetail
         }`;
         // 点击连接节点 → 打开 WebView tab（SSH 终端或 RDP 远程桌面）
         item.command = {
@@ -109,10 +108,15 @@ export class AICmdTreeProvider
 
       if (conns.length === 0) {
         const hint = new vscode.TreeItem(
-          t('暂无连接，点击上方按钮添加', 'No connections yet. Click + to add one.'),
+          t('暂无连接，点击添加', 'No connections yet. Click to add one.'),
           vscode.TreeItemCollapsibleState.None
         );
+        hint.iconPath = new vscode.ThemeIcon('add');
         hint.contextValue = 'hint';
+        hint.command = {
+          command: 'aicmd.addConnection',
+          title: t('添加连接', 'Add Connection')
+        };
         items.push(hint);
       }
       return items;

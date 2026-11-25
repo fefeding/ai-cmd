@@ -13,6 +13,7 @@ export interface AicmdConnection {
   name?: string;
   type?: 'ssh' | 'local' | 'rdp' | string;
   host?: string;
+  port?: string | number;
   username?: string;
 }
 

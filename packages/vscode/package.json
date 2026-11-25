@@ -93,7 +93,7 @@
         "command": "aicmd.openTerminal",
         "title": "%command.openTerminal%",
         "category": "AICmd",
-        "icon": "$(remote)"
+        "icon": "$(play)"
       },
       {
         "command": "aicmd.refresh",
@@ -138,6 +138,16 @@
           "command": "aicmd.openTerminal",
           "when": "view == aicmd.explorer && viewItem == connection",
           "group": "inline"
+        },
+        {
+          "command": "aicmd.editConnection",
+          "when": "view == aicmd.explorer && viewItem == connection",
+          "group": "inline@1"
+        },
+        {
+          "command": "aicmd.deleteConnection",
+          "when": "view == aicmd.explorer && viewItem == connection",
+          "group": "inline@2"
         },
         {
           "command": "aicmd.editConnection",
