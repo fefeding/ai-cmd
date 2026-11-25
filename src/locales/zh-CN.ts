@@ -132,7 +132,7 @@ export default {
     rdpServerLayout: '键盘布局',
     rdpGuacdHost: 'guacd 地址',
     rdpGuacdPort: 'guacd 端口',
-    rdpHint: 'RDP 连接需要本机或指定服务器运行 guacd（Apache Guacamole 守护进程，默认 127.0.0.1:4822）。目标 Windows 只需开启系统自带「远程桌面」。',
+    rdpHint: 'RDP 连接由浏览器内的 IronRDP 引擎直连，本机无需安装 guacd 或任何 RDP 客户端。目标 Windows 只需开启系统自带「远程桌面」并放行 3389 端口。',
     startupScript: '连接后自动执行脚本',
     startupScriptPlaceholder: '跳板机示例：ssh 192.168.1.100\n其他示例：cd /data && source env.sh',
     startupScriptHint: 'SSH 连接建立后自动执行的命令，常用于跳板机跳转、自动切换目录等场景',

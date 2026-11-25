@@ -235,8 +235,52 @@ app.use((req, res) => {
 });
 
 // WebSocket 文件消息限制跟随上传限制，base64 约有 33% 膨胀
-const wss = new WebSocket.Server({ server, path: '/ws/terminal', maxPayload: Math.ceil(uploadLimitBytes * 1.4) });
-console.log(`[WS] WebSocket server created on path /ws/terminal (maxPayload: ${Math.ceil(uploadLimitBytes * 1.4)} bytes)`);
+// 两个 WSS 都用 noServer，由统一 upgrade 处理器按 path 分流（ws 库多 WSS 共享 server
+// 时各自带 path 会冲突，只有第一个生效，后续路径返回 400）。
+const wsMaxPayload = Math.ceil(uploadLimitBytes * 1.4);
+const wss = new WebSocket.Server({ noServer: true, maxPayload: wsMaxPayload });
+console.log(`[WS] WebSocket server created on path /ws/terminal (maxPayload: ${wsMaxPayload} bytes)`);
+
+// IronRDP-WASM 的 RDCleanPath 字节管道：前端 WASM 直连此路径，服务端把字节转发到 Windows:3389。
+// 与 /ws/terminal 分开，避免 JSON 消息协议与二进制 RDP 字节流混用。
+const rdpWss = new WebSocket.Server({ noServer: true, maxPayload: wsMaxPayload });
+console.log(`[WS] WebSocket server created on path /ws/rdp (maxPayload: ${wsMaxPayload} bytes)`);
+
+server.on('upgrade', (req, socket, head) => {
+  let pathname;
+  try { pathname = new URL(req.url, `http://${req.headers.host || 'localhost'}`).pathname; }
+  catch { socket.destroy(); return; }
+  if (pathname === '/ws/rdp') {
+    rdpWss.handleUpgrade(req, socket, head, (ws) => rdpWss.emit('connection', ws, req));
+  } else if (pathname === '/ws/terminal') {
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  } else {
+    socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+    socket.destroy();
+  }
+});
+
+rdpWss.on('connection', (ws, req) => {
+  const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const wsToken = requestUrl.searchParams.get('token') || extractTokenFromHeaders(req.headers);
+  if (!isAllowedOrigin(req.headers.origin, req.headers.host) || (requiresToken(req.headers.origin, req.headers.host) && !isValidToken(wsToken))) {
+    ws.close(1008, 'Unauthorized');
+    return;
+  }
+  const connectionId = requestUrl.searchParams.get('connectionId');
+  if (!connectionId) {
+    ws.close(1008, 'Missing connectionId');
+    return;
+  }
+  console.log(`[WS] RDP tunnel client connected: ${req.socket.remoteAddress}, connectionId=${connectionId}`);
+  try {
+    const serverModule = require('./dist/server/index.js');
+    serverModule.rdpTunnelService.handleConnection(ws, connectionId);
+  } catch (err) {
+    console.error(`[WS] Failed to start RDP tunnel: ${err.message}`);
+    ws.close(1011, 'RDP tunnel unavailable');
+  }
+});
 
 // 分块上传缓冲区: uploadId -> { chunks: string[], totalChunks: number, fileName: string, sessionId: string }
 const pendingUploads = new Map();

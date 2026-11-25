@@ -72,14 +72,6 @@
               <label class="form-label">{{ t('connection.rdpHeight') }}</label>
               <input type="number" class="form-control form-control-sm" v-model.number="rdpOptions.height" min="480" max="2160">
             </div>
-            <div class="col-md-6">
-              <label class="form-label">{{ t('connection.rdpGuacdHost') }}</label>
-              <input type="text" class="form-control form-control-sm" v-model="guacdOptions.host" placeholder="127.0.0.1">
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">{{ t('connection.rdpGuacdPort') }}</label>
-              <input type="number" class="form-control form-control-sm" v-model.number="guacdOptions.port" min="1" max="65535" placeholder="4822">
-            </div>
           </div>
           <small class="form-text text-muted d-block mt-2"><i class="bi bi-info-circle me-1"></i>{{ t('connection.rdpHint') }}</small>
         </div>
@@ -232,7 +224,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, reactive, computed } from 'vue';
+import { ref, reactive, computed, watch, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Modal from '@/components/modal/index.vue';
 import { ConnectionService } from '@/service/connection';
@@ -282,15 +274,34 @@ const defaultForm = () => ({
 
 const form = reactive(defaultForm());
 
+// 回填/初始化期间跳过类型联动，避免覆盖已保存连接的端口与用户名
+let skipTypeWatch = false;
+
+// 连接类型切换时，端口和用户名改为该类型的默认值：
+// SSH = 22/root，RDP = 3389/空（Windows 账户名因人而异，不预填 root）。
+// 仅当用户尚未手动改过这两个字段时覆盖，避免误改用户输入。
+watch(() => form.type, (newType, oldType) => {
+  if (skipTypeWatch || newType === oldType) return;
+  if (newType === 'rdp') {
+    if (form.port === 22) form.port = 3389;
+    if (form.username === 'root') form.username = '';
+    form.authType = 'password';
+  } else if (newType === 'ssh') {
+    if (form.port === 3389) form.port = 22;
+    if (form.username === '') form.username = 'root';
+    if (form.authType === 'password' && !form.password) form.authType = 'auto';
+  }
+});
+
 const isRdp = computed(() => (form.type as string) === 'rdp');
 
 // RDP 专用配置（保存时写入 options.rdp / options.guacd）
 const rdpOptions = reactive({ domain: '', width: 1280, height: 800 });
-const guacdOptions = reactive({ host: '127.0.0.1', port: 4822 });
 
 const connectionService = new ConnectionService();
 
 function open(connection?: any) {
+  skipTypeWatch = true;
   if (connection) {
     editingConnection.value = connection.id;
     Object.assign(form, defaultForm(), connection);
@@ -316,9 +327,6 @@ function open(connection?: any) {
     rdpOptions.domain = rOpts.domain || '';
     rdpOptions.width = rOpts.width || 1280;
     rdpOptions.height = rOpts.height || 800;
-    const gOpts = connection.options?.guacd || {};
-    guacdOptions.host = gOpts.host || '127.0.0.1';
-    guacdOptions.port = gOpts.port || 4822;
     // RDP 连接默认端口 3389
     if (connection.type === 'rdp' && !connection.port) form.port = 3389;
   } else {
@@ -332,9 +340,9 @@ function open(connection?: any) {
     rdpOptions.domain = '';
     rdpOptions.width = 1280;
     rdpOptions.height = 800;
-    guacdOptions.host = '127.0.0.1';
-    guacdOptions.port = 4822;
   }
+  //  watch 是异步 flush，等本次同步回填完成后再恢复
+  nextTick(() => { skipTypeWatch = false; });
   if (!props.embedded) connectionModal.value?.show();
 }
 
@@ -366,14 +374,13 @@ async function saveConnection() {
   }
   saving.value = true;
   try {
-    // RDP 连接：写入 rdp/guacd 配置，固定密码认证，默认端口 3389
+    // RDP 连接：写入 rdp 配置（IronRDP-WASM 直连，无需 guacd），固定密码认证，默认端口 3389
     if (form.type === 'rdp') {
       form.port = form.port || 3389;
       form.authType = 'password';
       form.options = {
         ...form.options,
         rdp: { ...rdpOptions },
-        guacd: { ...guacdOptions },
       };
     }
     // 将保活配置写入 options（仅 SSH 有意义）

@@ -70,8 +70,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   register(
     'aicmd.openTerminal',
-    (connectionId?: unknown, name?: string) =>
-      openTerminal(context, startPort, toId(connectionId), name)
+    (connectionId?: unknown, name?: string, connectionType?: string) =>
+      openTerminal(context, startPort, toId(connectionId), name, connectionType)
   );
   register('aicmd.refresh', () => treeProvider.refresh());
 
@@ -180,7 +180,8 @@ async function openTerminal(
   context: vscode.ExtensionContext,
   startPort: number,
   connectionId?: string,
-  name?: string
+  name?: string,
+  connectionType?: string
 ): Promise<void> {
   try {
     await vscode.window.withProgress(
@@ -194,7 +195,7 @@ async function openTerminal(
         await launcher.ensureStarted(startPort);
       }
     );
-    showTerminalPanel(context, launcher.url, connectionId, name);
+    showTerminalPanel(context, launcher.url, connectionId, name, connectionType);
   } catch (e: any) {
     vscode.window.showErrorMessage(
       '启动 AICmd 失败：' + (e?.message || String(e))
@@ -236,15 +237,18 @@ function showTerminalPanel(
   context: vscode.ExtensionContext,
   url: string,
   connectionId?: string,
-  name?: string
+  name?: string,
+  connectionType?: string
 ): void {
   // 复用完整 TerminalTab 的 WebView 页（自带 AI 对话 + 文件浏览，
-  // 但不带侧边栏 / Tab 栏）。指定连接时带 connectionId + name，
-  // 不指定时（顶部「打开本地 Shell」）默认打开本地 Shell
+  // 但不带侧边栏 / Tab 栏）。指定连接时带 connectionId + name + type，
+  // 不指定时（顶部「打开本地 Shell」）默认打开本地 Shell。
+  // RDP 连接由 WebView 内的 IronRDP-WASM 组件渲染远程桌面。
+  const typeParam = connectionType ? `&type=${encodeURIComponent(connectionType)}` : '';
   const src = connectionId
     ? `${url}/public/src/vscode-term.html?connectionId=${encodeURIComponent(
         connectionId
-      )}&name=${encodeURIComponent(name || connectionId)}`
+      )}&name=${encodeURIComponent(name || connectionId)}${typeParam}`
     : `${url}/public/src/vscode-term.html?connectionId=__local__&name=${encodeURIComponent(
         name || '本地 Shell'
       )}`;

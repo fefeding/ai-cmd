@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.27
+
+- 新增 **Windows 远程桌面（RDP）** 支持：连接列表中 RDP 类型显示专用显示器图标，点击即可在 WebView 内打开图形桌面，支持鼠标/键盘、分辨率自适应、文本剪贴板同步及 CLIPRDR 文件上传/下载。
+  - 采用 **IronRDP-WASM**：RDP 协议栈在浏览器内运行，**无需 guacd 守护进程、无需本机 RDP 客户端、目标 Windows 无需第三方软件**（只需开启系统自带远程桌面 + 3389 端口）。
+  - 本地服务端新增 `/ws/rdp` 二进制字节隧道；目标地址一律以保存的连接配置为准（忽略客户端声明，防止 SSRF）。Electron 桌面端通过本机回环代理接入。
+  - 连接编辑器中 RDP 默认端口 3389、用户名为空（不再误用 SSH 的 22/root），认证固定为密码 + CredSSP；移除原 guacd 配置项。
+- 更新扩展名称/描述与 README：插件现定位为「AI SSH / RDP 终端与运维智能体」，中英文 displayName、description、keywords 与市场说明同步覆盖 RDP 能力。
+
 ## 0.1.26
 
 - 优化 VS Code Marketplace 展示与可发现性：显示名加入 SSH 关键词、keywords 扩充至 26 个、主分类改为 AI；新增 `galleryBanner` / `homepage` / `bugs` / Q&A / 免费标识；重写 README 首屏（价值主张、功能表、快速上手、差异化对比）并补充支持入口。

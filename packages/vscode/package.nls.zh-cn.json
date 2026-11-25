@@ -1,4 +1,4 @@
 {
-  "displayName": "AICmd - AI SSH 终端与运维智能体",
-  "description": "VS Code 内的 AI SSH 终端与运维智能体：SSH 远程/本地 Shell、SFTP/ZMODEM 文件传输、AI 执行命令、日志监控、命令审计与多服务器批量运维。"
+  "displayName": "AICmd - AI SSH/RDP 终端与运维智能体",
+  "description": "VS Code 内的 AI SSH 终端、Windows 远程桌面（RDP）与本地 Shell：SFTP/ZMODEM 与 RDP 剪贴板文件传输、AI 执行命令、日志监控、命令审计与多服务器批量运维。"
 }

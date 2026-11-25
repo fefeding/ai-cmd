@@ -10,7 +10,7 @@ import * as crypto from 'crypto';
 export interface AicmdConnection {
   id: string;
   name?: string;
-  type?: 'ssh' | 'local' | string;
+  type?: 'ssh' | 'local' | 'rdp' | string;
   host?: string;
   username?: string;
 }

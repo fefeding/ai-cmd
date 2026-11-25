@@ -19,6 +19,7 @@ import { AuditService } from './server/service/audit.service';
 import { MonitorService } from './server/service/monitor.service';
 import { BatchService } from './server/service/batch.service';
 import { RdpService } from './server/service/rdp.service';
+import { RdpTunnelService } from './server/service/rdp-tunnel.service';
 import { getAccessToken, getCookieHeader, extractTokenFromHeaders, isValidToken, isAllowedOrigin, requiresToken, normalizeUploadName, maxUploadBytes } from './server/utils/security';
 
 const urlPrefix = process.env.PREFIX ? `/${process.env.PREFIX}` : '';
@@ -33,6 +34,7 @@ let monitorService: MonitorService | null = null;
 let batchService: BatchService | null = null;
 let aiService: AIService | null = null;
 let rdpService: RdpService | null = null;
+let rdpTunnelService: RdpTunnelService | null = null;
 
 // 初始化服务实例（仅在开发服务器启动时调用）
 function initServices() {
@@ -42,6 +44,7 @@ function initServices() {
   connectionService.init();
   sshService = new SSHService(connectionService);
   rdpService = new RdpService(connectionService);
+  rdpTunnelService = new RdpTunnelService(connectionService);
   skillService = new SkillService();
   auditService = new AuditService();
   monitorService = new MonitorService(connectionService);
@@ -183,6 +186,16 @@ const config = defineConfig({
                 initServices();
                 server.middlewares.use((req: Connect.IncomingMessage, res: http.ServerResponse, next: Connect.NextFunction) => {
                     const requestUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+                    // 开发模式：把 IronRDP wasm 映射到与构建产物一致的路径 /public/rdp_client_bg.wasm
+                    if (requestUrl.pathname === '/public/rdp_client_bg.wasm') {
+                        const wasmPath = path.resolve(__dirname, 'node_modules/ironrdp-wasm/pkg/rdp_client_bg.wasm');
+                        if (fs.existsSync(wasmPath)) {
+                            res.statusCode = 200;
+                            res.setHeader('Content-Type', 'application/wasm');
+                            fs.createReadStream(wasmPath).pipe(res);
+                            return;
+                        }
+                    }
                     if (!isAllowedOrigin(req.headers.origin, req.headers.host)) {
                         res.statusCode = 403;
                         res.end('Forbidden origin');
@@ -227,21 +240,40 @@ const config = defineConfig({
                     const wss = new WebSocket.Server({ noServer: true, maxPayload: Math.ceil(devUploadLimitBytes * 1.4) });
                     console.log('[WS] WebSocket server (noServer) ready for /ws/terminal');
 
-                    // 手动处理 upgrade，只拦截 /ws/terminal 路径
+                    // IronRDP-WASM 的 RDCleanPath 字节管道（二进制帧，与 JSON 的 /ws/terminal 分开）
+                    const rdpWss = new WebSocket.Server({ noServer: true, maxPayload: Math.ceil(devUploadLimitBytes * 1.4) });
+                    console.log('[WS] WebSocket server (noServer) ready for /ws/rdp');
+
+                    // 手动处理 upgrade，只拦截 /ws/terminal 与 /ws/rdp 路径
                     server.httpServer.on('upgrade', (req, socket, head) => {
                         const requestUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+                        const upgradeToken = requestUrl.searchParams.get('token') || extractTokenFromHeaders(req.headers);
+                        if (!isAllowedOrigin(req.headers.origin, req.headers.host) || (requiresToken(req.headers.origin, req.headers.host) && !isValidToken(upgradeToken))) {
+                            socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+                            socket.destroy();
+                            return;
+                        }
                         if (requestUrl.pathname === '/ws/terminal') {
-                            const upgradeToken = requestUrl.searchParams.get('token') || extractTokenFromHeaders(req.headers);
-                            if (!isAllowedOrigin(req.headers.origin, req.headers.host) || (requiresToken(req.headers.origin, req.headers.host) && !isValidToken(upgradeToken))) {
-                                socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-                                socket.destroy();
-                                return;
-                            }
                             wss.handleUpgrade(req, socket, head, (ws) => {
                                 wss.emit('connection', ws, req);
                             });
+                        } else if (requestUrl.pathname === '/ws/rdp') {
+                            rdpWss.handleUpgrade(req, socket, head, (ws) => {
+                                rdpWss.emit('connection', ws, req);
+                            });
                         }
                         // 其他 WebSocket 请求（如 Vite HMR）不处理，自动放行
+                    });
+
+                    rdpWss.on('connection', (ws: any, req: any) => {
+                        const requestUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+                        const connectionId = requestUrl.searchParams.get('connectionId');
+                        if (!connectionId || !rdpTunnelService) {
+                            ws.close(1008, 'Missing connectionId or RDP service unavailable');
+                            return;
+                        }
+                        console.log(`[WS] RDP tunnel client connected (dev): connectionId=${connectionId}`);
+                        rdpTunnelService.handleConnection(ws, connectionId);
                     });
 
                     wss.on('connection', async (ws: any) => {

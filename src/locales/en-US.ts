@@ -132,7 +132,7 @@ export default {
     rdpServerLayout: 'Keyboard Layout',
     rdpGuacdHost: 'guacd Host',
     rdpGuacdPort: 'guacd Port',
-    rdpHint: 'RDP requires guacd (Apache Guacamole daemon) running locally or on a specified server (default 127.0.0.1:4822). The target Windows only needs its built-in Remote Desktop enabled.',
+    rdpHint: 'RDP runs through the in-browser IronRDP engine — no guacd or local RDP client needed. The target Windows only needs its built-in Remote Desktop enabled with port 3389 open.',
     startupScript: 'Startup Script',
     startupScriptPlaceholder: 'Jump host example: ssh 192.168.1.100\nOther example: cd /data && source env.sh',
     startupScriptHint: 'Command to execute after SSH connection is established. Useful for jump host hopping, auto cd to working directory, etc.',

@@ -1,37 +1,40 @@
-# AICmd Terminal — AI SSH Client & Agent for VS Code
+# AICmd — AI SSH / RDP Terminal, Remote Desktop & Agent for VS Code
 
-**An AI-powered SSH terminal right inside VS Code.** Connect to remote servers or a local shell, let an AI agent run commands and analyze logs in natural language, transfer files with SFTP / ZMODEM, audit every command, and run batch jobs across servers — without leaving your editor.
+**One extension for AI-powered SSH terminals, Windows remote desktops, and local shells — right inside VS Code.** Connect to servers via SSH, open a graphical Windows desktop via RDP, let an AI agent run commands and analyze logs in natural language, transfer files (SFTP / ZMODEM / RDP clipboard), audit every command, and run batch jobs — without leaving your editor.
 
 [中文文档](https://github.com/fefeding/ai-cmd/blob/main/README.zh.md) · [GitHub 仓库](https://github.com/fefeding/ai-cmd) · [问题反馈](https://github.com/fefeding/ai-cmd/issues)
-
-![AICmd: SSH terminal, AI assistant and file manager inside VS Code](https://raw.githubusercontent.com/fefeding/ai-cmd/main/docs/images/vscode-extension.png)
 
 ## Features
 
 | | |
 |---|---|
 | **SSH & local terminal** | Full xterm.js terminal (256 colors, tabs, auto-reconnect) over `ssh2` / `node-pty` |
+| **Windows remote desktop (RDP)** | Graphical desktop via in-browser IronRDP-WASM — **no guacd, no local RDP client, no third-party software on the target**. Mouse/keyboard, fullscreen, clipboard sync and file transfer. |
 | **AI Agent** | OpenAI-compatible function calling (OpenAI / DeepSeek / Qwen / any compatible endpoint): the agent reads terminal output, executes commands and iterates until the task is done |
 | **Skills** | Built-in ops playbooks plus your own `/skill` markdown playbooks |
-| **File transfer** | SFTP upload / download and `rz` / `sz` ZMODEM with a native Save As dialog |
+| **File transfer** | SFTP upload / download, `rz` / `sz` ZMODEM with a native Save As dialog, and RDP CLIPRDR file copy (upload / download inside the remote desktop) |
 | **Command audit & replay** | Every AI-executed command is recorded with output, duration and status; timeline, statistics and JSON / CSV export |
 | **Log monitoring** | `tail -f` with anomaly detection and AI-powered analysis |
 | **Batch operations** | Run one command on multiple servers in parallel and aggregate the results |
 | **Jump host & SSH agent forwarding** | Per-connection startup scripts and automatic local SSH agent detection |
 
-> 中文用户：这是 VS Code 里的 **AI SSH 终端 / 运维智能体**，支持 SSH 远程连接、本地 Shell、SFTP 文件传输、命令审计、日志监控与多服务器批量执行；连接配置与桌面版 / CLI 共用 `~/.aicmd`。
+> 中文用户：这是 VS Code 里的 **AI SSH 终端 / Windows 远程桌面 / 运维智能体**，支持 SSH 远程连接、本地 Shell、Windows RDP 图形桌面（无需 guacd）、SFTP / ZMODEM / RDP 文件传输、命令审计、日志监控与多服务器批量执行；连接配置与桌面版 / CLI 共用 `~/.aicmd`。
 
 ## Quick Start
 
 1. Install the extension (from the Marketplace, or `code --install-extension fefeding.vscode-aicmd`), then click the **AICmd** icon in the Activity Bar.
-2. Click **Open Local Shell** for a local terminal, or **+** to add an SSH connection (host, port, password / private key). Click a connection to open its terminal.
+2. Click **Open Local Shell** for a local terminal, or **+** to add a connection:
+   - **SSH**: host, port (22), password / private key → opens a terminal;
+   - **Windows Remote Desktop (RDP)**: host, port (3389), username / password → opens a graphical desktop.
+   Click a connection in the view to open it.
 3. *Optional*: click the robot icon, set an OpenAI-compatible API Key + Base URL, then ask the agent things like *"check disk usage and find the biggest log files"*.
 
 No separate AICmd installation is needed — the distributed extension ships its own front-end and backend, starts the backend on demand on `127.0.0.1`, and stops it when the last panel closes.
 
-## Why AICmd instead of a plain terminal?
+## Why AICmd instead of a plain terminal / RDP client?
 
-- **SSH + AI ops in one place**: a real remote terminal *and* an agent that can act on what it sees, instead of copy-pasting output into a chatbot.
+- **Terminal + desktop + AI ops in one place**: a real remote terminal *and* a Windows graphical desktop *and* an agent that can act on what it sees — no mstsc, no guacd, no copy-pasting output into a chatbot.
+- **Lightweight remote desktop**: RDP runs via WebAssembly in the browser; the local service is just a thin byte tunnel. Nothing to install on the target beyond Windows' built-in Remote Desktop.
 - **Auditable by default**: every command executed by the AI is recorded, with a timeline, statistics and export for review.
 - **Fleet-aware**: batch commands, log monitoring and jump-host / agent-forwarding workflows across multiple servers.
 - **Shared configuration**: connections, sessions and AI settings live in `~/.aicmd` and are shared with the standalone desktop / CLI AICmd.
@@ -41,20 +44,25 @@ No separate AICmd installation is needed — the distributed extension ships its
 ```
 VSCode Extension Host
   └─ child process: node server.js --port <random free port>   (reuses project root backend, bound to 127.0.0.1)
-        ├─ REST API   /api/**
-        └─ WebSocket  /ws/terminal
+        ├─ REST API        /api/**
+        ├─ Terminal WS     /ws/terminal   (JSON protocol, ssh2 / node-pty)
+        └─ RDP tunnel WS   /ws/rdp        (binary RDCleanPath bytes → Windows:3389)
   └─ WebView (iframe → http://127.0.0.1:<port>/)   (same-origin front-end SPA)
+        ├─ SSH / local → xterm.js terminal
+        └─ RDP        → IronRDP-WASM (browser-side RDP stack + Canvas render)
 ```
 
 - The backend runs as a **child process** that reuses the project root's `server.js`, so all features are reused unchanged.
-- The WebView loads the front-end through a **same-origin iframe**, which means the API / WebSocket are same-origin — no token or CORS handling is needed.
+- The WebView loads the front-end through a **same-origin iframe**, so the API / WebSocket are same-origin — no token or CORS handling is needed.
+- RDP is implemented with **IronRDP-WASM**: the RDP protocol stack runs inside the browser, and the local server only forwards bytes to the configured Windows host (the client-declared destination is ignored, preventing SSRF). No `guacd` daemon is involved.
 - The data directory defaults to `~/.aicmd` (overridable via the `aicmd.dataDir` setting) and is **shared with the standalone desktop / CLI AICmd** — the same `connections.json` and other files. A connection added in VSCode is visible in the desktop app, and vice versa.
 
 ## Requirements
 
 - VS Code `^1.75.0` or later (Windows / macOS / Linux).
-- A published build of the extension already includes its own front-end and backend runtime — **no separate AICmd install is required**. Only source development needs a locally built project, see [Local Development](#local-development).
+- A published build of the extension already includes its own front-end, backend runtime and RDP WASM module — **no separate AICmd install, no guacd, no RDP client is required**. Only source development needs a locally built project, see [Local Development](#local-development).
 - Node.js available to launch the backend. The extension locates a `node` binary automatically (see [Environment Variables](#environment-variables)); you normally do not need to set anything.
+- For RDP: the target Windows has **Remote Desktop enabled** and port **3389** reachable. The extension's WASM RDP client handles the rest.
 
 ## Installing the Extension
 
@@ -73,32 +81,40 @@ See [Local Development](#local-development). After compiling, press **F5** in VS
 
 ### Open the Activity Bar
 
-After activating the extension, an **AICmd** icon appears in the left Activity Bar. Click it to reveal the **Terminal** explorer view, which lists:
+After activating the extension, an **AICmd** icon appears in the left Activity Bar. Click it to reveal the **Connections** explorer view, which lists:
 
 - **Open Local Shell** — opens a native local shell (`__local__` connection) inside a VSCode WebView tab.
-- **Saved connections** — every connection from `~/.aicmd/connections.json` (shared with the desktop / CLI). SSH connections show a globe icon; local connections show a terminal icon, with the host and username as a description.
+- **Saved connections** — every connection from `~/.aicmd/connections.json` (shared with the desktop / CLI). SSH connections show a globe icon; **RDP connections show a monitor icon**; local connections show a terminal icon, with the host and username as a description.
 - **No connections yet** hint — appears when the connection list is empty; click the **+** button in the view title to add one.
 
-### Open a terminal
+### Open a connection
 
-You can open a terminal in three ways:
+You can open a terminal or a remote desktop in three ways:
 
-1. **Command Palette**: press `Ctrl/Cmd + Shift + P`, then run **`AICmd: 打开终端`** (command id `aicmd.openTerminal`).
-2. **Activity Bar → Terminal view**: click the **Open Local Shell** entry, or click any connection node to open that connection.
-3. **Connection node inline action**: hover a connection in the Terminal view and click the terminal icon that appears on the right.
+1. **Command Palette**: press `Ctrl/Cmd + Shift + P`, then run **`AICmd: 打开连接（终端 / 远程桌面）`** (command id `aicmd.openTerminal`).
+2. **Activity Bar → Connections view**: click the **Open Local Shell** entry, or click any connection node to open it (SSH → terminal, RDP → graphical desktop).
+3. **Connection node inline action**: hover a connection in the view and click the action icon on the right.
 
-The first launch automatically finds an available port and starts the backend service, then opens the terminal UI in a WebView. Re-opening the same connection appends a number to the tab title (`server 2` / `server 3` …) so multiple sessions stay distinguishable.
+The first launch automatically finds an available port and starts the backend service, then opens the UI in a WebView. Re-opening the same connection appends a number to the tab title (`server 2` / `server 3` …) so multiple sessions stay distinguishable.
+
+### Windows Remote Desktop (RDP)
+
+1. On the target Windows, enable **Settings → System → Remote Desktop → Enable Remote Desktop** and make sure TCP 3389 is reachable.
+2. In AICmd, click **+** → connection type **Windows Remote Desktop (RDP)** → fill in host, port (default **3389**), username, password, and domain (for domain accounts; leave blank for local accounts). Screen size defaults to 1280×800 and can be adjusted.
+3. Click the connection: a graphical desktop opens in the WebView with mouse/keyboard input, resolution auto-fit, clipboard sync (plain text) and file transfer (upload via the toolbar, download files copied on the remote).
+
+> CredSSP is enabled by default. The RDP stack runs entirely in the browser via IronRDP-WASM — no guacd daemon and no local RDP client are needed.
 
 ### Manage connections
 
 All connection management reuses the same backend and storage as the desktop / CLI app:
 
-- **Add connection**: click the **+** button in the Terminal view title bar (or run `aicmd.addConnection`). A dedicated connection-editor WebView opens; fill in host/port/auth and save.
+- **Add connection**: click the **+** button in the view title bar (or run `aicmd.addConnection`). A dedicated connection-editor WebView opens; pick SSH or RDP, fill in host/port/auth and save. RDP defaults to port 3389 and an empty username; SSH defaults to port 22 and `root`.
 - **Edit connection**: right-click a connection → **Edit**, or run `aicmd.editConnection`. The same editor WebView opens pre-filled. After saving, the tree refreshes automatically and the editor closes.
 - **Delete connection**: right-click a connection → **Delete**, or run `aicmd.deleteConnection`. A confirmation dialog appears; confirming removes the connection via the backend API and refreshes the tree.
 - **Refresh**: click the **⟳** button in the view title bar (or run `aicmd.refresh`) to re-read the connection list from the backend.
 
-> The connection editor is the same `ConnectionEditor` component used by the desktop app, so startup scripts and SSH agent forwarding for jump-host workflows are fully supported here too.
+> The connection editor is the same `ConnectionEditor` component used by the desktop app, so startup scripts and SSH agent forwarding for jump-host workflows are fully supported for SSH connections too.
 
 ### Configure AI
 
@@ -113,7 +129,7 @@ When a terminal session triggers a file download (e.g. `sz file`), the WebView p
 
 ### Stopping the backend
 
-The backend child process starts on demand and **stops automatically** when all AICmd WebView panels are closed (and no editor panel is open). It also stops when the extension is deactivated. If the backend crashes unexpectedly, all panels close and an error notification is shown; re-open a terminal to restart it.
+The backend child process starts on demand and **stops automatically** when all AICmd WebView panels are closed (and no editor panel is open). It also stops when the extension is deactivated. If the backend crashes unexpectedly, all panels close and an error notification is shown; re-open a connection to restart it.
 
 ## Settings
 
@@ -158,16 +174,18 @@ The F5 launch uses a `preLaunchTask` that automatically runs `pnpm build:vscode`
 
 ```bash
 pnpm build:vscode      # build front-end + backend + extension host
+node scripts/prepare-vscode-runtime.mjs
 cd packages/vscode
 vsce package           # produce a .vsix
 vsce publish
 ```
 
-> The distributed package must include the runtime (`server.js`, `dist/`, `data/skills`, and `node_modules` with the native `node-pty`). Marketplace / Open VSX releases are built by CI, which runs `node scripts/prepare-vscode-runtime.mjs` to copy the runtime into `packages/vscode/runtime/` before packaging. For a local manual build, run that script before `vsce package` — the extension automatically prefers that directory when present.
+> The distributed package must include the runtime (`server.js`, `dist/` including `rdp_client_bg.wasm`, `data/skills`, and `node_modules` with the native `node-pty`). Marketplace / Open VSX releases are built by CI, which runs `node scripts/prepare-vscode-runtime.mjs` to copy the runtime into `packages/vscode/runtime/` before packaging. For a local manual build, run that script before `vsce package` — the extension automatically prefers that directory when present.
 
 ## Notes
 
 - The extension's backend listens only on `127.0.0.1`, and the WebView loads the front-end from the same origin, so no network exposure or token is required.
+- RDP targets are always taken from the saved connection config, never from the browser client — a malicious page cannot redirect the tunnel to an arbitrary host.
 - Backend logs are written to the **Output** panel → channel **AICmd** for troubleshooting startup issues.
 - The WebView follows your VSCode color theme (light / dark / high-contrast) automatically.
 

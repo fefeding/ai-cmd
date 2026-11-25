@@ -49,11 +49,11 @@
           @dblclick="$emit('connect', conn)"
           @contextmenu.prevent="showContextMenu($event, conn)"
         >
-          <i :class="conn.type === 'local' ? 'bi bi-terminal' : 'bi bi-hdd-network'" style="color: var(--accent);"></i>
+          <i :class="conn.type === 'local' ? 'bi bi-terminal' : conn.type === 'rdp' ? 'bi bi-display' : 'bi bi-hdd-network'" style="color: var(--accent);"></i>
           <div class="flex-grow-1 overflow-hidden">
             <div class="text-truncate" style="font-size: 13px;">{{ conn.name }}</div>
             <div class="text-truncate" style="font-size: 11px; color: var(--text-secondary);">
-              {{ conn.type === 'local' ? t('app.localShell') : `${conn.username}@${conn.host}:${conn.port}` }}
+              {{ conn.type === 'local' ? t('app.localShell') : `${conn.username || ''}${conn.username ? '@' : ''}${conn.host}${conn.port ? ':' + conn.port : ''}` }}
             </div>
           </div>
           <div class="d-flex gap-1" @click.stop>

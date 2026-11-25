@@ -1,4 +1,4 @@
 {
-  "displayName": "AICmd - AI SSH Terminal & Agent",
-  "description": "AI SSH terminal & agent for VS Code: remote SSH and local shell, SFTP/ZMODEM file transfer, AI command execution, log monitoring, command audit and multi-server batch ops."
+  "displayName": "AICmd - AI SSH/RDP Terminal & Agent",
+  "description": "AI-powered SSH terminal, Windows RDP remote desktop and local shell for VS Code: SFTP/ZMODEM and RDP CLIPRDR file transfer, AI command execution, log monitoring, command audit and multi-server batch ops."
 }

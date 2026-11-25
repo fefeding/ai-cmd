@@ -2,7 +2,7 @@
   "name": "vscode-aicmd",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "publisher": "fefeding",
   "license": "MIT",
   "repository": {
@@ -29,6 +29,11 @@
     "shell",
     "local shell",
     "xterm",
+    "rdp",
+    "remote desktop",
+    "windows remote desktop",
+    "windows rdp",
+    "desktop",
     "sftp",
     "file transfer",
     "zmodem",
@@ -37,6 +42,7 @@
     "llm",
     "devops",
     "linux",
+    "windows",
     "server management",
     "remote development",
     "remote",
@@ -46,6 +52,8 @@
     "jump host",
     "agent",
     "ssh 终端",
+    "远程桌面",
+    "windows 远程桌面",
     "运维"
   ],
   "galleryBanner": {
@@ -75,16 +83,16 @@
       "aicmd": [
         {
           "id": "aicmd.explorer",
-          "name": "终端"
+          "name": "连接"
         }
       ]
     },
     "commands": [
       {
         "command": "aicmd.openTerminal",
-        "title": "打开终端",
+        "title": "打开连接（终端 / 远程桌面）",
         "category": "AICmd",
-        "icon": "$(terminal)"
+        "icon": "$(remote)"
       },
       {
         "command": "aicmd.refresh",
@@ -161,7 +169,7 @@
         "aicmd.dataDir": {
           "type": "string",
           "default": "",
-          "description": "AICmd 的数据目录（连接配置 / 会话 / AI 配置 / 审计日志）。留空则复用桌面端 / CLI 的 ~/.aicmd，与独立运行的 fshell 共用同一份 connections.json 等文件。"
+          "description": "AICmd 的数据目录（连接配置 / 会话 / AI 配置 / 审计日志）。留空则复用桌面端 / CLI 的 ~/.aicmd，与独立运行的 AICmd 服务共用同一份 connections.json 等文件。"
         },
         "aicmd.startPort": {
           "type": "number",

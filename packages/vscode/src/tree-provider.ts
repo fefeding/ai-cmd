@@ -46,6 +46,7 @@ export class AICmdTreeProvider
 
       for (const c of conns as AicmdConnection[]) {
         const isLocal = c.type === 'local';
+        const isRdp = c.type === 'rdp';
         const item = new vscode.TreeItem(
           c.name || (isLocal ? '本地 Shell' : c.host) || c.id,
           vscode.TreeItemCollapsibleState.None
@@ -54,18 +55,20 @@ export class AICmdTreeProvider
         // （view/item/context 触发时 VSCode 会把本对象作为首个参数传入）
         item.id = String(c.id);
         item.contextValue = 'connection';
-        item.iconPath = new vscode.ThemeIcon(isLocal ? 'terminal' : 'globe');
+        item.iconPath = new vscode.ThemeIcon(
+          isLocal ? 'terminal' : isRdp ? 'remote' : 'globe'
+        );
         item.description = isLocal
           ? '本地 Shell'
           : `${c.host || ''}${c.username ? ' · ' + c.username : ''}`;
         item.tooltip = `${c.name || ''}\n${
-          isLocal ? '本地 Shell' : (c.host || '') + ' ' + (c.username || '')
+          isLocal ? '本地 Shell' : (isRdp ? '远程桌面 · ' : '') + (c.host || '') + ' ' + (c.username || '')
         }`;
-        // 点击连接节点 → 打开只含 xterm 的纯终端 WebView tab
+        // 点击连接节点 → 打开 WebView tab（SSH 终端或 RDP 远程桌面）
         item.command = {
           command: 'aicmd.openTerminal',
           title: '打开',
-          arguments: [c.id, c.name || (isLocal ? '本地 Shell' : c.host)]
+          arguments: [c.id, c.name || (isLocal ? '本地 Shell' : c.host), c.type]
         };
         items.push(item);
       }

@@ -10,7 +10,54 @@ const { app, BrowserWindow, shell, ipcMain, protocol, net, Menu } = require('ele
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const http = require('http');
 const { initAutoUpdater } = require('./updater');
+
+// ========== IronRDP-WASM 本地代理服务 ==========
+// WASM 内部用浏览器原生 WebSocket，无法走 IPC，因此在主进程起一个仅监听
+// 127.0.0.1 随机端口的 HTTP+WS server，把 RDCleanPath 字节转发到 Windows:3389。
+let rdpProxyServer = null;
+let rdpProxyUrl = '';
+
+function setupRdpProxyServer() {
+  if (isDev) return; // 开发模式由 Vite dev server 提供 /ws/rdp
+  try {
+    const WebSocket = require('ws');
+    const services = getServices();
+    if (!services || !services.rdpTunnelService) {
+      console.warn('[Electron] rdpTunnelService unavailable, RDP proxy not started');
+      return;
+    }
+    const server = http.createServer((_req, res) => {
+      res.writeHead(404); res.end();
+    });
+    const wss = new WebSocket.Server({ server, path: '/ws/rdp', maxPayload: 140 * 1024 * 1024 });
+    wss.on('connection', (ws, req) => {
+      const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+      const connectionId = requestUrl.searchParams.get('connectionId');
+      if (!connectionId) { ws.close(1008, 'Missing connectionId'); return; }
+      console.log(`[Electron] RDP tunnel client connected: connectionId=${connectionId}`);
+      services.rdpTunnelService.handleConnection(ws, connectionId);
+    });
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      rdpProxyUrl = `ws://127.0.0.1:${port}/ws/rdp`;
+      console.log(`[Electron] RDP proxy listening at ${rdpProxyUrl}`);
+    });
+    rdpProxyServer = server;
+  } catch (err) {
+    console.error(`[Electron] Failed to start RDP proxy server: ${err.message}`);
+  }
+}
+
+// 渲染进程通过 IPC 获取 WASM 客户端要连接的代理地址（含 connectionId 由前端追加）
+function setupRdpProxyIPC() {
+  ipcMain.handle('rdp:proxyUrl', async (_event, connectionId) => {
+    if (!rdpProxyUrl) return '';
+    return connectionId ? `${rdpProxyUrl}?connectionId=${encodeURIComponent(connectionId)}` : rdpProxyUrl;
+  });
+}
 
 // ========== 日志输出到文件（生产模式调试用） ==========
 const logDir = path.join(os.homedir(), '.aicmd');
@@ -73,6 +120,7 @@ function getServices() {
     _services = {
       sshService: serverModule.sshService,
       rdpService: serverModule.rdpService,
+      rdpTunnelService: serverModule.rdpTunnelService,
       connectionService: serverModule.connectionService,
       aiService: serverModule.aiService,
       monitorService: serverModule.monitorService,
@@ -597,6 +645,7 @@ app.whenReady().then(() => {
   setupApiIPC();
   setupTerminalIPC();
   setupClipboardIPC();
+  setupRdpProxyIPC();
   setupMenu();
 
   // 初始化服务（仅生产模式加载模块，开发模式由 Vite 提供）
@@ -604,6 +653,7 @@ app.whenReady().then(() => {
     const services = getServices();
     if (services) {
       setupMonitorEvents();
+      setupRdpProxyServer();
       console.log('[Electron] Services initialized (production mode)');
     } else {
       console.log('[Electron] Services skipped (dev mode - using Vite dev server)');

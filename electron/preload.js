@@ -66,6 +66,10 @@ const api = {
   downloadFile(sessionId, remotePath, fileName) {
     return ipcRenderer.invoke('file:download', { sessionId, remotePath, fileName });
   },
+  /** 获取 IronRDP-WASM 客户端要连接的本地 RDCleanPath 代理地址 */
+  getRdpProxyUrl(connectionId) {
+    return ipcRenderer.invoke('rdp:proxyUrl', connectionId);
+  },
 };
 
 // 剪贴板操作

@@ -67,6 +67,7 @@
           >
             <RdpTabComp
               v-if="getConnection(tab.connectionId)?.type === 'rdp' && (tab.id === store.activeTabId || renderedTabs.has(tab.id))"
+              :ref="el => setRdpRef(tab.id, el)"
               :tabId="tab.id"
               :connection="getConnection(tab.connectionId)"
               :active="tab.id === store.activeTabId"
@@ -196,6 +197,13 @@ function setTermRef(tabId: string, el: any) {
     termRefs.delete(tabId);
     renderedTabs.delete(tabId);
   }
+}
+
+// RDP 组件不放入 termRefs（类型不同），但同样要登记到 renderedTabs：
+// 否则切换 tab 时 v-if 变 false 会销毁组件 → shutdown RDP 会话 → 切回时重连闪一下。
+function setRdpRef(tabId: string, el: any) {
+  if (el) renderedTabs.add(tabId);
+  else renderedTabs.delete(tabId);
 }
 
 // 获取连接信息
