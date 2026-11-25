@@ -77,6 +77,7 @@
 | 前端 | Vue 3 + TypeScript + Vite + Bootstrap 5 + xterm.js |
 | 后端 | Node.js + Express + WebSocket (ws) |
 | SSH/PTY | ssh2 + node-pty |
+| RDP | IronRDP-WASM + RDCleanPath 字节隧道 |
 | AI | OpenAI 兼容 API（支持任意兼容端点） |
 | 构建 | Vite + TypeScript + electron-builder |
 
@@ -153,15 +154,36 @@ pnpm electron:build:linux  # Linux（AppImage）
 
 ### 自动化构建（CI/CD）
 
-推送版本标签触发多平台自动构建：
+两种标签前缀触发不同流程，需推送到 `github` 远端（`origin` 镜像不会触发 Actions）：
 
 ```bash
-git tag v0.1.6
-git push origin v0.1.6
-# GitHub Actions 自动构建 Windows、macOS、Linux 并创建 Release
+# 仅构建客户端（Windows / macOS / Linux）
+git tag v0.1.27
+git push github v0.1.27
+
+# 客户端 + VSIX + GitHub Release + VS Code 插件市场 + Open VSX 发布
+git tag aicmd-v0.1.27
+git push github aicmd-v0.1.27
 ```
 
-也可在 **Actions** 页面手动触发并选择平台。
+`aicmd-v*` 标签的版本号必须与 `packages/vscode/package.json` 一致，否则 CI 会失败。也可在 **Actions** 页面手动触发并选择平台。
+
+### VSCode 插件
+
+AICmd 也提供 VSCode 插件，在编辑器内运行**同一套**前后端，无需额外安装。插件以子进程启动 `server.js`（绑定 `127.0.0.1`），通过 WebView iframe 加载 SPA，因此所有功能（SSH/本地终端、AI Agent、技能、审计、日志监控、批量操作、文件传输、RDP 远程桌面）都可在编辑器内使用。连接数据与桌面端/CLI 共享 `~/.aicmd/connections.json`。
+
+- **安装 / 从源码构建**：配置、使用、设置和打包说明见 [`packages/vscode/README.md`](./packages/vscode/README.md)。
+- **快速开发循环**：
+
+```bash
+pnpm build:vscode      # 构建前端 + 后端 + 扩展宿主
+cd packages/vscode && npm run watch   # 持续重编译扩展
+# 然后在 VSCode 中按 F5 启动扩展开发宿主
+```
+
+- **打包**：`pnpm build:vscode && cd packages/vscode && vsce package` 生成 `.vsix`。
+- **关键设置**：`aicmd.dataDir`（数据目录，默认 `~/.aicmd`）、`aicmd.startPort`（起始端口，默认 `9802`）。
+- **命令**：`AICmd: 打开终端`，以及活动栏 **AICmd → Terminal** 视图中的连接增删改查/刷新。
 
 ## AI 使用示例
 
@@ -331,7 +353,7 @@ AI Agent 自动检测目标操作系统并选择合适的命令。
 
 **3. 新建连接**：连接类型选择「Windows 远程桌面 (RDP)」，填写主机、端口（3389）、用户名、密码，以及域（域账户填写，本地账户留空）；分辨率默认 1280×800，可按需要调整。
 
-**4. 使用**：打开连接后即可看到远程桌面，支持鼠标点击/移动、完整键盘输入（含组合键与功能键）、分辨率自适应。工具栏提供剪贴板、上传、下载、重新连接、适应窗口按钮。
+**4. 使用**：打开连接后即可看到远程桌面，支持鼠标点击/移动、完整键盘输入（含组合键与功能键）、分辨率自适应。工具栏提供剪贴板、上传、下载、重新连接、**全屏**按钮（在允许的环境使用原生全屏，受限宿主降级为 CSS 铺满，VSCode 插件中则请求扩展执行窗口级全屏）。若同一台机器的新连接接管了会话，旧标签页会显示断开提示并提供一键重连。
 
 **文本剪贴板（实时）**：在本地复制文本后，到远程桌面里按 `Ctrl/Cmd + V` 即可粘贴——粘贴瞬间会把**当前**本地剪贴板内容推入 RDP 通道，而不是连接建立时的旧内容；远程复制的文本也会自动写回本地剪贴板。工具栏剪贴板按钮也能主动推送当前文本。
 

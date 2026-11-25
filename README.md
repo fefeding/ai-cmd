@@ -83,6 +83,7 @@ An AI-powered web SSH terminal that combines a full-featured terminal emulator w
 | Frontend | Vue 3 + TypeScript + Vite + Bootstrap 5 + xterm.js |
 | Backend | Node.js + Express + WebSocket (ws) |
 | SSH/PTY | ssh2 + node-pty |
+| RDP | IronRDP-WASM + RDCleanPath byte tunnel |
 | AI | OpenAI-compatible API (supports any compatible endpoint) |
 | Build | Vite + TypeScript + electron-builder |
 
@@ -170,19 +171,23 @@ xattr -cr /Applications/AICmd.app
 
 ### Automated Builds (CI/CD)
 
-Push a version tag to trigger multi-platform builds:
+Two tag prefixes trigger different workflows — push to the `github` remote (the `origin` mirror does not run Actions):
 
 ```bash
-git tag v0.1.6
-git push origin v0.1.6
-# GitHub Actions builds for Windows, macOS, Linux and creates a Release
+# Client installers only (Windows / macOS / Linux)
+git tag v0.1.27
+git push github v0.1.27
+
+# Client installers + VSIX + GitHub Release + VS Code Marketplace + Open VSX
+git tag aicmd-v0.1.27
+git push github aicmd-v0.1.27
 ```
 
-Or trigger manually from the **Actions** tab with platform selection.
+For `aicmd-v*` tags the version must match `packages/vscode/package.json`, otherwise CI fails. Or trigger manually from the **Actions** tab with platform selection.
 
 ### VSCode Extension
 
-AICmd also ships as a VSCode extension that runs the **same** backend and front-end inside the editor — no separate install needed. It launches `server.js` as a child process (bound to `127.0.0.1`) and loads the SPA through a same-origin WebView iframe, so all features (SSH/local terminal, AI Agent, skills, audit, log monitoring, batch ops, file transfer) work in-editor. Connection data is shared with the desktop/CLI via `~/.aicmd/connections.json`.
+AICmd also ships as a VSCode extension that runs the **same** backend and front-end inside the editor — no separate install needed. It launches `server.js` as a child process (bound to `127.0.0.1`) and loads the SPA through a same-origin WebView iframe, so all features (SSH/local terminal, RDP remote desktop, AI Agent, skills, audit, log monitoring, batch ops, file transfer) work in-editor. Connection data is shared with the desktop/CLI via `~/.aicmd/connections.json`.
 
 - **Install / build from source**: see [`packages/vscode/README.md`](./packages/vscode/README.md) for detailed setup, usage, settings, and packaging instructions.
 - **Quick dev loop**:
@@ -354,7 +359,7 @@ In addition to SSH terminals, this tool supports connecting to Windows via a **g
 
 **3. Create a connection**: choose "Windows Remote Desktop (RDP)" as the type, fill in host, port (3389), username, password, and domain (for domain accounts; leave blank for local). Screen size defaults to 1280×800.
 
-**4. Use it**: mouse click/move, full keyboard input (including modifier keys and function keys), and adaptive resolution are supported. The toolbar provides clipboard, upload, download, reconnect, and fit-to-window buttons.
+**4. Use it**: mouse click/move, full keyboard input (including modifier keys and function keys), and adaptive resolution are supported. The toolbar provides clipboard, upload, download, reconnect, and **fullscreen** buttons (native fullscreen where permitted; a CSS fallback in restricted hosts, and window-level fullscreen in the VSCode extension). If another connection to the same machine takes over the session, the old tab shows a disconnected overlay with a one-click reconnect button.
 
 **Text clipboard (live)**: copy text locally, then press `Ctrl/Cmd + V` inside the remote desktop — the **current** local clipboard is pushed into the RDP channel at paste time (not the value from when the connection opened). Text copied on the remote is written back to the local clipboard automatically.
 
