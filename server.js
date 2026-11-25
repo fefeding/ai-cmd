@@ -261,17 +261,19 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 rdpWss.on('connection', (ws, req) => {
-  const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const wsToken = requestUrl.searchParams.get('token') || extractTokenFromHeaders(req.headers);
-  if (!isAllowedOrigin(req.headers.origin, req.headers.host) || (requiresToken(req.headers.origin, req.headers.host) && !isValidToken(wsToken))) {
-    ws.close(1008, 'Unauthorized');
+  // 解析/鉴权逻辑与 Vite dev 共用同一实现，避免两处规则漂移；
+  // 畸形 URL 在这里被拒绝，不能让它冒泡成未捕获异常
+  let auth;
+  try {
+    const { validateRdpWsRequest } = require('./dist/server/index.js');
+    auth = validateRdpWsRequest(req);
+  } catch (err) {
+    console.error(`[WS] Failed to validate RDP tunnel request: ${err.message}`);
+    ws.close(1011, 'RDP tunnel unavailable');
     return;
   }
-  const connectionId = requestUrl.searchParams.get('connectionId');
-  if (!connectionId) {
-    ws.close(1008, 'Missing connectionId');
-    return;
-  }
+  if (!auth.ok) { ws.close(1008, auth.reason || 'Unauthorized'); return; }
+  const connectionId = auth.connectionId;
   console.log(`[WS] RDP tunnel client connected: ${req.socket.remoteAddress}, connectionId=${connectionId}`);
   try {
     const serverModule = require('./dist/server/index.js');

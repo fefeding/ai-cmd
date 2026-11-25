@@ -176,9 +176,18 @@ export class ServerLauncher {
   ): Promise<string | undefined> {
     this.spawnError = undefined;
     this.lastStderr = '';
-    // 扩展宿主可能带有指向宿主内部模块的 NODE_OPTIONS，会让干净的
-    // node / Electron-node 子进程启动即崩，这里必须剔除。
-    const { NODE_OPTIONS, ...cleanEnv } = process.env;
+    // 剔除会被子进程误用的宿主环境变量：
+    // - NODE_OPTIONS：扩展宿主可能带有指向宿主内部模块的 --require，让干净的子进程启动即崩；
+    // - NODE_CHANNEL_FD / NODE_CHANNEL_SERIALIZATION_MODE：扩展宿主由 fork 启动，子进程继承后
+    //   会误以为自己是 fork 的子进程，用同一 fd 建立 IPC channel，污染宿主 IPC →
+    //   Extension Development Host 闪退。典型场景：恢复上次打开的 RDP WebView 时
+    //   deserializeWebviewPanel 提前拉起后端。
+    const {
+      NODE_OPTIONS,
+      NODE_CHANNEL_FD,
+      NODE_CHANNEL_SERIALIZATION_MODE,
+      ...cleanEnv
+    } = process.env;
     this.child = cp.spawn(
       nodeBin,
       [serverJs, '--port', String(this.port)],

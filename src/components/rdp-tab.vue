@@ -9,7 +9,7 @@
       <button class="rdp-btn" title="上传文件到远程桌面" @click="openFilePicker" :disabled="status !== 'connected'">
         <i class="bi bi-upload"></i>
       </button>
-      <button class="rdp-btn" title="下载远程文件" @click="downloadFiles" :disabled="status !== 'connected' || pendingDownloads.length === 0">
+      <button class="rdp-btn" title="下载远程文件" @click="fileTransfer.downloadFiles()" :disabled="status !== 'connected' || pendingDownloads.length === 0">
         <i class="bi bi-download"></i>
       </button>
       <button class="rdp-btn" :title="t('rdp.reconnect')" @click="reconnect">
@@ -52,7 +52,7 @@ import initWasm, {
 } from 'ironrdp-wasm';
 import type { Session } from 'ironrdp-wasm';
 import { scancodeFor, isMacClient } from '@/utils/rdp-wasm-input';
-import { toast } from '@/utils/toast';
+import { useRdpFileTransfer } from '@/utils/useRdpFileTransfer';
 import { readClipboard, writeClipboard } from '@/utils/vscode-clipboard';
 import type { ConnectionEntity } from '@/typings/connection';
 
@@ -75,7 +75,14 @@ const pasteSinkRef = ref<HTMLTextAreaElement | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const status = ref<'connecting' | 'connected' | 'disconnected' | 'error'>('connecting');
 const errorMessage = ref('');
-const transferItems = ref<Array<{ name: string; status: string }>>([]);
+
+let session: Session | null = null;
+// 文件传输状态与 WASM 回调封装在 composable 中；getSession 用函数传入以跟随重连后的新会话
+const fileTransfer = useRdpFileTransfer(
+  () => session,
+  (msg) => setStatus('error', msg)
+);
+const { transferItems, pendingDownloads } = fileTransfer;
 
 const statusText = computed(() => {
   if (status.value === 'connecting') return t('tab.connecting');
@@ -84,10 +91,12 @@ const statusText = computed(() => {
   return t('tab.disconnected');
 });
 
-let session: Session | null = null;
 let wasmReady = false;
 let connecting = false;
 let disposed = false;
+// 每次 cleanup / 新 start 递增，用于丢弃已被取代的异步连接结果（reconnect 时旧
+// builder.connect() 可能仍在飞行中，回来后不能覆盖新会话或错误状态）
+let startSeq = 0;
 let domListeners: Array<{ target: EventTarget; type: string; handler: EventListener; options?: any }> = [];
 let resizeObserver: ResizeObserver | null = null;
 
@@ -95,23 +104,11 @@ let resizeObserver: ResizeObserver | null = null;
 // Ctrl+V 时必须「同步」把内容推入 RDP 事件队列再发 V 键——若等异步读取完成
 // 才发 V 键，keyup 会先于 keydown 到达远程，粘贴不会触发。
 let cachedClipboardText = '';
+// 剪贴板读取是异步的，多次刷新可能乱序返回；用序号只接受最新一次的结果
+let clipboardFetchSeq = 0;
 
-// 剪贴板 / 文件传输状态
+// 剪贴板状态（文件传输状态已移至 useRdpFileTransfer）
 let clipboardReady = false;
-// RDP 剪贴板是单一剪贴板：initiate_file_copy 通告文件列表后，若再推送文本
-// 会把远程看到的文件格式列表覆盖掉。此标志表示当前剪贴板承载的是待粘贴文件。
-let fileCopyMode = false;
-const uploadedFiles = new Map<number, File>();
-const pendingDownloads = ref<Array<{ name: string; fileSize: number; index: number; clipDataId: any }>>([]);
-const streamToFileInfo = new Map<number, { name: string; clipDataId: any; _chunks?: Uint8Array[]; _totalSize?: number; _expectedSize?: number; _sizeReceived?: boolean; _fileIndex?: number }>();
-
-function addTransferItem(name: string, state: string): number {
-  transferItems.value.push({ name, status: state });
-  return transferItems.value.length - 1;
-}
-function updateTransferItem(index: number, state: string) {
-  if (transferItems.value[index]) transferItems.value[index].status = state;
-}
 
 function formatError(e: any): string {
   if (e == null) return '未知错误';
@@ -139,7 +136,10 @@ async function getProxyAddress(): Promise<string> {
   if (isElectronIPC()) {
     const api = (window as any).electronAPI;
     if (api?.getRdpProxyUrl) {
-      return await api.getRdpProxyUrl();
+      // 必须传 connectionId：主进程的 /ws/rdp 缺少它时会以 1008 关闭连接
+      const url = await api.getRdpProxyUrl(props.connection?.id);
+      if (!url) throw new Error('RDP 本地代理尚未就绪，请稍后重试');
+      return url;
     }
     throw new Error('当前 Electron 版本不支持 RDP 代理地址接口，请升级客户端');
   }
@@ -193,7 +193,7 @@ function setupInputs(canvas: HTMLCanvasElement) {
     // 兜底（VSCode 跨源 iframe 不派发 paste 事件时靠它）；浏览器里随后的 paste
     // 事件会用 e.clipboardData 的真实文本/文件覆盖，两者都在同一 tick 内完成，
     // 远早于远程经网络发回的数据请求。
-    if (isPaste && !fileCopyMode && session) {
+    if (isPaste && !fileTransfer.isFileCopyMode() && session) {
       pushClipboardSync(cachedClipboardText);
     }
     applyInput(tx);
@@ -239,8 +239,10 @@ function setupInputs(canvas: HTMLCanvasElement) {
     applyInput(tx);
   }) as EventListener);
 
+  // mouseup 挂在 window 上（鼠标可能在画布外松开），因此必须限定只有当前 tab
+  // 才转发，否则多个 RDP tab 同时打开时，一次点击会向所有远程会话发送释放事件
   add(window, 'mouseup', ((e: MouseEvent) => {
-    if (!session) return;
+    if (!props.active || !session) return;
     const tx = new InputTransaction();
     tx.addEvent(DeviceEvent.mouseButtonReleased(e.button));
     applyInput(tx);
@@ -279,13 +281,13 @@ function setupInputs(canvas: HTMLCanvasElement) {
     // 先恢复焦点，确保 keyup(V) 在 canvas 上触发
     canvas.focus();
     // 已通过工具栏/拖拽通告过文件：浏览器剪贴板里的旧内容不能覆盖文件格式列表
-    if (fileCopyMode) return;
+    if (fileTransfer.isFileCopyMode()) return;
     const dt = e.clipboardData;
     if (!dt) return;
     const files = Array.from(dt.files || []);
     if (files.length) {
       // 本地复制的文件 → 通告到 RDP 剪贴板，远程执行 Ctrl+V 时来拉取内容
-      initiateFilesUpload(files);
+      fileTransfer.initiateFilesUpload(files);
       return;
     }
     // 文本：用 paste 事件携带的实时内容覆盖 keydown 里的缓存兜底
@@ -302,7 +304,7 @@ function setupInputs(canvas: HTMLCanvasElement) {
   add(canvas, 'drop', ((e: DragEvent) => {
     e.preventDefault();
     const files = Array.from(e.dataTransfer?.files || []);
-    if (files.length) initiateFilesUpload(files);
+    if (files.length) fileTransfer.initiateFilesUpload(files);
   }) as EventListener);
 }
 
@@ -311,10 +313,10 @@ function registerClipboardAndFiles(builder: InstanceType<typeof SessionBuilder>)
 
   builder.remoteClipboardChangedCallback((data: any) => {
     clipboardReady = true;
-    // 远程复制了新内容 → 退出文件复制模式。但不清空 uploadedFiles：
+    // 远程复制了新内容 → 退出文件复制模式。但不清空已上传文件：
     // 文件传输是远程分多次拉取（SIZE + DATA 分块），期间若触发剪贴板变化，
     // 清空会导致后续 FileContentsRequest 找不到文件。
-    fileCopyMode = false;
+    fileTransfer.setFileCopyMode(false);
     try {
       if (data.isEmpty()) return;
       for (const item of data.items()) {
@@ -332,84 +334,18 @@ function registerClipboardAndFiles(builder: InstanceType<typeof SessionBuilder>)
     await syncLocalClipboard();
   });
 
-  builder.extension(new Extension('files_available_callback', (files: any[], clipDataId: any) => {
-    pendingDownloads.value = [];
-    streamToFileInfo.clear();
-    files.forEach((f, i) => {
-      pendingDownloads.value.push({ name: f.name || `file_${i}`, fileSize: f.fileSize || 0, index: i, clipDataId });
-      const elIdx = addTransferItem(f.name || `file_${i}`, '可下载');
-      streamToFileInfo.set(i + 1, { name: f.name || `file_${i}`, clipDataId, _fileIndex: i });
-      // 记录 UI index 映射（简单起见用 stream id 作为 key 的一部分）
-      (streamToFileInfo.get(i + 1) as any)._uiIndex = elIdx;
-    });
-  }));
-
-  builder.extension(new Extension('file_contents_request_callback', async (request: any) => {
-    const file = uploadedFiles.get(request.index);
-    const send = (isError: boolean, data: Uint8Array) => {
-      try {
-        session?.invokeExtension(new Extension('submit_file_contents', {
-          stream_id: request.streamId, is_error: isError, data,
-        }));
-      } catch { /* ignore */ }
-    };
-    if (!file) { send(true, new Uint8Array(0)); return; }
-    try {
-      if (request.flags & 0x00000001) {
-        const sizeBytes = new Uint8Array(8);
-        new DataView(sizeBytes.buffer).setBigUint64(0, BigInt(file.size), true);
-        send(false, sizeBytes);
-      } else if (request.flags & 0x00000002) {
-        const blob = file.slice(request.position, request.position + request.size);
-        send(false, new Uint8Array(await blob.arrayBuffer()));
-      }
-    } catch { send(true, new Uint8Array(0)); }
-  }));
-
-  builder.extension(new Extension('file_contents_response_callback', (response: any) => {
-    const info = streamToFileInfo.get(response.streamId);
-    if (!info) return;
-    if (response.isError) {
-      if ((info as any)._uiIndex !== undefined) updateTransferItem((info as any)._uiIndex, '失败');
-      return;
-    }
-    if (!info._chunks) { info._chunks = []; info._totalSize = 0; }
-    if (response.data.length === 8 && !info._sizeReceived) {
-      info._sizeReceived = true;
-      info._expectedSize = Number(new DataView(response.data.buffer).getBigUint64(0, true));
-      const dataStreamId = response.streamId + 1000;
-      streamToFileInfo.set(dataStreamId, info);
-      session?.invokeExtension(new Extension('request_file_contents', {
-        stream_id: dataStreamId,
-        file_index: info._fileIndex,
-        flags: 0x00000002,
-        position: 0,
-        size: info._expectedSize,
-        clip_data_id: info.clipDataId,
-      }));
-    } else {
-      info._chunks.push(new Uint8Array(response.data));
-      info._totalSize = (info._totalSize || 0) + response.data.length;
-      if (info._expectedSize != null && info._totalSize >= info._expectedSize) {
-        const blob = new Blob(info._chunks as BlobPart[]);
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = info.name;
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        if ((info as any)._uiIndex !== undefined) updateTransferItem((info as any)._uiIndex, '已下载');
-      }
-    }
-  }));
+  fileTransfer.registerFileExtensions(builder);
 }
 
 async function start() {
   if (connecting || disposed) return;
   connecting = true;
+  const seq = ++startSeq;
   setStatus('connecting');
   errorMessage.value = '';
   try {
     await ensureWasm();
+    if (seq !== startSeq || disposed) return;
     const canvas = canvasEl.value;
     const conn = props.connection;
     if (!canvas || !conn) throw new Error('缺少画布或连接配置');
@@ -433,7 +369,13 @@ async function start() {
     });
     registerClipboardAndFiles(builder);
 
-    session = await builder.connect();
+    const newSession = await builder.connect();
+    // 连接期间若被 reconnect / 切换连接取代，丢弃这份结果
+    if (seq !== startSeq || disposed) {
+      try { newSession.shutdown(); } catch { /* ignore */ }
+      return;
+    }
+    session = newSession;
     const ds = session.desktopSize();
     canvas.width = ds.width;
     canvas.height = ds.height;
@@ -445,16 +387,17 @@ async function start() {
 
     const currentSession = session;
     currentSession.run().then((info) => {
-      if (disposed || session !== currentSession) return;
+      if (disposed || session !== currentSession || seq !== startSeq) return;
       setStatus('disconnected', info?.reason ? `会话结束: ${info.reason()}` : undefined);
     }).catch((e) => {
-      if (disposed || session !== currentSession) return;
+      if (disposed || session !== currentSession || seq !== startSeq) return;
       setStatus('error', formatError(e));
     });
   } catch (e: any) {
+    if (seq !== startSeq || disposed) return;
     setStatus('error', formatError(e));
   } finally {
-    connecting = false;
+    if (seq === startSeq) connecting = false;
   }
 }
 
@@ -492,17 +435,20 @@ function pushClipboardSync(text: string) {
 
 /** 刷新剪贴板缓存（copy 事件 / 点击画布 / 连接建立时调用） */
 function refreshClipboardCache() {
+  const seq = ++clipboardFetchSeq;
   void readClipboard().then((text) => {
-    if (text) cachedClipboardText = text;
+    if (seq === clipboardFetchSeq && text) cachedClipboardText = text;
   }).catch(() => { /* ignore */ });
 }
 
 /** 把本地剪贴板内容实时推送到 RDP 通道（工具栏按钮用，可异步） */
 async function syncLocalClipboard(overrideText?: string) {
   if (!session) return;
+  const seq = ++clipboardFetchSeq;
   try {
     // 复用项目统一剪贴板读取：VSCode 跨源 iframe 走桥接、Electron 走 IPC、浏览器走 API
     const text = overrideText !== undefined ? overrideText : await readClipboard();
+    if (seq !== clipboardFetchSeq) return;
     cachedClipboardText = text || '';
     pushClipboardSync(cachedClipboardText);
   } catch { /* ignore */ }
@@ -511,61 +457,31 @@ async function syncLocalClipboard(overrideText?: string) {
 async function pasteClipboard() {
   if (status.value !== 'connected' || !session) return;
   // 显式点剪贴板按钮 = 切回文本复制模式
-  fileCopyMode = false;
-  uploadedFiles.clear();
+  fileTransfer.setFileCopyMode(false);
   await syncLocalClipboard();
 }
 
 function openFilePicker() { fileInputRef.value?.click(); }
 
-/** 把本地 File 列表通告到 RDP 剪贴板（上传按钮 / 原生 paste / 拖拽共用） */
-function initiateFilesUpload(files: File[]) {
-  if (!files.length || !session) return;
-  // 每次上传重新编号（uploadedFiles 的 key 须与 initiate_file_copy 的文件列表下标一致）
-  uploadedFiles.clear();
-  files.forEach((file, index) => {
-    uploadedFiles.set(index, file);
-    addTransferItem(file.name, '等待远程粘贴');
-  });
-  try {
-    fileCopyMode = true;
-    session.invokeExtension(new Extension('initiate_file_copy', files.map((file) => ({
-      name: file.name, size: file.size, lastModified: file.lastModified,
-    }))));
-    toast.info(`已选择 ${files.length} 个文件，请在远程桌面按 Ctrl+V 粘贴`);
-  } catch (err: any) {
-    fileCopyMode = false;
-    setStatus('error', `上传失败: ${formatError(err)}`);
-  }
-}
-
 async function onFilesSelected(e: Event) {
   const input = e.target as HTMLInputElement;
   const files = Array.from(input.files || []);
   input.value = '';
-  initiateFilesUpload(files);
-}
-
-function downloadFiles() {
-  if (!session) return;
-  pendingDownloads.value.forEach((f) => {
-    const streamId = f.index + 1;
-    const info = streamToFileInfo.get(streamId);
-    if (!info) return;
-    session?.invokeExtension(new Extension('request_file_contents', {
-      stream_id: streamId, file_index: f.index, flags: 0x00000001,
-      position: 0, size: 8, clip_data_id: f.clipDataId,
-    }));
-  });
+  fileTransfer.initiateFilesUpload(files);
 }
 
 function reconnect() {
   cleanup(false);
+  // cleanup 会把 disposed 置 true（卸载语义），重连需显式复位后才能进入 start()
+  disposed = false;
   start();
 }
 
 function cleanup(emitClose = true) {
   disposed = true;
+  // 让仍在飞行的 start() 结果失效，并释放 connecting 锁，重连才能立即发起
+  startSeq++;
+  connecting = false;
   if (session) {
     try { session.shutdown(); } catch { /* ignore */ }
     session = null;
@@ -574,13 +490,10 @@ function cleanup(emitClose = true) {
     try { l.target.removeEventListener(l.type, l.handler, l.options); } catch { /* ignore */ }
   }
   domListeners = [];
-  uploadedFiles.clear();
-  pendingDownloads.value = [];
-  streamToFileInfo.clear();
-  transferItems.value = [];
+  fileTransfer.reset();
   clipboardReady = false;
-  fileCopyMode = false;
   cachedClipboardText = '';
+  clipboardFetchSeq++;
   if (emitClose) setStatus('disconnected');
 }
 

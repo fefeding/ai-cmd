@@ -8,6 +8,10 @@ import { BatchService } from './service/batch.service';
 import { RdpService } from './service/rdp.service';
 import { RdpTunnelService } from './service/rdp-tunnel.service';
 
+// server.js 通过 dist/server/index.js 取用统一的 /ws/rdp 鉴权实现
+export { validateRdpWsRequest } from './utils/rdp-ws';
+export type { RdpWsAuthResult } from './utils/rdp-ws';
+
 // 初始化服务实例
 const connectionService = new ConnectionService();
 const sshService = new SSHService(connectionService);

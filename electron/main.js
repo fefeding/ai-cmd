@@ -11,6 +11,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const http = require('http');
+const crypto = require('crypto');
 const { initAutoUpdater } = require('./updater');
 
 // ========== IronRDP-WASM 本地代理服务 ==========
@@ -18,44 +19,63 @@ const { initAutoUpdater } = require('./updater');
 // 127.0.0.1 随机端口的 HTTP+WS server，把 RDCleanPath 字节转发到 Windows:3389。
 let rdpProxyServer = null;
 let rdpProxyUrl = '';
+// 与 server.js / vite.config.ts 不同，这里的代理是主进程私有的随机端口，
+// 不走统一鉴权；用一次性 token 保证只有拿到 IPC 地址的渲染进程能连接。
+let rdpProxyToken = '';
+let rdpProxyReady = null;
 
 function setupRdpProxyServer() {
   if (isDev) return; // 开发模式由 Vite dev server 提供 /ws/rdp
-  try {
-    const WebSocket = require('ws');
-    const services = getServices();
-    if (!services || !services.rdpTunnelService) {
-      console.warn('[Electron] rdpTunnelService unavailable, RDP proxy not started');
-      return;
+  rdpProxyReady = new Promise((resolve) => {
+    try {
+      const WebSocket = require('ws');
+      const services = getServices();
+      if (!services || !services.rdpTunnelService) {
+        console.warn('[Electron] rdpTunnelService unavailable, RDP proxy not started');
+        resolve('');
+        return;
+      }
+      rdpProxyToken = crypto.randomBytes(16).toString('hex');
+      const server = http.createServer((_req, res) => {
+        res.writeHead(404); res.end();
+      });
+      const wss = new WebSocket.Server({ server, path: '/ws/rdp', maxPayload: 140 * 1024 * 1024 });
+      wss.on('connection', (ws, req) => {
+        let requestUrl;
+        try { requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`); }
+        catch { ws.close(1008, 'Bad request'); return; }
+        if (requestUrl.searchParams.get('token') !== rdpProxyToken) {
+          ws.close(1008, 'Unauthorized');
+          return;
+        }
+        const connectionId = requestUrl.searchParams.get('connectionId');
+        if (!connectionId) { ws.close(1008, 'Missing connectionId'); return; }
+        console.log(`[Electron] RDP tunnel client connected: connectionId=${connectionId}`);
+        services.rdpTunnelService.handleConnection(ws, connectionId);
+      });
+      server.listen(0, '127.0.0.1', () => {
+        const address = server.address();
+        const port = typeof address === 'object' && address ? address.port : 0;
+        rdpProxyUrl = `ws://127.0.0.1:${port}/ws/rdp?token=${rdpProxyToken}`;
+        console.log(`[Electron] RDP proxy listening at ${rdpProxyUrl}`);
+        resolve(rdpProxyUrl);
+      });
+      rdpProxyServer = server;
+    } catch (err) {
+      console.error(`[Electron] Failed to start RDP proxy server: ${err.message}`);
+      resolve('');
     }
-    const server = http.createServer((_req, res) => {
-      res.writeHead(404); res.end();
-    });
-    const wss = new WebSocket.Server({ server, path: '/ws/rdp', maxPayload: 140 * 1024 * 1024 });
-    wss.on('connection', (ws, req) => {
-      const requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-      const connectionId = requestUrl.searchParams.get('connectionId');
-      if (!connectionId) { ws.close(1008, 'Missing connectionId'); return; }
-      console.log(`[Electron] RDP tunnel client connected: connectionId=${connectionId}`);
-      services.rdpTunnelService.handleConnection(ws, connectionId);
-    });
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
-      rdpProxyUrl = `ws://127.0.0.1:${port}/ws/rdp`;
-      console.log(`[Electron] RDP proxy listening at ${rdpProxyUrl}`);
-    });
-    rdpProxyServer = server;
-  } catch (err) {
-    console.error(`[Electron] Failed to start RDP proxy server: ${err.message}`);
-  }
+  });
 }
 
-// 渲染进程通过 IPC 获取 WASM 客户端要连接的代理地址（含 connectionId 由前端追加）
+// 渲染进程通过 IPC 获取 WASM 客户端要连接的代理地址；等待代理 listen 完成，
+// 避免启动早期拿到空地址导致难以定位的连接失败。
 function setupRdpProxyIPC() {
   ipcMain.handle('rdp:proxyUrl', async (_event, connectionId) => {
-    if (!rdpProxyUrl) return '';
-    return connectionId ? `${rdpProxyUrl}?connectionId=${encodeURIComponent(connectionId)}` : rdpProxyUrl;
+    const base = rdpProxyReady ? await rdpProxyReady : '';
+    if (!base) return '';
+    // base 已带 token，后续参数必须用 & 拼接
+    return connectionId ? `${base}&connectionId=${encodeURIComponent(connectionId)}` : base;
   });
 }
 

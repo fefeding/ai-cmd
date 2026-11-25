@@ -91,8 +91,13 @@ function derWrapContext(tagNum: number, content: Buffer): Buffer {
 
 function derDecodeLength(buf: Buffer, offset: number): { length: number; bytesRead: number } {
   const first = buf[offset];
+  if (first === undefined) throw new Error('RDCleanPath: DER 长度字段截断');
   if (first < 0x80) return { length: first, bytesRead: 1 };
   const numBytes = first & 0x7f;
+  // 长度字节数非法或越界时直接拒绝，避免构造出 NaN 长度让解析循环异常
+  if (numBytes === 0 || numBytes > 8 || offset + 1 + numBytes > buf.length) {
+    throw new Error('RDCleanPath: DER 长度字段非法');
+  }
   let length = 0;
   for (let i = 0; i < numBytes; i++) length = (length << 8) | buf[offset + 1 + i];
   return { length, bytesRead: 1 + numBytes };
@@ -100,8 +105,10 @@ function derDecodeLength(buf: Buffer, offset: number): { length: number; bytesRe
 
 function derDecodeTLV(buf: Buffer, offset: number): { tag: number; value: Buffer; totalLength: number } {
   const tag = buf[offset];
+  if (tag === undefined) throw new Error('RDCleanPath: DER 标签截断');
   const { length, bytesRead } = derDecodeLength(buf, offset + 1);
   const headerLen = 1 + bytesRead;
+  if (offset + headerLen + length > buf.length) throw new Error('RDCleanPath: DER 值截断');
   return {
     tag,
     value: buf.slice(offset + headerLen, offset + headerLen + length),
@@ -250,12 +257,16 @@ function connectRdpTls(
         ...tlsOptions,
       }, () => {
         tcpSocket.setTimeout(0);
+        // 握手阶段的临时 error 监听必须摘掉，否则后续中继阶段的错误会先被这里
+        // 消费掉（settled 已 true，不会 reject，但错误被静默吞掉）
+        tlsSocket.removeAllListeners('error');
         log(`session ${sessionId}: TLS handshake completed`);
         const certChain = extractCertChain(tlsSocket.getPeerCertificate(true));
         log(`session ${sessionId}: extracted ${certChain.length} certificate(s)`);
         done(() => resolve({ x224Response: Buffer.from(x224Response), certChain, tlsSocket }));
       });
       tlsSocket.once('error', (err) => done(() => {
+        tlsSocket.destroy();
         tcpSocket.destroy();
         reject(new Error(`TLS 握手失败: ${err.message}`));
       }));
@@ -308,10 +319,13 @@ export class RdpTunnelService {
       onLog?.(msg);
     };
     const sessionId = `rdp-tunnel-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // 握手成功后、session 登记前若发送 response 失败，fail() 需要能释放已建立的 TLS 连接
+    let activeTlsSocket: tls.TLSSocket | null = null;
 
     const fail = (err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       log(`session ${sessionId} failed: ${message}`);
+      if (activeTlsSocket && !activeTlsSocket.destroyed) activeTlsSocket.destroy();
       try {
         if (ws.readyState === 1) ws.send(buildRDCleanPathError(1, 502));
       } catch { /* ignore */ }
@@ -340,7 +354,10 @@ export class RdpTunnelService {
           handshake = await connectRdpTls(host, port, request.x224ConnectionRequest, sessionId, log);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          if (!message.includes('KEY_USAGE_BIT_INCORRECT')) throw err;
+          log(`session ${sessionId}: 首次 TLS 握手失败: ${message}`);
+          // Electron 宿主用 BoringSSL（KEY_USAGE_BIT_INCORRECT），纯 Node 用 OpenSSL
+          // （ee key too small / handshake failure 等），两种文案都要能触发降级
+          if (!/KEY_USAGE|key usage|ee key|handshake failure/i.test(message)) throw err;
           log(`session ${sessionId}: 服务端证书 KeyUsage 与协商套件不匹配，尝试受限 TLS 套件`);
           let lastError: unknown = err;
           for (const options of RDP_TLS_FALLBACKS) {
@@ -357,6 +374,7 @@ export class RdpTunnelService {
           }
         }
         const { x224Response, certChain, tlsSocket } = handshake;
+        activeTlsSocket = tlsSocket;
 
         const serverAddr = `${host}:${port}`;
         const responsePdu = buildRDCleanPathResponse(serverAddr, x224Response, certChain);

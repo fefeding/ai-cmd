@@ -20,6 +20,7 @@ import { MonitorService } from './server/service/monitor.service';
 import { BatchService } from './server/service/batch.service';
 import { RdpService } from './server/service/rdp.service';
 import { RdpTunnelService } from './server/service/rdp-tunnel.service';
+import { validateRdpWsRequest } from './server/utils/rdp-ws';
 import { getAccessToken, getCookieHeader, extractTokenFromHeaders, isValidToken, isAllowedOrigin, requiresToken, normalizeUploadName, maxUploadBytes } from './server/utils/security';
 
 const urlPrefix = process.env.PREFIX ? `/${process.env.PREFIX}` : '';
@@ -266,14 +267,13 @@ const config = defineConfig({
                     });
 
                     rdpWss.on('connection', (ws: any, req: any) => {
-                        const requestUrl = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-                        const connectionId = requestUrl.searchParams.get('connectionId');
-                        if (!connectionId || !rdpTunnelService) {
-                            ws.close(1008, 'Missing connectionId or RDP service unavailable');
+                        const auth = validateRdpWsRequest(req);
+                        if (!auth.ok || !rdpTunnelService) {
+                            ws.close(1008, !auth.ok ? (auth.reason || 'Unauthorized') : 'RDP service unavailable');
                             return;
                         }
-                        console.log(`[WS] RDP tunnel client connected (dev): connectionId=${connectionId}`);
-                        rdpTunnelService.handleConnection(ws, connectionId);
+                        console.log(`[WS] RDP tunnel client connected (dev): connectionId=${auth.connectionId}`);
+                        rdpTunnelService.handleConnection(ws, auth.connectionId!);
                     });
 
                     wss.on('connection', async (ws: any) => {
