@@ -1,6 +1,7 @@
 {
   "name": "@fefeding/aicmd",
   "version": "1.0.26",
+  "packageManager": "pnpm@10.15.0",
   "private": false,
   "type": "commonjs",
   "description": "AI-powered web SSH terminal with autonomous agent, skills, and file transfer",
@@ -107,15 +108,5 @@
   },
   "bin": {
     "aicmd": "bin/aicmd.js"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "ssh2",
-      "node-pty",
-      "electron"
-    ],
-    "patchedDependencies": {
-      "zmodem.js": "patches/zmodem.js.patch"
-    }
   }
 }

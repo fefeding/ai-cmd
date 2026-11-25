@@ -19,6 +19,9 @@
         <i class="bi bi-arrows-fullscreen"></i>
       </button>
       <input ref="fileInputRef" type="file" multiple class="rdp-file-input" @change="onFilesSelected" />
+      <!-- 隐藏的可编辑粘贴接收层：浏览器只对可编辑元素可靠派发携带 files 的 paste 事件。
+           Cmd/Ctrl+V 时临时聚焦它，拿到文件后再转回 canvas。 -->
+      <textarea ref="pasteSinkRef" class="rdp-paste-sink" tabindex="-1" aria-hidden="true"></textarea>
     </div>
     <div class="rdp-viewport" ref="viewportEl">
       <canvas ref="canvasEl" class="rdp-canvas" tabindex="0"></canvas>
@@ -48,7 +51,7 @@ import initWasm, {
   SessionBuilder, DesktopSize, Extension, DeviceEvent, InputTransaction, ClipboardData, setup,
 } from 'ironrdp-wasm';
 import type { Session } from 'ironrdp-wasm';
-import { scancodeOf } from '@/utils/rdp-wasm-input';
+import { scancodeFor, isMacClient } from '@/utils/rdp-wasm-input';
 import { toast } from '@/utils/toast';
 import { readClipboard, writeClipboard } from '@/utils/vscode-clipboard';
 import type { ConnectionEntity } from '@/typings/connection';
@@ -68,6 +71,7 @@ const { t } = useI18n();
 const rootEl = ref<HTMLElement | null>(null);
 const viewportEl = ref<HTMLElement | null>(null);
 const canvasEl = ref<HTMLCanvasElement | null>(null);
+const pasteSinkRef = ref<HTMLTextAreaElement | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const status = ref<'connecting' | 'connected' | 'disconnected' | 'error'>('connecting');
 const errorMessage = ref('');
@@ -84,8 +88,13 @@ let session: Session | null = null;
 let wasmReady = false;
 let connecting = false;
 let disposed = false;
-let domListeners: Array<{ target: EventTarget; type: string; handler: EventListener }> = [];
+let domListeners: Array<{ target: EventTarget; type: string; handler: EventListener; options?: any }> = [];
 let resizeObserver: ResizeObserver | null = null;
+
+// 本地剪贴板文本缓存：在 copy 事件与点击远程画布时提前刷新。
+// Ctrl+V 时必须「同步」把内容推入 RDP 事件队列再发 V 键——若等异步读取完成
+// 才发 V 键，keyup 会先于 keydown 到达远程，粘贴不会触发。
+let cachedClipboardText = '';
 
 // 剪贴板 / 文件传输状态
 let clipboardReady = false;
@@ -135,7 +144,8 @@ async function ensureWasm(): Promise<void> {
   // 显式指定 wasm 路径：dev / 构建产物 / Electron / VSCode 四种模式统一为
   // /public/rdp_client_bg.wasm（构建时由 Vite 输出到此，dev 由中间件映射）。
   const base = (window as any).__AICMD_BASE__ || '';
-  await initWasm(`${base}/public/rdp_client_bg.wasm`);
+  // wasm-bindgen 新版要求传 { module_or_path } 对象，直接传 URL 会触发弃用警告
+  await initWasm({ module_or_path: `${base}/public/rdp_client_bg.wasm` });
   wasmReady = true;
 }
 
@@ -150,40 +160,44 @@ function applyInput(tx: InputTransaction) {
 }
 
 function setupInputs(canvas: HTMLCanvasElement) {
+  const isMac = isMacClient();
   const add = (target: EventTarget, type: string, handler: EventListener, options?: any) => {
     target.addEventListener(type, handler, options);
-    domListeners.push({ target, type, handler });
+    domListeners.push({ target, type, handler, options });
   };
 
   add(canvas, 'keydown', ((e: KeyboardEvent) => {
-    e.preventDefault(); e.stopPropagation();
+    const isPaste = (e.ctrlKey || e.metaKey) && e.code === 'KeyV';
+    // Ctrl/Cmd+V 不能 preventDefault：否则浏览器不会派发原生 paste 事件，
+    // 就无法从 e.clipboardData.files 拿到本地复制的文件（异步剪贴板 API 读不到文件）。
+    if (!isPaste) e.preventDefault();
+    e.stopPropagation();
     if (!session) return;
-    const scancode = scancodeOf(e.code);
+    const scancode = scancodeFor(e.code, isMac);
     if (scancode === null) return;
     const tx = new InputTransaction();
     tx.addEvent(DeviceEvent.keyPressed(scancode));
-    // Ctrl/Cmd+V：必须先同步剪贴板再发按键。CLIPRDR 是拉取模型，远程收到 V 键后
-    // 会立即请求 CF_UNICODETEXT，读的是 wasm backend 缓存的 local_clipboard；
-    // 只靠连接初始化同步一次会导致粘贴内容永远是连接那一刻的旧值。
-    if ((e.ctrlKey || e.metaKey) && e.code === 'KeyV') {
-      // 文件复制模式下不能推文本，否则会覆盖远程的文件格式列表
-      const doSync = fileCopyMode ? Promise.resolve() : syncLocalClipboard();
-      void doSync.finally(() => {
-        if (!disposed && session) {
-          const t = new InputTransaction();
-          t.addEvent(DeviceEvent.keyPressed(scancode));
-          applyInput(t);
-        }
-      });
-      return;
+    // CLIPRDR 是拉取模型：远程收到 V 键后会请求剪贴板内容。先用缓存文本入队作为
+    // 兜底（VSCode 跨源 iframe 不派发 paste 事件时靠它）；浏览器里随后的 paste
+    // 事件会用 e.clipboardData 的真实文本/文件覆盖，两者都在同一 tick 内完成，
+    // 远早于远程经网络发回的数据请求。
+    if (isPaste && !fileCopyMode && session) {
+      pushClipboardSync(cachedClipboardText);
     }
     applyInput(tx);
+    // 临时聚焦隐藏 textarea：浏览器（尤其 VSCode 跨源 iframe）只对可编辑元素可靠
+    // 派发携带 clipboardData.files 的 paste 事件。paste handler 处理后会转回 canvas。
+    if (isPaste) pasteSinkRef.value?.focus();
   }) as EventListener);
 
-  add(canvas, 'keyup', ((e: KeyboardEvent) => {
+  // keyup 挂在 document：粘贴时焦点会临时转移到隐藏 textarea，若仍监听 canvas
+  // 则可能收不到 V 的松开事件，导致远程 V 键一直按住。全局监听避免焦点丢失。
+  add(document, 'keyup', ((e: KeyboardEvent) => {
+    // 忽略其它输入框（含粘贴接收层）的按键，避免干扰页面其它区域
+    if (document.activeElement !== canvas && document.activeElement !== pasteSinkRef.value) return;
     e.preventDefault(); e.stopPropagation();
     if (!session) return;
-    const scancode = scancodeOf(e.code);
+    const scancode = scancodeFor(e.code, isMac);
     if (scancode === null) return;
     const tx = new InputTransaction();
     tx.addEvent(DeviceEvent.keyReleased(scancode));
@@ -205,6 +219,8 @@ function setupInputs(canvas: HTMLCanvasElement) {
   add(canvas, 'mousedown', ((e: MouseEvent) => {
     e.preventDefault();
     canvas.focus();
+    // 点击远程画布时刷新缓存：覆盖「本地复制 → 直接点过来粘贴」的常见流程
+    refreshClipboardCache();
     if (!session) return;
     const tx = new InputTransaction();
     tx.addEvent(DeviceEvent.mouseButtonPressed(e.button));
@@ -234,6 +250,48 @@ function setupInputs(canvas: HTMLCanvasElement) {
   }) as EventListener, { passive: false } as any);
 
   add(canvas, 'contextmenu', ((e: Event) => e.preventDefault()) as EventListener);
+
+  // document 级 copy/cut：用户本地复制时同步捕获文本到缓存（paste 时即可立即入队）
+  add(document, 'copy', (() => {
+    setTimeout(refreshClipboardCache, 0);
+  }) as EventListener);
+
+  // 原生 paste 事件：这是读取「本地复制的文件」的唯一可靠途径——
+  // navigator.clipboard.read() 在权限策略下常不可用且读不到文件对象。
+  // 监听隐藏 textarea（可编辑元素，浏览器会可靠派发 paste），处理完立即把焦点
+  // 转回 canvas，保证后续 keyup 仍由 canvas 处理、V 键能正常松开。
+  add(pasteSinkRef.value!, 'paste', ((e: ClipboardEvent) => {
+    if (!session) return;
+    e.preventDefault();
+    e.stopPropagation();
+    // 先恢复焦点，确保 keyup(V) 在 canvas 上触发
+    canvas.focus();
+    // 已通过工具栏/拖拽通告过文件：浏览器剪贴板里的旧内容不能覆盖文件格式列表
+    if (fileCopyMode) return;
+    const dt = e.clipboardData;
+    if (!dt) return;
+    const files = Array.from(dt.files || []);
+    if (files.length) {
+      // 本地复制的文件 → 通告到 RDP 剪贴板，远程执行 Ctrl+V 时来拉取内容
+      initiateFilesUpload(files);
+      return;
+    }
+    // 文本：用 paste 事件携带的实时内容覆盖 keydown 里的缓存兜底
+    const text = dt.getData('text/plain');
+    cachedClipboardText = text || '';
+    pushClipboardSync(cachedClipboardText);
+  }) as EventListener);
+
+  // 拖拽文件到远程画布同样走 CLIPRDR 文件上传
+  add(canvas, 'dragover', ((e: DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  }) as EventListener);
+  add(canvas, 'drop', ((e: DragEvent) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (files.length) initiateFilesUpload(files);
+  }) as EventListener);
 }
 
 function registerClipboardAndFiles(builder: InstanceType<typeof SessionBuilder>) {
@@ -370,6 +428,7 @@ async function start() {
     setupInputs(canvas);
 
     setStatus('connected');
+    refreshClipboardCache();
     nextFit();
 
     const currentSession = session;
@@ -408,15 +467,32 @@ function fitDisplay() {
   canvas.style.transformOrigin = '';
 }
 
-/** 把本地剪贴板内容实时推送到 RDP 通道（CLIPRDR 拉取模型要求每次粘贴前刷新） */
+/** 同步把文本推入 RDP 剪贴板队列（不 await，保证在按键之前入队） */
+function pushClipboardSync(text: string) {
+  if (!session) return;
+  try {
+    const data = new ClipboardData();
+    data.addText('text/plain', text || '');
+    // onClipboardPaste 返回 Promise，但内部是同步入队；不 await 以免打断按键时序
+    void session.onClipboardPaste(data);
+  } catch { /* ignore */ }
+}
+
+/** 刷新剪贴板缓存（copy 事件 / 点击画布 / 连接建立时调用） */
+function refreshClipboardCache() {
+  void readClipboard().then((text) => {
+    if (text) cachedClipboardText = text;
+  }).catch(() => { /* ignore */ });
+}
+
+/** 把本地剪贴板内容实时推送到 RDP 通道（工具栏按钮用，可异步） */
 async function syncLocalClipboard(overrideText?: string) {
   if (!session) return;
   try {
     // 复用项目统一剪贴板读取：VSCode 跨源 iframe 走桥接、Electron 走 IPC、浏览器走 API
     const text = overrideText !== undefined ? overrideText : await readClipboard();
-    const data = new ClipboardData();
-    data.addText('text/plain', text || '');
-    await session.onClipboardPaste(data);
+    cachedClipboardText = text || '';
+    pushClipboardSync(cachedClipboardText);
   } catch { /* ignore */ }
 }
 
@@ -430,10 +506,8 @@ async function pasteClipboard() {
 
 function openFilePicker() { fileInputRef.value?.click(); }
 
-async function onFilesSelected(e: Event) {
-  const input = e.target as HTMLInputElement;
-  const files = Array.from(input.files || []);
-  input.value = '';
+/** 把本地 File 列表通告到 RDP 剪贴板（上传按钮 / 原生 paste / 拖拽共用） */
+function initiateFilesUpload(files: File[]) {
   if (!files.length || !session) return;
   // 每次上传重新编号（uploadedFiles 的 key 须与 initiate_file_copy 的文件列表下标一致）
   uploadedFiles.clear();
@@ -451,6 +525,13 @@ async function onFilesSelected(e: Event) {
     fileCopyMode = false;
     setStatus('error', `上传失败: ${formatError(err)}`);
   }
+}
+
+async function onFilesSelected(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const files = Array.from(input.files || []);
+  input.value = '';
+  initiateFilesUpload(files);
 }
 
 function downloadFiles() {
@@ -478,7 +559,7 @@ function cleanup(emitClose = true) {
     session = null;
   }
   for (const l of domListeners) {
-    try { l.target.removeEventListener(l.type, l.handler); } catch { /* ignore */ }
+    try { l.target.removeEventListener(l.type, l.handler, l.options); } catch { /* ignore */ }
   }
   domListeners = [];
   uploadedFiles.clear();
@@ -487,6 +568,7 @@ function cleanup(emitClose = true) {
   transferItems.value = [];
   clipboardReady = false;
   fileCopyMode = false;
+  cachedClipboardText = '';
   if (emitClose) setStatus('disconnected');
 }
 
@@ -524,6 +606,8 @@ watch(() => props.active, (active) => {
 .rdp-btn:hover:not(:disabled) { background: #3a3a3a; }
 .rdp-btn:disabled { opacity: 0.4; cursor: default; }
 .rdp-file-input { display: none; }
+/* 隐藏粘贴接收层：必须保持可编辑且不可 display:none（否则无法聚焦/接收 paste） */
+.rdp-paste-sink { position: absolute; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; border: none; padding: 0; resize: none; }
 .rdp-viewport { flex: 1; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #000; position: relative; min-height: 0; }
 .rdp-canvas { outline: none; flex-shrink: 0; display: block; }
 .rdp-overlay { position: absolute; inset: 34px 0 0 0; display: flex; align-items: center; justify-content: center; background: rgba(26,26,26,0.85); color: #ccc; font-size: 13px; z-index: 5; }

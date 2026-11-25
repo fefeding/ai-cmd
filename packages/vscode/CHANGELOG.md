@@ -6,6 +6,8 @@
   - 采用 **IronRDP-WASM**：RDP 协议栈在浏览器内运行，**无需 guacd 守护进程、无需本机 RDP 客户端、目标 Windows 无需第三方软件**（只需开启系统自带远程桌面 + 3389 端口）。
   - 本地服务端新增 `/ws/rdp` 二进制字节隧道；目标地址一律以保存的连接配置为准（忽略客户端声明，防止 SSRF）。Electron 桌面端通过本机回环代理接入。
   - 连接编辑器中 RDP 默认端口 3389、用户名为空（不再误用 SSH 的 22/root），认证固定为密码 + CredSSP；移除原 guacd 配置项。
+  - 文本剪贴板改为**实时同步**：在远程按 `Ctrl/Cmd + V` 时推送当前本地剪贴板内容，而非连接建立时的旧值；macOS 下 `Cmd` 键映射为远程 `Ctrl`，Mac 快捷键正常工作。
+  - 文件复制粘贴到远程：支持「本地复制文件 + 在远程 `Ctrl/Cmd + V`」「工具栏上传」「拖拽到画布」三种方式，均经 CLIPRDR 通道分块传输；远程复制的文件可通过下载按钮保存到本地。**VSCode 插件内同样支持直接粘贴**：WebView 通过隐藏可编辑层捕获原生 paste 事件（含 `clipboardData.files`），跨源 iframe 也能拿到本地复制的文件。README 中已补充完整操作步骤。
 - 更新扩展名称/描述与 README：插件现定位为「AI SSH / RDP 终端与运维智能体」，中英文 displayName、description、keywords 与市场说明同步覆盖 RDP 能力。
 
 ## 0.1.26

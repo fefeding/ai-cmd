@@ -40,6 +40,25 @@ const SCANCODE_MAP: Record<string, number> = {
   Pause: 0xe11d45,
 };
 
+/** 当前客户端是否为 macOS（Mac 的 Cmd 键需映射为远程 Windows 的 Ctrl） */
+export function isMacClient(): boolean {
+  const api = (window as any).electronAPI;
+  if (typeof api?.platform === 'string') return api.platform === 'darwin';
+  return /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
+}
+
+/**
+ * 取按键对应的远程 scancode。
+ * macOS 下 Cmd（MetaLeft/MetaRight）映射为左 Ctrl，否则 Cmd 会变成 Windows 键，
+ * Cmd+V 在远程变成 Win+V（剪贴板历史）而非 Ctrl+V（粘贴）。
+ */
+export function scancodeFor(code: string, isMac: boolean): number | null {
+  if (isMac && (code === 'MetaLeft' || code === 'MetaRight')) {
+    return SCANCODE_MAP.ControlLeft;
+  }
+  return SCANCODE_MAP[code] ?? null;
+}
+
 export function scancodeOf(code: string): number | null {
   return SCANCODE_MAP[code] ?? null;
 }

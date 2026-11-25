@@ -354,12 +354,20 @@ In addition to SSH terminals, this tool supports connecting to Windows via a **g
 
 **3. Create a connection**: choose "Windows Remote Desktop (RDP)" as the type, fill in host, port (3389), username, password, and domain (for domain accounts; leave blank for local). Screen size defaults to 1280×800.
 
-**4. Use it**: mouse click/move, full keyboard input (including modifier keys and function keys), and adaptive resolution are supported. The toolbar provides:
-- Clipboard button: copy local clipboard text to the remote desktop; text copied on the remote is synced back to the local clipboard automatically.
-- Upload / download buttons: transfer files through the CLIPRDR channel (select files or drag onto the remote desktop to upload; copy files on the remote to download).
-- Reconnect / fit-to-window buttons.
+**4. Use it**: mouse click/move, full keyboard input (including modifier keys and function keys), and adaptive resolution are supported. The toolbar provides clipboard, upload, download, reconnect, and fit-to-window buttons.
 
-> Works in all three modes: browser + local server, VSCode extension, and the Electron desktop app. CredSSP is enabled by default.
+**Text clipboard (live)**: copy text locally, then press `Ctrl/Cmd + V` inside the remote desktop — the **current** local clipboard is pushed into the RDP channel at paste time (not the value from when the connection opened). Text copied on the remote is written back to the local clipboard automatically.
+
+**Copying files INTO the remote** (3 ways; all need a final paste inside the remote desktop):
+1. **Copy locally + paste (recommended)**: copy files in your OS file manager (Finder / Explorer), click the remote desktop once to focus it, then press `Ctrl/Cmd + V` **inside the remote desktop** — the files ride the paste event into the RDP clipboard and the remote pulls them immediately, with no extra confirmation. This works in the VSCode extension too (the WebView uses a hidden editable target to capture the native paste event inside the cross-origin iframe).
+2. **Toolbar upload**: click the upload (📤) button, choose files, then press `Ctrl/Cmd + V` inside the remote desktop (or right-click → Paste in the target folder). A toast reminds you of this step.
+3. **Drag & drop**: drag files onto the remote desktop canvas, then press `Ctrl/Cmd + V` inside the remote desktop.
+
+The file transfer panel at the bottom shows each file's name and status (`waiting for remote paste` → transferred); large files are streamed in chunks. To copy files **out**, copy them in the remote Windows and click the download (📥) button.
+
+> - On macOS, `Cmd + V` is mapped to the remote Windows `Ctrl + V`, so Mac copy/paste shortcuts work as expected.
+> - In the VSCode extension, "copy locally + paste" works directly — the WebView uses a hidden editable target to capture the native paste event (with `clipboardData.files`) inside the cross-origin iframe. If a host still blocks file clipboard access, the toolbar upload button remains as a fallback.
+> - Works in all three modes: browser + local server, VSCode extension, and the Electron desktop app. CredSSP is enabled by default.
 
 ## License
 

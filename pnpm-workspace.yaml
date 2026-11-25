@@ -1,0 +1,10 @@
+packages:
+  - '.'
+
+onlyBuiltDependencies:
+  - ssh2
+  - node-pty
+  - electron
+
+patchedDependencies:
+  zmodem.js: patches/zmodem.js.patch

@@ -12,7 +12,7 @@
 | **Windows remote desktop (RDP)** | Graphical desktop via in-browser IronRDP-WASM — **no guacd, no local RDP client, no third-party software on the target**. Mouse/keyboard, fullscreen, clipboard sync and file transfer. |
 | **AI Agent** | OpenAI-compatible function calling (OpenAI / DeepSeek / Qwen / any compatible endpoint): the agent reads terminal output, executes commands and iterates until the task is done |
 | **Skills** | Built-in ops playbooks plus your own `/skill` markdown playbooks |
-| **File transfer** | SFTP upload / download, `rz` / `sz` ZMODEM with a native Save As dialog, and RDP CLIPRDR file copy (upload / download inside the remote desktop) |
+| **File transfer** | SFTP upload / download, `rz` / `sz` ZMODEM with a native Save As dialog, and RDP CLIPRDR file copy — copy files locally and `Ctrl/Cmd + V` into the remote desktop, or use the toolbar upload / download buttons |
 | **Command audit & replay** | Every AI-executed command is recorded with output, duration and status; timeline, statistics and JSON / CSV export |
 | **Log monitoring** | `tail -f` with anomaly detection and AI-powered analysis |
 | **Batch operations** | Run one command on multiple servers in parallel and aggregate the results |
@@ -101,9 +101,33 @@ The first launch automatically finds an available port and starts the backend se
 
 1. On the target Windows, enable **Settings → System → Remote Desktop → Enable Remote Desktop** and make sure TCP 3389 is reachable.
 2. In AICmd, click **+** → connection type **Windows Remote Desktop (RDP)** → fill in host, port (default **3389**), username, password, and domain (for domain accounts; leave blank for local accounts). Screen size defaults to 1280×800 and can be adjusted.
-3. Click the connection: a graphical desktop opens in the WebView with mouse/keyboard input, resolution auto-fit, clipboard sync (plain text) and file transfer (upload via the toolbar, download files copied on the remote).
+3. Click the connection: a graphical desktop opens in the WebView with mouse/keyboard input and resolution auto-fit.
 
 > CredSSP is enabled by default. The RDP stack runs entirely in the browser via IronRDP-WASM — no guacd daemon and no local RDP client are needed.
+
+#### Clipboard (plain text)
+
+Text clipboard sync is **live**: copy text locally, then press `Ctrl/Cmd + V` inside the remote desktop — the current local clipboard is pushed into the RDP channel at the moment of the paste (not the value captured when the connection opened). Text copied on the remote is written back to the local clipboard automatically. The toolbar **clipboard** button also pushes the current local text on demand.
+
+#### Copying files INTO the remote desktop
+
+File transfer uses the RDP **CLIPRDR** channel. There are three ways to send local files to the remote machine; all of them require a **final paste inside the remote desktop** so the remote can pull the file contents:
+
+| Method | Steps |
+|---|---|
+| **Copy files locally + paste (recommended)** | Copy files in your OS file manager (Finder / Explorer), click the remote desktop once to focus it, then press `Ctrl/Cmd + V` **inside the remote desktop**. The files are picked up from the native paste event and sent to the remote immediately — one keystroke, no extra dialog. This works in the VSCode extension too (a hidden editable paste target is used inside the WebView so the cross-origin iframe still receives the file clipboard). |
+| **Toolbar upload** | Click the **upload** (📤) button in the RDP toolbar, choose one or more files, then press `Ctrl/Cmd + V` **inside the remote desktop** (or right-click → Paste in the target folder) to complete the transfer. A toast reminds you of this step. |
+| **Drag & drop** | Drag files from your OS onto the remote desktop canvas, then press `Ctrl/Cmd + V` inside the remote desktop to paste them. |
+
+After a transfer starts, the **file transfer panel** at the bottom of the desktop shows each file's name and status (`等待远程粘贴` → transferred). Large files are streamed in chunks.
+
+> **macOS**: `Cmd + V` is mapped to the remote Windows `Ctrl + V`, so the standard Mac copy/paste shortcuts work as expected.
+>
+> **VSCode extension**: direct local-copy → paste works here as well. The WebView uses a hidden editable target to capture the native `paste` event (with `clipboardData.files`) inside the cross-origin iframe, so you do **not** need to use the toolbar as a workaround. If a particular host still blocks file clipboard access, the toolbar upload button remains as a fallback.
+
+#### Copying files OUT of the remote desktop
+
+Copy files inside the remote Windows (e.g. in Explorer), then click the **download** (📥) button in the RDP toolbar. The button becomes active as soon as the remote clipboard contains files; clicking it saves them to your local **Downloads** folder.
 
 ### Manage connections
 
