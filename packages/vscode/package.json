@@ -65,6 +65,7 @@
   "icon": "resources/activity-icon.png",
   "main": "./dist/extension.js",
   "activationEvents": [
+    "onWebviewPanel:aicmd.terminal",
     "onView:aicmd.explorer",
     "onCommand:aicmd.openTerminal",
     "onCommand:aicmd.refresh"

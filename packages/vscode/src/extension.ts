@@ -169,12 +169,19 @@ export function activate(context: vscode.ExtensionContext): void {
           panel.dispose();
           return;
         }
+        let baseUrl: string;
         try {
-          await launcher.ensureStarted(startPort);
-        } catch {
-          /* 启动失败留给面板自身展示错误 */
+          baseUrl = await launcher.ensureStarted(startPort);
+        } catch (e: any) {
+          const msg = e?.message || String(e);
+          output.appendLine(`[aicmd] restore panel failed: ${msg}`);
+          panel.webview.html = buildRestoreErrorHtml(s.title || panel.title, msg);
+          return;
         }
-        wirePanel(panel, s.src, s.base || 'AICmd', s.title || panel.title);
+        // 持久化的 src 含上次会话的后端端口；窗口重载后服务会重新选端口，
+        // 必须把 origin 换成这次实际启动的地址，否则 iframe 加载旧地址后一直空白。
+        const src = rebasePersistedSrc(s.src, baseUrl);
+        wirePanel(panel, src, s.base || 'AICmd', s.title || panel.title);
       }
     })
   );
@@ -393,6 +400,39 @@ function wirePanel(
   );
 
   panels.add(panel);
+}
+
+/** 把持久化 URL 的 origin 换成当前后端地址，保留页面路径和全部查询参数。 */
+function rebasePersistedSrc(src: string, baseUrl: string): string {
+  try {
+    const oldUrl = new URL(src);
+    const newUrl = new URL(baseUrl);
+    oldUrl.protocol = newUrl.protocol;
+    oldUrl.host = newUrl.host;
+    return oldUrl.toString();
+  } catch {
+    return src;
+  }
+}
+
+/** 服务启动失败时在面板内直接显示原因，避免恢复的 Tab 空白且无任何提示。 */
+function buildRestoreErrorHtml(title: string, message: string): string {
+  const escape = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return `<!DOCTYPE html>
+<html lang="${isChinese ? 'zh-CN' : 'en'}">
+<head><meta charset="utf-8" /><style>
+  body { color: var(--vscode-editor-foreground); background: var(--vscode-editor-background);
+         font-family: var(--vscode-font-family); padding: 24px; line-height: 1.6; }
+  code { color: var(--vscode-errorForeground); }
+</style></head>
+<body>
+  <h3>${escape(title)}</h3>
+  <p>${escape(t('AICmd 服务启动失败，恢复的窗口无法连接：', 'Failed to start AICmd service; the restored panel cannot connect:'))}</p>
+  <p><code>${escape(message)}</code></p>
+  <p>${escape(t('请查看「输出」面板中的 AICmd 频道，或关闭此 Tab 后重新打开连接。', 'See the AICmd output channel, or close this tab and reopen the connection.'))}</p>
+</body>
+</html>`;
 }
 
 function buildHtml(url: string, title: string): string {
