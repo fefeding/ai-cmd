@@ -15,8 +15,8 @@
       <button class="rdp-btn" :title="t('rdp.reconnect')" @click="reconnect">
         <i class="bi bi-arrow-clockwise"></i>
       </button>
-      <button class="rdp-btn" :title="t('rdp.fit')" @click="fitDisplay">
-        <i class="bi bi-arrows-fullscreen"></i>
+      <button class="rdp-btn" :title="isFullscreen ? t('rdp.exitFullscreen') : t('rdp.fullscreen')" @click="toggleFullscreen">
+        <i class="bi" :class="isFullscreen ? 'bi-fullscreen-exit' : 'bi-fullscreen'"></i>
       </button>
       <input ref="fileInputRef" type="file" multiple class="rdp-file-input" @change="onFilesSelected" />
       <!-- 隐藏的可编辑粘贴接收层：浏览器只对可编辑元素可靠派发携带 files 的 paste 事件。
@@ -31,6 +31,10 @@
     </div>
     <div v-if="status === 'error'" class="rdp-overlay rdp-error">
       <i class="bi bi-exclamation-triangle me-2"></i>{{ errorMessage || t('rdp.connectFailed') }}
+    </div>
+    <div v-if="status === 'disconnected' && hasConnectedOnce" class="rdp-overlay rdp-disconnected">
+      <i class="bi bi-wifi-off me-2"></i>{{ errorMessage || t('rdp.disconnected') }}
+      <button class="rdp-btn ms-3" @click="reconnect">{{ t('rdp.reconnect') }}</button>
     </div>
     <div v-if="status === 'connected' && transferItems.length > 0" class="rdp-ft-panel">
       <div class="rdp-ft-header"><i class="bi bi-arrow-left-right me-1"></i>文件传输</div>
@@ -53,7 +57,9 @@ import initWasm, {
 import type { Session } from 'ironrdp-wasm';
 import { scancodeFor, isMacClient } from '@/utils/rdp-wasm-input';
 import { useRdpFileTransfer } from '@/utils/useRdpFileTransfer';
+import { connectWithTunnelCapture } from '@/utils/rdp-ws-capture';
 import { readClipboard, writeClipboard } from '@/utils/vscode-clipboard';
+import { isVscodeThemeHost } from '@/utils/vscode-theme';
 import type { ConnectionEntity } from '@/typings/connection';
 
 const props = defineProps<{
@@ -109,6 +115,15 @@ let clipboardFetchSeq = 0;
 
 // 剪贴板状态（文件传输状态已移至 useRdpFileTransfer）
 let clipboardReady = false;
+
+// 全屏：优先原生 Fullscreen API；VSCode 跨源 iframe 等受限宿主里 requestFullscreen
+// 会被拒绝，降级为 CSS fixed 覆盖整个视口（行为一致，只是不进入系统全屏）
+const isFullscreen = ref(false);
+// 只在「曾经连上过」之后才显示断开提示，避免连接失败时同时弹出 error 与 disconnected
+const hasConnectedOnce = ref(false);
+let cssFullscreen = false;
+let fullscreenChangeHandler: (() => void) | null = null;
+let fullscreenKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
 function formatError(e: any): string {
   if (e == null) return '未知错误';
@@ -369,7 +384,10 @@ async function start() {
     });
     registerClipboardAndFiles(builder);
 
-    const newSession = await builder.connect();
+    // 捕获 WASM 内部创建的隧道 WebSocket，用于感知远程会话被接管/断开
+    const { result: newSession, tunnelWs } = await connectWithTunnelCapture(
+      () => builder.connect()
+    );
     // 连接期间若被 reconnect / 切换连接取代，丢弃这份结果
     if (seq !== startSeq || disposed) {
       try { newSession.shutdown(); } catch { /* ignore */ }
@@ -382,10 +400,23 @@ async function start() {
     setupInputs(canvas);
 
     setStatus('connected');
+    hasConnectedOnce.value = true;
     refreshClipboardCache();
     nextFit();
 
     const currentSession = session;
+    // 远程断开（同一机器新连接接管旧会话）时，WASM 的 run() 不一定 settle；
+    // 隧道 WebSocket 关闭是更可靠的信号，主动更新状态并显示提示。
+    if (tunnelWs) {
+      const onTunnelClose = () => {
+        if (disposed || session !== currentSession || seq !== startSeq) return;
+        if (status.value !== 'connected') return;
+        setStatus('disconnected', t('rdp.disconnected'));
+        try { currentSession.shutdown(); } catch { /* ignore */ }
+      };
+      if (tunnelWs.readyState === WebSocket.CLOSED) onTunnelClose();
+      else tunnelWs.addEventListener('close', onTunnelClose);
+    }
     currentSession.run().then((info) => {
       if (disposed || session !== currentSession || seq !== startSeq) return;
       setStatus('disconnected', info?.reason ? `会话结束: ${info.reason()}` : undefined);
@@ -420,6 +451,93 @@ function fitDisplay() {
   canvas.style.height = `${Math.floor(canvas.height * scale)}px`;
   canvas.style.transform = '';
   canvas.style.transformOrigin = '';
+}
+
+function enterCssFullscreen() {
+  const el = rootEl.value;
+  if (!el) return;
+  el.style.position = 'fixed';
+  el.style.inset = '0';
+  el.style.width = '100vw';
+  el.style.height = '100vh';
+  el.style.zIndex = '10000';
+  cssFullscreen = true;
+  isFullscreen.value = true;
+  nextFit();
+}
+
+function exitCssFullscreen() {
+  const el = rootEl.value;
+  if (el) {
+    el.style.position = '';
+    el.style.inset = '';
+    el.style.width = '';
+    el.style.height = '';
+    el.style.zIndex = '';
+  }
+  cssFullscreen = false;
+  isFullscreen.value = false;
+  nextFit();
+}
+
+/** VSCode 扩展宿主下请扩展切换窗口级全屏（webview 内的原生 Fullscreen API 不可用） */
+function requestVscodeFullscreen(active: boolean): void {
+  try {
+    window.parent?.postMessage({ type: 'aicmd-fullscreen-request', active }, '*');
+  } catch { /* ignore */ }
+}
+
+async function toggleFullscreen() {
+  const el = rootEl.value;
+  if (!el) return;
+  const inVscode = isVscodeThemeHost();
+  if (isFullscreen.value) {
+    if (cssFullscreen) {
+      exitCssFullscreen();
+      if (inVscode) requestVscodeFullscreen(false);
+      return;
+    }
+    try { if (document.fullscreenElement) await document.exitFullscreen(); }
+    catch { /* ignore */ }
+    isFullscreen.value = false;
+    nextFit();
+    return;
+  }
+  if (inVscode) {
+    // VSCode 跨源 iframe 里 requestFullscreen() 即使 resolve 也只是"假成功"——
+    // 被宿主 iframe 的权限策略挡住，画面不会真正全屏，按钮状态却切了，表现为"没效果"。
+    // 因此插件环境直接走 CSS 伪全屏，并请扩展把 VSCode 窗口切到全屏。
+    enterCssFullscreen();
+    requestVscodeFullscreen(true);
+    return;
+  }
+  try {
+    if (typeof el.requestFullscreen !== 'function') throw new Error('unsupported');
+    await el.requestFullscreen();
+    isFullscreen.value = true;
+    nextFit();
+  } catch {
+    // 其它受限宿主不允许原生全屏 → CSS 伪全屏
+    enterCssFullscreen();
+  }
+}
+
+function onFullscreenChange() {
+  // 用户按 Esc 退出原生全屏时同步按钮状态
+  if (!document.fullscreenElement && !cssFullscreen && isFullscreen.value) {
+    isFullscreen.value = false;
+    nextFit();
+  }
+}
+
+function onFullscreenKey(e: KeyboardEvent) {
+  // capture 阶段拦截 Esc，避免把它同时发给远程会话
+  if (e.key === 'Escape' && cssFullscreen) {
+    e.preventDefault();
+    e.stopPropagation();
+    exitCssFullscreen();
+    if (isVscodeThemeHost()) requestVscodeFullscreen(false);
+  }
 }
 
 /** 同步把文本推入 RDP 剪贴板队列（不 await，保证在按键之前入队） */
@@ -490,6 +608,15 @@ function cleanup(emitClose = true) {
     try { l.target.removeEventListener(l.type, l.handler, l.options); } catch { /* ignore */ }
   }
   domListeners = [];
+  if (fullscreenChangeHandler) {
+    document.removeEventListener('fullscreenchange', fullscreenChangeHandler);
+    fullscreenChangeHandler = null;
+  }
+  if (fullscreenKeyHandler) {
+    document.removeEventListener('keydown', fullscreenKeyHandler, true);
+    fullscreenKeyHandler = null;
+  }
+  if (cssFullscreen) exitCssFullscreen();
   fileTransfer.reset();
   clipboardReady = false;
   cachedClipboardText = '';
@@ -499,6 +626,10 @@ function cleanup(emitClose = true) {
 
 onMounted(() => {
   disposed = false;
+  fullscreenChangeHandler = () => onFullscreenChange();
+  fullscreenKeyHandler = (e) => onFullscreenKey(e);
+  document.addEventListener('fullscreenchange', fullscreenChangeHandler);
+  document.addEventListener('keydown', fullscreenKeyHandler, true);
   if (viewportEl.value && typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(() => fitDisplay());
     resizeObserver.observe(viewportEl.value);
@@ -537,6 +668,7 @@ watch(() => props.active, (active) => {
 .rdp-canvas { outline: none; flex-shrink: 0; display: block; }
 .rdp-overlay { position: absolute; inset: 34px 0 0 0; display: flex; align-items: center; justify-content: center; background: rgba(26,26,26,0.85); color: #ccc; font-size: 13px; z-index: 5; }
 .rdp-error { color: #f0b7b7; }
+.rdp-disconnected { gap: 4px; color: #ccc; }
 .rdp-ft-panel { position: absolute; right: 10px; bottom: 10px; width: 240px; max-height: 180px; background: rgba(37,37,38,0.95); border: 1px solid #444; border-radius: 4px; color: #ccc; font-size: 11px; z-index: 4; overflow: hidden; }
 .rdp-ft-header { padding: 5px 8px; border-bottom: 1px solid #444; font-weight: 600; }
 .rdp-ft-items { max-height: 140px; overflow-y: auto; padding: 4px 8px; }

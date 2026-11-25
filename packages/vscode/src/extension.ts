@@ -14,6 +14,8 @@ let editPanel: vscode.WebviewPanel | undefined;
 const panelMeta = new Map<vscode.WebviewPanel, { base: string; title: string }>();
 // 记录每个面板加载的 src（含连接 id），用于窗口重载后恢复
 const panelSrc = new Map<vscode.WebviewPanel, string>();
+// 窗口全屏是全局状态，扩展侧记住当前值以幂等响应 iframe 的重复请求
+let vscodeFullscreenActive = false;
 
 /** 把树菜单命令的参数归一化为连接 id。
  *  view/item/context 触发时 VSCode 会把 TreeItem 对象作为第一个参数传入，
@@ -349,6 +351,18 @@ function wirePanel(
       }
       return;
     }
+    // 远程桌面全屏：webview 内的 iframe 受权限策略限制无法真正进入系统全屏，
+    // 由扩展宿主切换 VSCode 窗口全屏，使远程桌面画面最大化。
+    if (msg.type === 'aicmd-fullscreen-request') {
+      const active = !!msg.active;
+      if (active !== vscodeFullscreenActive) {
+        vscodeFullscreenActive = active;
+        try {
+          await vscode.commands.executeCommand('workbench.action.toggleFullScreen');
+        } catch { /* ignore */ }
+      }
+      return;
+    }
   });
 
   panel.onDidDispose(
@@ -395,7 +409,7 @@ function buildHtml(url: string, title: string): string {
 </style>
 </head>
 <body>
-<iframe id="frame"></iframe>
+<iframe id="frame" allow="fullscreen"></iframe>
 <script>
 (function () {
   var BASE = ${JSON.stringify(url)};
@@ -522,6 +536,11 @@ function buildHtml(url: string, title: string): string {
     }
     if (d.type === 'aicmd-edit-close') {
       vscode.postMessage({ type: 'aicmd-edit-close' });
+    }
+    // 远程桌面全屏：iframe 无法直接调用扩展 API，转发请求给宿主执行窗口全屏
+    if (d.type === 'aicmd-fullscreen-request') {
+      vscode.postMessage(d);
+      return;
     }
     // 剪贴板桥接：iframe 内的 navigator.clipboard 跨源不可用，
     // 请求转发给扩展宿主（其用 vscode.env.clipboard 处理）
