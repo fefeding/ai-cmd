@@ -32,9 +32,9 @@ jobs:
           node-version: 22
 
       - name: Setup pnpm
+        # 版本由根目录 package.json 的 packageManager (pnpm@10.15.0) 决定，
+        # 不要在此重复指定 version，否则 action-setup 会报 Multiple versions specified
         uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - name: Cache pnpm store
         uses: actions/cache@v4
@@ -91,9 +91,9 @@ jobs:
           node-version: 22
 
       - name: Setup pnpm
+        # 版本由根目录 package.json 的 packageManager (pnpm@10.15.0) 决定，
+        # 不要在此重复指定 version，否则 action-setup 会报 Multiple versions specified
         uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - name: Cache pnpm store
         uses: actions/cache@v4
@@ -165,9 +165,9 @@ jobs:
           node-version: 22
 
       - name: Setup pnpm
+        # 版本由根目录 package.json 的 packageManager (pnpm@10.15.0) 决定，
+        # 不要在此重复指定 version，否则 action-setup 会报 Multiple versions specified
         uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - name: Cache pnpm store
         uses: actions/cache@v4
