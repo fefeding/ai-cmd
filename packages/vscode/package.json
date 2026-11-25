@@ -2,7 +2,7 @@
   "name": "vscode-aicmd",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.1.29",
+  "version": "0.1.30",
   "publisher": "fefeding",
   "license": "MIT",
   "repository": {

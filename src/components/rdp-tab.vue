@@ -125,12 +125,72 @@ let cssFullscreen = false;
 let fullscreenChangeHandler: (() => void) | null = null;
 let fullscreenKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
+/** IronRDP-WASM 的 IronError.kind() 是数字枚举，转成可读文案 */
+const IRON_ERROR_KIND: Record<number, string> = {
+  0: '未知错误',
+  1: '密码错误',
+  2: '登录失败',
+  3: '访问被拒绝',
+  4: 'RDCleanPath 隧道错误',
+  5: '代理连接失败',
+  6: '协议协商失败',
+};
+
+/** IronError 是 wasm_bindgen 包装对象，没有 message，需主动调用它的方法取信息 */
+function formatIronError(e: any): string | null {
+  if (!e || typeof e !== 'object') return null;
+  if (typeof e.backtrace !== 'function' && typeof e.kind !== 'function') return null;
+
+  const parts: string[] = [];
+  try {
+    if (typeof e.kind === 'function') {
+      const kind = e.kind();
+      parts.push(IRON_ERROR_KIND[kind] || `错误类型 ${kind}`);
+    }
+  } catch { /* 指针已释放或非 IronError，忽略 */ }
+
+  try {
+    if (typeof e.backtrace === 'function') {
+      const trace = e.backtrace();
+      if (typeof trace === 'string' && trace.trim()) {
+        // anyhow backtrace 末尾是长堆栈，只保留错误链本身（Caused by 也一并带上）
+        const lines = trace.split('\n').map(line => line.trim()).filter(Boolean);
+        const stackAt = lines.findIndex(line => /^Stack backtrace:/i.test(line));
+        const head = (stackAt >= 0 ? lines.slice(0, stackAt) : lines).slice(0, 5).join(' / ');
+        if (head) parts.push(head);
+      }
+    }
+  } catch { /* 忽略 */ }
+
+  try {
+    if (typeof e.rdcleanpathDetails === 'function') {
+      const detail = e.rdcleanpathDetails();
+      if (detail) {
+        const bits: string[] = [];
+        const add = (value: unknown, label: string) => {
+          if (typeof value === 'number') bits.push(`${label}=${value}`);
+        };
+        add(detail.errorCode, 'code');
+        add(detail.httpStatusCode, 'http');
+        add(detail.tlsAlertCode, 'tls');
+        add(detail.wsaErrorCode, 'wsa');
+        if (bits.length) parts.push(`RDCleanPath(${bits.join(', ')})`);
+      }
+    }
+  } catch { /* 忽略 */ }
+
+  return parts.length ? parts.join('：') : null;
+}
+
 function formatError(e: any): string {
   if (e == null) return '未知错误';
   if (typeof e === 'string') return e;
   if (typeof e === 'object') {
+    const iron = formatIronError(e);
+    if (iron) return iron;
     const msg = e.message || e.msg || e.reason || e.description;
     if (typeof msg === 'string' && msg) return msg;
+    if (e.cause) return formatError(e.cause);
     // WASM / WebSocket 抛出的普通对象常没有 message，String() 只会得到
     // [object Object]，把可读字段序列化出来便于定位连接失败原因。
     try {
