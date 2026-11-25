@@ -18,6 +18,7 @@ import { SkillService } from './server/service/skill.service';
 import { AuditService } from './server/service/audit.service';
 import { MonitorService } from './server/service/monitor.service';
 import { BatchService } from './server/service/batch.service';
+import { RdpService } from './server/service/rdp.service';
 import { getAccessToken, getCookieHeader, extractTokenFromHeaders, isValidToken, isAllowedOrigin, requiresToken, normalizeUploadName, maxUploadBytes } from './server/utils/security';
 
 const urlPrefix = process.env.PREFIX ? `/${process.env.PREFIX}` : '';
@@ -31,14 +32,16 @@ let auditService: AuditService | null = null;
 let monitorService: MonitorService | null = null;
 let batchService: BatchService | null = null;
 let aiService: AIService | null = null;
+let rdpService: RdpService | null = null;
 
 // 初始化服务实例（仅在开发服务器启动时调用）
 function initServices() {
   if (connectionService) return; // 已经初始化过了
-  
+
   connectionService = new ConnectionService();
   connectionService.init();
   sshService = new SSHService(connectionService);
+  rdpService = new RdpService(connectionService);
   skillService = new SkillService();
   auditService = new AuditService();
   monitorService = new MonitorService(connectionService);
@@ -366,8 +369,53 @@ const config = defineConfig({
                                     if (sid) sshService.resize(sid, data.cols, data.rows);
                                     break;
                                 }
+                                case 'rdp-create': {
+                                    // RDP 远程桌面：通过 guacd 建立会话，Guacamole 指令帧经 WS 转发
+                                    const { connectionId, width, height } = data || {};
+                                    if (!connectionId) {
+                                        safeSend(JSON.stringify({ type: 'error', data: 'Missing connectionId' }));
+                                        break;
+                                    }
+                                    if (!rdpService) {
+                                        safeSend(JSON.stringify({ type: 'error', data: 'RDP service unavailable' }));
+                                        break;
+                                    }
+                                    sessionId = sid || `rdp-${Date.now()}-${Math.random().toString(36).substr(2, 8)}`;
+                                    const rdpSid = sessionId;
+                                    const sendLog = (m: string) => {
+                                        safeSend(JSON.stringify({ type: 'conn-log', sessionId: rdpSid, data: m }));
+                                    };
+                                    try {
+                                        await rdpService.createSession(rdpSid, connectionId, width || 1280, height || 800, {
+                                            onFrame: (inst) => safeSend(JSON.stringify({ type: 'rdp-frame', sessionId: rdpSid, data: inst }), true),
+                                            onReady: () => safeSend(JSON.stringify({ type: 'rdp-ready', sessionId: rdpSid, data: 'connected' })),
+                                            onClose: (reason) => safeSend(JSON.stringify({ type: 'close', sessionId: rdpSid, data: reason })),
+                                            onLog: sendLog,
+                                        });
+                                        safeSend(JSON.stringify({ type: 'status', sessionId: rdpSid, data: 'connected' }));
+                                    } catch (err: any) {
+                                        console.error(`[RDP] connection failed: ${err.message}`);
+                                        safeSend(JSON.stringify({ type: 'error', sessionId: rdpSid, data: err.message || 'RDP 连接失败' }));
+                                    }
+                                    break;
+                                }
+                                case 'rdp-input': {
+                                    if (sid && data && rdpService) rdpService.sendInput(sid, data);
+                                    break;
+                                }
+                                case 'rdp-size': {
+                                    if (sid && data && rdpService) rdpService.resize(sid, data.width, data.height);
+                                    break;
+                                }
+                                case 'rdp-close': {
+                                    if (sid && rdpService) rdpService.closeSession(sid);
+                                    break;
+                                }
                                 case 'close': {
-                                    if (sid) sshService.closeSession(sid);
+                                    if (sid) {
+                                        sshService.closeSession(sid);
+                                        if (rdpService) rdpService.closeSession(sid);
+                                    }
                                     break;
                                 }
                                 case 'ai-agent-run': {
@@ -392,7 +440,10 @@ const config = defineConfig({
                         });
 
                         ws.on('close', () => {
-                            if (sessionId) sshService.closeSession(sessionId);
+                            if (sessionId) {
+                                sshService.closeSession(sessionId);
+                                if (rdpService) rdpService.closeSession(sessionId);
+                            }
                         });
                     });
                 } catch (e) {
