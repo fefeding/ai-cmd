@@ -1,6 +1,6 @@
 {
   "name": "@fefeding/aicmd",
-  "version": "1.0.26",
+  "version": "1.0.27",
   "packageManager": "pnpm@10.15.0",
   "private": false,
   "type": "commonjs",
