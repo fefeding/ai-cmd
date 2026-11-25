@@ -59,7 +59,7 @@ export function activate(context: vscode.ExtensionContext): void {
   launcher = new ServerLauncher(projectRoot, dataDir, (line) =>
     output.appendLine(line)
   );
-  treeProvider = new AICmdTreeProvider(launcher);
+  treeProvider = new AICmdTreeProvider(launcher, context.extensionUri);
 
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider('aicmd.explorer', treeProvider)
@@ -574,14 +574,18 @@ function buildHtml(url: string, title: string): string {
  *   包含 server.js 的目录作为项目根。
  */
 function resolveProjectRoot(extensionPath: string): string {
-  const asPackage = path.join(extensionPath, 'runtime');
-  if (fs.existsSync(path.join(asPackage, 'server.js'))) return asPackage;
-
+  // 开发态（扩展位于 monorepo 的 packages/vscode 下）必须优先用源码根目录：
+  // runtime/ 是发布时预打包的快照，可能落后于刚修改的后端（典型症状：
+  // RDP TLS 修复改了却完全不生效，连接失败只显示 [object Object]）。
+  // 发布态扩展目录的父级没有 server.js，才回退到随包携带的 runtime/。
   let dir = path.resolve(extensionPath);
   const root = path.parse(dir).root;
   for (let i = 0; i < 4 && dir !== root; i++) {
-    if (fs.existsSync(path.join(dir, 'server.js'))) return dir;
-    dir = path.dirname(dir);
+    const parent = path.dirname(dir);
+    if (fs.existsSync(path.join(parent, 'server.js'))) return parent;
+    dir = parent;
   }
+  const asPackage = path.join(extensionPath, 'runtime');
+  if (fs.existsSync(path.join(asPackage, 'server.js'))) return asPackage;
   return path.resolve(extensionPath, '..', '..');
 }

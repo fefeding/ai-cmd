@@ -114,7 +114,19 @@ function updateTransferItem(index: number, state: string) {
 }
 
 function formatError(e: any): string {
-  return e?.message || String(e || '未知错误');
+  if (e == null) return '未知错误';
+  if (typeof e === 'string') return e;
+  if (typeof e === 'object') {
+    const msg = e.message || e.msg || e.reason || e.description;
+    if (typeof msg === 'string' && msg) return msg;
+    // WASM / WebSocket 抛出的普通对象常没有 message，String() 只会得到
+    // [object Object]，把可读字段序列化出来便于定位连接失败原因。
+    try {
+      const json = JSON.stringify(e);
+      if (json && json !== '{}') return json;
+    } catch { /* 循环引用或不可序列化对象，走最后的 String() */ }
+  }
+  return String(e);
 }
 
 function isElectronIPC(): boolean {

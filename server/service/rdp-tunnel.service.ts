@@ -26,6 +26,24 @@ import { ConnectionService } from './connection.service';
 
 const VERSION_1 = 3390; // 3389 + 1
 
+// Windows 默认自签名 RDP 证书的 KeyUsage 可能不含 digitalSignature，新版本
+// BoringSSL 会据此拒绝握手（KEY_USAGE_BIT_INCORRECT）。仅在命中该错误时才
+// 尝试受限套件，避免被主动攻击者随意触发降级。
+const RDP_TLS_FALLBACKS: tls.ConnectionOptions[] = [
+  // 证书只有 keyEncipherment 时用静态 RSA（无前向保密）
+  {
+    minVersion: 'TLSv1.2',
+    maxVersion: 'TLSv1.2',
+    ciphers: 'AES256-GCM-SHA384:AES128-GCM-SHA256:AES256-SHA256:AES128-SHA256:AES256-SHA:AES128-SHA',
+  },
+  // 证书只有 digitalSignature 时改用 ECDHE
+  {
+    minVersion: 'TLSv1.2',
+    maxVersion: 'TLSv1.2',
+    ciphers: 'ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA:ECDHE-RSA-AES128-SHA',
+  },
+];
+
 const TAG_SEQUENCE = 0x30;
 const TAG_INTEGER = 0x02;
 const TAG_OCTET_STRING = 0x04;
@@ -186,6 +204,68 @@ function extractCertChain(peerCert: tls.PeerCertificate | any): Buffer[] {
   return certs;
 }
 
+interface RdpHandshakeResult {
+  x224Response: Buffer;
+  certChain: Buffer[];
+  tlsSocket: tls.TLSSocket;
+}
+
+/**
+ * 在已收到 X.224 Confirm 的 TCP socket 上做 TLS 握手。
+ * 超时仅覆盖握手阶段：成功后必须清掉，否则 15 秒空闲会触发 setTimeout 把中继连接销毁。
+ */
+function connectRdpTls(
+  host: string,
+  port: number,
+  x224ConnectionRequest: Buffer,
+  sessionId: string,
+  log: (msg: string) => void,
+  tlsOptions: tls.ConnectionOptions = {},
+): Promise<RdpHandshakeResult> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn: () => void) => { if (!settled) { settled = true; fn(); } };
+    const tcpSocket = net.createConnection({ host, port }, () => {
+      log(`session ${sessionId}: TCP connected`);
+      tcpSocket.write(x224ConnectionRequest, () => {
+        log(`session ${sessionId}: sent X.224 Connection Request (${x224ConnectionRequest.length} bytes)`);
+      });
+    });
+    tcpSocket.once('error', (err) => done(() => reject(new Error(`TCP 连接失败: ${err.message}`))));
+    tcpSocket.once('data', (x224Response: Buffer) => {
+      log(`session ${sessionId}: received X.224 Connection Confirm (${x224Response.length} bytes)`);
+      if (x224Response.length === 0) {
+        done(() => { tcpSocket.destroy(); reject(new Error('RDP 服务器关闭连接且未返回 X.224 响应')); });
+        return;
+      }
+      tcpSocket.removeAllListeners('error');
+      tcpSocket.removeAllListeners('data');
+      // SNI 只能用于域名（RFC 6066），IP 地址需省略避免 Node 弃用警告
+      const sniHost = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+      const isIp = net.isIP(sniHost) !== 0;
+      const tlsSocket = tls.connect({
+        socket: tcpSocket,
+        ...(isIp ? {} : { servername: sniHost }),
+        rejectUnauthorized: false, // RDP 服务器普遍自签名
+        ...tlsOptions,
+      }, () => {
+        tcpSocket.setTimeout(0);
+        log(`session ${sessionId}: TLS handshake completed`);
+        const certChain = extractCertChain(tlsSocket.getPeerCertificate(true));
+        log(`session ${sessionId}: extracted ${certChain.length} certificate(s)`);
+        done(() => resolve({ x224Response: Buffer.from(x224Response), certChain, tlsSocket }));
+      });
+      tlsSocket.once('error', (err) => done(() => {
+        tcpSocket.destroy();
+        reject(new Error(`TLS 握手失败: ${err.message}`));
+      }));
+    });
+    tcpSocket.setTimeout(15000, () => {
+      done(() => { tcpSocket.destroy(); reject(new Error('RDP 握手超时')); });
+    });
+  });
+}
+
 interface RdpTunnelSession {
   id: string;
   connectionId: string;
@@ -240,7 +320,6 @@ export class RdpTunnelService {
 
     // 只处理第一条消息：RDCleanPath Request
     ws.once('message', async (data: any) => {
-      let tcpSocket: net.Socket | null = null;
       try {
         const requestData = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
         const request = parseRDCleanPathRequest(requestData);
@@ -256,45 +335,28 @@ export class RdpTunnelService {
         if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`无效 RDP 端口: ${port}`);
         log(`session ${sessionId}: connecting to configured RDP server ${host}:${port}`);
 
-        const { x224Response, certChain, tlsSocket } = await new Promise<{
-          x224Response: Buffer; certChain: Buffer[]; tlsSocket: tls.TLSSocket;
-        }>((resolve, reject) => {
-          let settled = false;
-          const done = (fn: () => void) => { if (!settled) { settled = true; fn(); } };
-          tcpSocket = net.createConnection({ host, port }, () => {
-            log(`session ${sessionId}: TCP connected`);
-            tcpSocket!.write(request.x224ConnectionRequest, () => {
-              log(`session ${sessionId}: sent X.224 Connection Request (${request.x224ConnectionRequest.length} bytes)`);
-            });
-          });
-          tcpSocket.once('error', (err) => done(() => reject(new Error(`TCP 连接失败: ${err.message}`))));
-          tcpSocket.once('data', (x224Response: Buffer) => {
-            log(`session ${sessionId}: received X.224 Connection Confirm (${x224Response.length} bytes)`);
-            if (x224Response.length === 0) {
-              done(() => reject(new Error('RDP 服务器关闭连接且未返回 X.224 响应')));
-              return;
+        let handshake: RdpHandshakeResult | null = null;
+        try {
+          handshake = await connectRdpTls(host, port, request.x224ConnectionRequest, sessionId, log);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (!message.includes('KEY_USAGE_BIT_INCORRECT')) throw err;
+          log(`session ${sessionId}: 服务端证书 KeyUsage 与协商套件不匹配，尝试受限 TLS 套件`);
+          let lastError: unknown = err;
+          for (const options of RDP_TLS_FALLBACKS) {
+            try {
+              handshake = await connectRdpTls(host, port, request.x224ConnectionRequest, sessionId, log, options);
+              break;
+            } catch (fallbackErr) {
+              lastError = fallbackErr;
             }
-            tcpSocket!.removeAllListeners('error');
-            tcpSocket!.removeAllListeners('data');
-            // SNI 只能用于域名（RFC 6066），IP 地址需省略避免 Node 弃用警告
-            const isIp = /^[\d.]+$/.test(host) || host.includes(':');
-            const tlsSocket = tls.connect({
-              socket: tcpSocket!,
-              ...(isIp ? {} : { servername: host }),
-              rejectUnauthorized: false, // RDP 服务器普遍自签名
-            }, () => {
-              log(`session ${sessionId}: TLS handshake completed`);
-              const certChain = extractCertChain(tlsSocket.getPeerCertificate(true));
-              log(`session ${sessionId}: extracted ${certChain.length} certificate(s)`);
-              done(() => resolve({ x224Response: Buffer.from(x224Response), certChain, tlsSocket }));
-            });
-            tlsSocket.once('error', (err) => done(() => reject(new Error(`TLS 握手失败: ${err.message}`))));
-          });
-          tcpSocket.setTimeout(15000, () => {
-            done(() => reject(new Error('RDP 握手超时')));
-            tcpSocket?.destroy();
-          });
-        });
+          }
+          if (!handshake) {
+            log(`session ${sessionId}: 受限套件仍无法握手，建议为 RDP 服务器配置同时含 digitalSignature 与 keyEncipherment 的证书`);
+            throw lastError;
+          }
+        }
+        const { x224Response, certChain, tlsSocket } = handshake;
 
         const serverAddr = `${host}:${port}`;
         const responsePdu = buildRDCleanPathResponse(serverAddr, x224Response, certChain);
@@ -305,7 +367,6 @@ export class RdpTunnelService {
         this.sessions.set(sessionId, { id: sessionId, connectionId, tlsSocket, ws, createdAt: new Date() });
         this.setupRelay(sessionId, ws, tlsSocket);
       } catch (err) {
-        tcpSocket?.destroy();
         fail(err);
       }
     });

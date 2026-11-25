@@ -117,9 +117,12 @@ export class ServerLauncher {
     this.launchToken = crypto.randomBytes(16).toString('hex');
     this.intentionalStop = false;
 
-    // 优先复用已在运行的服务（桌面端 / CLI / 其它 VSCode 窗口），共享同一数据目录，
-    // 避免每个宿主各拉一个进程。复用仅依赖 /health 探活，不做 token 校验。
-    const reused = await this.findRunningServer(startPort);
+    // 仅打包态复用已在运行的服务（桌面端 / CLI / 其它 VSCode 窗口）。
+    // 源码根目录是调试场景，端口上常残留旧 runtime/server.js 或上一次 F5 的进程；
+    // 复用它会让刚修改的后端代码完全不生效（RDP 连不上、只显示 [object Object]）。
+    const reused = this.isBundledRuntime()
+      ? await this.findRunningServer(startPort)
+      : undefined;
     if (reused !== undefined) {
       this.port = reused;
       this.started = true;

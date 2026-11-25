@@ -19,7 +19,30 @@ export class AICmdTreeProvider
   private connsCache?: any[];
   private connsPromise?: Promise<any[]>;
 
-  constructor(private readonly launcher: ServerLauncher) {}
+  constructor(
+    private readonly launcher: ServerLauncher,
+    private readonly extensionUri: vscode.Uri
+  ) {}
+
+  /** 与 web 端侧边栏一致的 Bootstrap Icons（区分浅色 / 深色主题）。 */
+  private treeIcon(
+    name: 'terminal' | 'display' | 'hdd-network'
+  ): { light: vscode.Uri; dark: vscode.Uri } {
+    return {
+      light: vscode.Uri.joinPath(
+        this.extensionUri,
+        'resources',
+        'icons',
+        `${name}-light.svg`
+      ),
+      dark: vscode.Uri.joinPath(
+        this.extensionUri,
+        'resources',
+        'icons',
+        `${name}-dark.svg`
+      )
+    };
+  }
 
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
     return element;
@@ -32,7 +55,7 @@ export class AICmdTreeProvider
       '打开本地 Shell',
       vscode.TreeItemCollapsibleState.None
     );
-    openAll.iconPath = new vscode.ThemeIcon('terminal');
+    openAll.iconPath = this.treeIcon('terminal');
     openAll.command = {
       command: 'aicmd.openTerminal',
       title: '打开本地 Shell',
@@ -55,8 +78,8 @@ export class AICmdTreeProvider
         // （view/item/context 触发时 VSCode 会把本对象作为首个参数传入）
         item.id = String(c.id);
         item.contextValue = 'connection';
-        item.iconPath = new vscode.ThemeIcon(
-          isLocal ? 'terminal' : isRdp ? 'remote' : 'globe'
+        item.iconPath = this.treeIcon(
+          isLocal ? 'terminal' : isRdp ? 'display' : 'hdd-network'
         );
         item.description = isLocal
           ? '本地 Shell'
