@@ -139,6 +139,9 @@ export function activate(context: vscode.ExtensionContext): void {
       openTerminal(context, startPort, toId(connectionId), name, connectionType)
   );
   register('aicmd.refresh', () => treeProvider.refresh());
+  register('aicmd.toggleGroup', (name?: unknown) => {
+    if (typeof name === 'string') treeProvider.toggleGroup(name);
+  });
   // TreeView 没有独立的双击事件：单击只记录时间，时间窗内第二次点击才打开。
   // 对应节点 command 由 tree-provider 设置；右侧 ▶ 按钮仍直接调 openTerminal。
   register(
@@ -151,7 +154,14 @@ export function activate(context: vscode.ExtensionContext): void {
       lastConnectionClick.set(cid, now);
       if (now - previous > 500) return;
       lastConnectionClick.delete(cid);
-      return openTerminal(context, startPort, cid, name, connectionType);
+      // __local__ 是本地 Shell 节点的双击键，打开时仍走「无连接 id」的本地 Shell 逻辑
+      return openTerminal(
+        context,
+        startPort,
+        cid === '__local__' ? undefined : cid,
+        name,
+        connectionType
+      );
     }
   );
   register('aicmd.setGroupMode', async () => {

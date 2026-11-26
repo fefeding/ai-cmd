@@ -22,13 +22,23 @@ export class AICmdTreeProvider
   private connsCache?: any[];
   private connsPromise?: Promise<any[]>;
   private groupMode: 'group' | 'tag' = 'group';
+  // 分组折叠状态：原生 TreeView 的折叠箭头会多占一列缩进，这里改为
+  // 自管理折叠，所有节点平铺在同一层级，图标/文字整体靠左对齐。
+  private collapsedGroups = new Set<string>();
 
   constructor(
     private readonly launcher: ServerLauncher,
     private readonly extensionUri: vscode.Uri
   ) {}
 
-  /** 与 web 端侧边栏一致的 Bootstrap Icons（区分浅色 / 深色主题）。 */
+  private groupKey(name: string): string {
+    return `${this.groupMode}:${name}`;
+  }
+
+  /**
+   * 连接图标：Bootstrap Icons 形状与 Web 端一致，颜色改用主题灰以匹配分组的
+   * codicon；SVG 内部右侧留 4px，让图标与分组文件夹图标视觉对齐。
+   */
   private treeIcon(
     name: 'terminal' | 'display' | 'hdd-network'
   ): { light: vscode.Uri; dark: vscode.Uri } {
@@ -73,19 +83,9 @@ export class AICmdTreeProvider
   async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
     const localShell = t('本地 Shell', 'Local Shell');
 
-    // 展开分组节点：只返回该组的连接
-    if (element) {
-      const groupName = (element as GroupItem).groupName;
-      if (groupName === undefined) return [];
-      try {
-        const conns = await this.loadConnections();
-        return conns
-          .filter((c) => this.groupNames(c as AicmdConnection).includes(groupName))
-          .map((c) => this.connectionItem(c as AicmdConnection, localShell));
-      } catch {
-        return [];
-      }
-    }
+    // 所有节点都是顶层节点，不再用原生父子层级，避免折叠箭头多占一列缩进；
+    // 分组折叠由 toggleGroup 自管理。
+    if (element) return [];
 
     const openLocalShell = t('打开本地 Shell', 'Open Local Shell');
     const openAll = new vscode.TreeItem(
@@ -93,14 +93,15 @@ export class AICmdTreeProvider
       vscode.TreeItemCollapsibleState.None
     );
     openAll.iconPath = this.treeIcon('terminal');
+    // 与连接节点一致走双击判定；__local__ 只是双击时间窗的键，不是连接 id
     openAll.command = {
-      command: 'aicmd.openTerminal',
+      command: 'aicmd.connectionClicked',
       title: openLocalShell,
-      arguments: [undefined, localShell]
+      arguments: ['__local__', localShell]
     };
     openAll.tooltip = t(
-      '在 VSCode 内打开一个本地 Shell 终端',
-      'Open a local shell terminal inside VS Code'
+      '双击打开本地 Shell 终端',
+      'Double-click to open a local shell terminal'
     );
 
     try {
@@ -124,24 +125,36 @@ export class AICmdTreeProvider
           });
 
         for (const { name, list } of groups) {
+          const collapsed = this.collapsedGroups.has(this.groupKey(name));
           const groupItem = new vscode.TreeItem(
             name,
-            vscode.TreeItemCollapsibleState.Collapsed
+            vscode.TreeItemCollapsibleState.None
           ) as GroupItem;
           groupItem.groupName = name;
-          // 稳定 id：VSCode 会据此记住分组的展开 / 折叠状态
-          groupItem.id = `aicmd-group:${this.groupMode}:${name}`;
+          groupItem.id = `aicmd-group:${this.groupKey(name)}`;
           groupItem.contextValue = 'connection-group';
           groupItem.iconPath = new vscode.ThemeIcon(
             name === ungrouped
               ? 'list-unordered'
               : this.groupMode === 'tag'
               ? 'tag'
-              : 'folder'
+              : collapsed
+              ? 'folder'
+              : 'folder-opened'
           );
           groupItem.description = String(list.length);
           groupItem.tooltip = `${name} · ${list.length} ${t('个连接', 'connections')}`;
+          groupItem.command = {
+            command: 'aicmd.toggleGroup',
+            title: t('展开 / 折叠分组', 'Expand / collapse group'),
+            arguments: [name]
+          };
           items.push(groupItem);
+          if (!collapsed) {
+            for (const c of list) {
+              items.push(this.connectionItem(c as AicmdConnection, localShell));
+            }
+          }
         }
       } else {
         const hint = new vscode.TreeItem(
@@ -185,8 +198,11 @@ export class AICmdTreeProvider
   ): vscode.TreeItem {
     const isLocal = c.type === 'local';
     const isRdp = c.type === 'rdp';
+    const name = c.name || (isLocal ? localShell : c.host) || c.id;
+    // 树是扁平的（去掉了原生箭头占位），这里用不换行空格把连接文字缩进
+    // 一格，与分组标题形成明确的层级感；菜单/双击参数仍使用原始 name。
     const item = new vscode.TreeItem(
-      c.name || (isLocal ? localShell : c.host) || c.id,
+      `\u00a0\u00a0${name}`,
       vscode.TreeItemCollapsibleState.None
     );
     // 给 TreeItem 一个稳定身份，使内联图标 / 右键菜单命令都能正确取到 id
@@ -244,6 +260,13 @@ export class AICmdTreeProvider
         }
       );
     return this.connsPromise;
+  }
+
+  toggleGroup(name: string): void {
+    const key = this.groupKey(name);
+    if (this.collapsedGroups.has(key)) this.collapsedGroups.delete(key);
+    else this.collapsedGroups.add(key);
+    this._onDidChange.fire();
   }
 
   setGroupMode(mode: 'group' | 'tag'): void {
