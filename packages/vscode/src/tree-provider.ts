@@ -21,6 +21,7 @@ export class AICmdTreeProvider
   // 避免树反复重绘 / 出现「服务未启动」的错误闪现。
   private connsCache?: any[];
   private connsPromise?: Promise<any[]>;
+  private loadError?: string;
   private groupMode: 'group' | 'tag' = 'group';
   // 分组折叠状态：原生 TreeView 的折叠箭头会多占一列缩进，这里改为
   // 自管理折叠，所有节点平铺在同一层级，图标/文字整体靠左对齐。
@@ -37,23 +38,26 @@ export class AICmdTreeProvider
 
   /**
    * 连接图标：Bootstrap Icons 形状与 Web 端一致，颜色改用主题灰以匹配分组的
-   * codicon；SVG 内部右侧留 4px，让图标与分组文件夹图标视觉对齐。
+   * codicon。indent=true 使用左侧留白的变体，让连接图标相对分组图标右移、
+   * 形成层级；顶层节点（打开本地 Shell）仍用原始图标。
    */
   private treeIcon(
-    name: 'terminal' | 'display' | 'hdd-network'
+    name: 'terminal' | 'display' | 'hdd-network',
+    indent = false
   ): { light: vscode.Uri; dark: vscode.Uri } {
+    const base = indent ? `${name}-indent` : name;
     return {
       light: vscode.Uri.joinPath(
         this.extensionUri,
         'resources',
         'icons',
-        `${name}-light.svg`
+        `${base}-light.svg`
       ),
       dark: vscode.Uri.joinPath(
         this.extensionUri,
         'resources',
         'icons',
-        `${name}-dark.svg`
+        `${base}-dark.svg`
       )
     };
   }
@@ -104,8 +108,17 @@ export class AICmdTreeProvider
       'Double-click to open a local shell terminal'
     );
 
+    // 加载中 / 加载失败时先给出明确节点；只有成功拉取到空列表才显示"暂无连接"。
+    // 注意不能 await：VSCode 在 getChildren 返回前不会渲染任何节点，
+    // 异步等后端启动会先看到「没有数据提供方」的空视图。
+    if (!this.connsCache) {
+      if (this.loadError) return [openAll, this.errorItem(this.loadError)];
+      this.loadConnections().catch(() => {});
+      return [openAll, this.loadingItem()];
+    }
+
     try {
-      const conns = await this.loadConnections() as AicmdConnection[];
+      const conns = this.connsCache as AicmdConnection[];
       const items: vscode.TreeItem[] = [openAll];
 
       if (conns.length > 0) {
@@ -172,24 +185,41 @@ export class AICmdTreeProvider
       return items;
     } catch (e: any) {
       const msg = e?.message || String(e);
-      const err = new vscode.TreeItem(
-        t('服务未启动，点击刷新', 'Service not started. Click refresh.'),
-        vscode.TreeItemCollapsibleState.None
-      );
-      err.iconPath = new vscode.ThemeIcon('error');
-      err.contextValue = 'error';
-      err.command = { command: 'aicmd.refresh', title: t('刷新', 'Refresh') };
-      // 直接把原因显示出来，避免必须悬停才能看到
-      err.description = msg.length > 80 ? msg.slice(0, 80) + '…' : msg;
-      err.tooltip =
-        t('启动 AICmd 服务失败：', 'Failed to start AICmd service: ') +
-        msg +
-        t(
-          '\n详情请查看「输出」面板中的 [aicmd-server] 日志。',
-          '\nSee [aicmd-server] logs in the Output panel for details.'
-        );
-      return [openAll, err];
+      return [openAll, this.errorItem(msg)];
     }
+  }
+
+  private loadingItem(): vscode.TreeItem {
+    const item = new vscode.TreeItem(
+      t('正在加载连接…', 'Loading connections…'),
+      vscode.TreeItemCollapsibleState.None
+    );
+    item.iconPath = new vscode.ThemeIcon('loading~spin');
+    item.contextValue = 'loading';
+    item.tooltip = t(
+      '正在启动 AICmd 服务并读取连接列表',
+      'Starting AICmd service and loading connections'
+    );
+    return item;
+  }
+
+  private errorItem(msg: string): vscode.TreeItem {
+    const err = new vscode.TreeItem(
+      t('服务未启动，点击刷新', 'Service not started. Click refresh.'),
+      vscode.TreeItemCollapsibleState.None
+    );
+    err.iconPath = new vscode.ThemeIcon('error');
+    err.contextValue = 'error';
+    err.command = { command: 'aicmd.refresh', title: t('刷新', 'Refresh') };
+    err.description = msg.length > 80 ? msg.slice(0, 80) + '…' : msg;
+    err.tooltip =
+      t('启动 AICmd 服务失败：', 'Failed to start AICmd service: ') +
+      msg +
+      t(
+        '\n详情请查看「输出」面板中的 [aicmd-server] 日志。',
+        '\nSee [aicmd-server] logs in the Output panel for details.'
+      );
+    return err;
   }
 
   private connectionItem(
@@ -199,8 +229,7 @@ export class AICmdTreeProvider
     const isLocal = c.type === 'local';
     const isRdp = c.type === 'rdp';
     const name = c.name || (isLocal ? localShell : c.host) || c.id;
-    // 树是扁平的（去掉了原生箭头占位），这里用不换行空格把连接文字缩进
-    // 一格，与分组标题形成明确的层级感；菜单/双击参数仍使用原始 name。
+    // 节点平铺；用不换行空格轻微缩进连接文字，与分组标题形成层次（不再加箭头图标）。
     const item = new vscode.TreeItem(
       `\u00a0\u00a0${name}`,
       vscode.TreeItemCollapsibleState.None
@@ -210,7 +239,8 @@ export class AICmdTreeProvider
     item.id = String(c.id);
     item.contextValue = 'connection';
     item.iconPath = this.treeIcon(
-      isLocal ? 'terminal' : isRdp ? 'display' : 'hdd-network'
+      isLocal ? 'terminal' : isRdp ? 'display' : 'hdd-network',
+      true
     );
     // 与 Web 端连接列表一致：副标题显示 username@host:port，标签以 #tag 追加
     const remoteDetail = `${[c.username, c.host].filter(Boolean).join('@')}${
@@ -242,20 +272,24 @@ export class AICmdTreeProvider
     return item;
   }
 
-  /** 带去重缓存地加载连接列表（多路并发共享同一次请求）。 */
+  /** 带去重缓存地加载连接列表：完成后触发树刷新，从 loading 切到真实数据。 */
   private loadConnections(): Promise<any[]> {
     if (this.connsCache) return Promise.resolve(this.connsCache);
     if (this.connsPromise) return this.connsPromise;
+    this.loadError = undefined;
     this.connsPromise = this.launcher
       .getConnections()
       .then(
         (c) => {
           this.connsCache = c;
           this.connsPromise = undefined;
+          this._onDidChange.fire();
           return c;
         },
         (e) => {
           this.connsPromise = undefined;
+          this.loadError = e?.message || String(e);
+          this._onDidChange.fire();
           throw e;
         }
       );
@@ -276,9 +310,10 @@ export class AICmdTreeProvider
   }
 
   refresh(): void {
-    // 主动刷新时丢弃缓存，强制重新拉取
+    // 主动刷新时丢弃缓存，强制重新拉取；树立即回到 loading 状态
     this.connsCache = undefined;
     this.connsPromise = undefined;
+    this.loadError = undefined;
     this._onDidChange.fire();
   }
 }

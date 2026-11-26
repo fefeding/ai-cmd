@@ -175,8 +175,9 @@ export class ServerLauncher {
   private resolveNodeCandidates(): string[] {
     const list: string[] = [];
     if (process.env.AICMD_NODE) list.push(process.env.AICMD_NODE);
-    // 宿主二进制优先：直接复用宿主运行时，不另装 node
-    if (process.execPath) list.push(process.execPath);
+    // 真实 node 优先。扩展宿主里 process.execPath 是 Electron（Code Helper），
+    // 即使带 ELECTRON_RUN_AS_NODE=1 也可能与宿主 IPC / 崩溃上报冲突，导致
+    // 恢复默认 Tab 时扩展宿主崩溃；仅在找不到任何 node 时作为兜底。
     try {
       const nvmDir = path.join(os.homedir(), '.nvm', 'versions', 'node');
       const versions = fs.readdirSync(nvmDir).sort().reverse();
@@ -184,7 +185,8 @@ export class ServerLauncher {
     } catch {
       /* 无 nvm */
     }
-    list.push('node', '/opt/homebrew/bin/node', '/usr/local/bin/node');
+    list.push('/opt/homebrew/bin/node', '/usr/local/bin/node', 'node');
+    if (process.execPath) list.push(process.execPath);
     return [...new Set(list)];
   }
 
@@ -195,32 +197,45 @@ export class ServerLauncher {
   ): Promise<string | undefined> {
     this.spawnError = undefined;
     this.lastStderr = '';
-    // 剔除会被子进程误用的宿主环境变量：
-    // - NODE_OPTIONS：扩展宿主可能带有指向宿主内部模块的 --require，让干净的子进程启动即崩；
-    // - NODE_CHANNEL_FD / NODE_CHANNEL_SERIALIZATION_MODE：扩展宿主由 fork 启动，子进程继承后
-    //   会误以为自己是 fork 的子进程，用同一 fd 建立 IPC channel，污染宿主 IPC →
-    //   Extension Development Host 闪退。典型场景：恢复上次打开的 RDP WebView 时
-    //   deserializeWebviewPanel 提前拉起后端。
-    const {
-      NODE_OPTIONS,
-      NODE_CHANNEL_FD,
-      NODE_CHANNEL_SERIALIZATION_MODE,
-      ...cleanEnv
-    } = process.env;
+    // 只把白名单环境变量传给后端子进程。扩展宿主环境里存在 NODE_* / VSCODE_* /
+    // ELECTRON_* 等内部变量；恢复 WebView Tab 时子进程若继承这些变量，可能被当成
+    // 宿主 fork 进程、加载宿主内部模块，进而让 Extension Host 崩溃。
+    const env: NodeJS.ProcessEnv = {
+      NODE_ENV: 'production',
+      AICMD_DATA_DIR: this.dataDir,
+      AICMD_LAUNCH_TOKEN: this.launchToken || ''
+    };
+    for (const key of [
+      'PATH',
+      'HOME',
+      'TMPDIR',
+      'TEMP',
+      'TMP',
+      'USER',
+      'LANG',
+      'LC_ALL',
+      'SHELL',
+      'HTTP_PROXY',
+      'HTTPS_PROXY',
+      'ALL_PROXY',
+      'NO_PROXY',
+      'http_proxy',
+      'https_proxy',
+      'all_proxy',
+      'no_proxy',
+      'SSL_CERT_FILE',
+      'NODE_EXTRA_CA_CERTS'
+    ]) {
+      if (process.env[key] !== undefined) env[key] = process.env[key];
+    }
+    // 仅兜底使用宿主二进制（Electron）时需要；真实 node 会忽略该变量。
+    if (nodeBin === process.execPath) env.ELECTRON_RUN_AS_NODE = '1';
     this.child = cp.spawn(
       nodeBin,
       [serverJs, '--port', String(this.port)],
       {
         cwd: this.projectRoot,
-        env: {
-          ...cleanEnv,
-          NODE_ENV: 'production',
-          AICMD_DATA_DIR: this.dataDir,
-          // 启动令牌：server.js 的 /health 端点据此拒绝伪造的探活
-          AICMD_LAUNCH_TOKEN: this.launchToken || '',
-          // 宿主是 Electron 时该变量使其按纯 Node 执行；真实 node 会忽略它
-          ELECTRON_RUN_AS_NODE: '1'
-        },
+        env,
         stdio: ['ignore', 'pipe', 'pipe']
       }
     );

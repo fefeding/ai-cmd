@@ -226,19 +226,24 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // 后端进程意外退出：通知用户并关闭所有面板（面板已无法正常工作）
   launcher.onUnexpectedExit = () => {
-    output.appendLine(t('[aicmd] 后端进程意外退出', '[aicmd] backend exited unexpectedly'));
-    vscode.window.showErrorMessage(
-      t(
-        'AICmd 后端进程意外退出，请重新打开终端。',
-        'The AICmd backend exited unexpectedly. Please reopen the terminal.'
-      )
-    );
-    for (const p of [...panels]) {
-      try {
-        p.dispose();
-      } catch {
-        /* ignore */
+    try {
+      output.appendLine(t('[aicmd] 后端进程意外退出', '[aicmd] backend exited unexpectedly'));
+      vscode.window.showErrorMessage(
+        t(
+          'AICmd 后端进程意外退出，请重新打开终端。',
+          'The AICmd backend exited unexpectedly. Please reopen the terminal.'
+        )
+      );
+      for (const p of [...panels]) {
+        try {
+          p.dispose();
+        } catch {
+          /* ignore */
+        }
       }
+    } catch (e: any) {
+      // 子进程 exit 事件里的异常不能冒泡到扩展宿主
+      console.error('[aicmd] onUnexpectedExit error:', e);
     }
   };
 
@@ -272,22 +277,24 @@ export function activate(context: vscode.ExtensionContext): void {
           | { src?: string; base?: string; title?: string }
           | undefined;
         if (!s || !s.src) {
-          panel.dispose();
+          try { panel.dispose(); } catch { /* ignore */ }
           return;
         }
-        let baseUrl: string;
         try {
-          baseUrl = await launcher.ensureStarted(startPort);
+          const baseUrl = await launcher.ensureStarted(startPort);
+          // 持久化的 src 含上次会话的后端端口；窗口重载后服务会重新选端口，
+          // 必须把 origin 换成这次实际启动的地址，否则 iframe 加载旧地址后一直空白。
+          const src = rebasePersistedSrc(s.src, baseUrl);
+          wirePanel(panel, src, s.base || 'AICmd', s.title || panel.title);
         } catch (e: any) {
           const msg = e?.message || String(e);
           output.appendLine(`[aicmd] restore panel failed: ${msg}`);
-          panel.webview.html = buildRestoreErrorHtml(s.title || panel.title, msg);
-          return;
+          try {
+            panel.webview.html = buildRestoreErrorHtml(s.title || panel.title, msg);
+          } catch {
+            /* ignore */
+          }
         }
-        // 持久化的 src 含上次会话的后端端口；窗口重载后服务会重新选端口，
-        // 必须把 origin 换成这次实际启动的地址，否则 iframe 加载旧地址后一直空白。
-        const src = rebasePersistedSrc(s.src, baseUrl);
-        wirePanel(panel, src, s.base || 'AICmd', s.title || panel.title);
       }
     })
   );
