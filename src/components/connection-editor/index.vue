@@ -91,7 +91,10 @@
           <div class="row g-2">
             <div class="col-md-6">
               <label class="form-label">{{ t('connection.group') }}</label>
-              <input type="text" class="form-control form-control-sm" v-model="form.group" :placeholder="t('connection.groupPlaceholder')">
+              <input type="text" class="form-control form-control-sm" v-model="form.group" :list="groupListId" :placeholder="t('connection.groupPlaceholder')">
+              <datalist :id="groupListId">
+                <option v-for="g in existingGroups" :key="g" :value="g"></option>
+              </datalist>
             </div>
             <div class="col-md-6">
               <label class="form-label">{{ t('connection.tags') }}</label>
@@ -601,8 +604,26 @@ const hasAdvanced = computed(() =>
 
 const connectionService = new ConnectionService();
 
+/** 分组输入框的 datalist id（每个组件实例唯一，避免多实例冲突） */
+let editorSeq = 0;
+const groupListId = `conn-group-list-${++editorSeq}`;
+const existingGroups = ref<string[]>([]);
+
+/** 加载已有分组作为建议；不阻塞弹窗打开，失败时仍可自由输入 */
+function loadGroupSuggestions() {
+  connectionService.getAllConnections().then((res: any) => {
+    const list: any[] = Array.isArray(res) ? res : (res?.data || []);
+    const groups = new Set<string>();
+    for (const c of list) {
+      if (typeof c?.group === 'string' && c.group.trim()) groups.add(c.group.trim());
+    }
+    existingGroups.value = Array.from(groups).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  }).catch(() => {});
+}
+
 function open(connection?: any) {
   skipTypeWatch = true;
+  loadGroupSuggestions();
   if (connection) {
     editingConnection.value = connection.id;
     Object.assign(form, defaultForm(), connection);
