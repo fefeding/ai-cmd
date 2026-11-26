@@ -315,6 +315,26 @@ async function openTerminal(
       },
       async () => {
         await launcher.ensureStarted(startPort);
+        // 侧栏 ▶ 按钮只会传 TreeItem（取得到 id，取不到 name/type），
+        // 双击节点和命令面板则会完整传入；这里统一按 id 补齐，避免
+        // 标题退化成「本地 Shell」、RDP 连接被当成 SSH 打开。
+        if (
+          connectionId &&
+          connectionId !== '__local__' &&
+          (!name || !connectionType)
+        ) {
+          try {
+            const conn = (await launcher.getConnections()).find(
+              (c) => String(c.id) === connectionId
+            );
+            if (conn) {
+              name = name || conn.name || conn.host || connectionId;
+              connectionType = connectionType || conn.type;
+            }
+          } catch {
+            /* 连接列表读取失败时仍按已有参数打开 */
+          }
+        }
       }
     );
     showTerminalPanel(context, launcher.url, connectionId, name, connectionType);
