@@ -41,6 +41,12 @@
               </div>
               <div class="d-flex align-items-center gap-2 ms-2">
                 <span class="badge" :class="statusClass(r.status?.status)">{{ statusLabel(r.status?.status) }}</span>
+                <span v-if="r.status?.connections" class="badge bg-light text-dark" :title="t('tunnel.activeConnections')">
+                  <i class="bi bi-plug"></i> {{ r.status.connections }}
+                </span>
+                <span v-if="r.status?.shared" class="badge bg-light text-dark" :title="t('tunnel.sharedHint')">
+                  <i class="bi bi-people"></i>
+                </span>
                 <button v-if="r.status?.status === 'active'" class="btn btn-sm btn-outline-danger" @click="stop(s, r.rule.id)">
                   <i class="bi bi-stop-circle"></i>
                 </button>

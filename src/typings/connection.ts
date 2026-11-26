@@ -41,6 +41,8 @@ export interface PortForwardStatus {
   startedAt?: Date;
   /** 当前活跃连接数 */
   connections?: number;
+  /** 是否被多个会话/页面共享 */
+  shared?: boolean;
 }
 
 /**

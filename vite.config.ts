@@ -22,11 +22,38 @@ import { RdpService } from './server/service/rdp.service';
 import { RdpTunnelService } from './server/service/rdp-tunnel.service';
 import { PortForwardService } from './server/service/port-forward.service';
 import { SSHKeyService } from './server/service/ssh-key.service';
+import { getDataPath } from './server/utils/data-dir';
 import { validateRdpWsRequest } from './server/utils/rdp-ws';
 import { getAccessToken, getCookieHeader, extractTokenFromHeaders, isValidToken, isAllowedOrigin, requiresToken, normalizeUploadName, maxUploadBytes } from './server/utils/security';
 
 const urlPrefix = process.env.PREFIX ? `/${process.env.PREFIX}` : '';
 const devUploadLimitBytes = maxUploadBytes();
+
+/**
+ * 从已保存的连接自动推导 Vite 的 allowedHosts：
+ * 通过 SSH 远程转发访问本机 dev server 时 Host 头是连接域名，Vite 8 默认拦截。
+ * 新增连接保存后重启 dev server 即自动放行，无需改此处代码。
+ */
+function deriveAllowedHosts(): string[] {
+  const hosts = new Set<string>(['localhost', '127.0.0.1']);
+  try {
+    const configPath = getDataPath('connections.json');
+    if (fs.existsSync(configPath)) {
+      const list = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      if (Array.isArray(list)) {
+        for (const conn of list) {
+          for (const candidate of [conn?.host, ...(conn?.portForwards || []).map((r: any) => r?.listenHost)]) {
+            if (typeof candidate === 'string' && candidate && candidate !== '0.0.0.0' && !candidate.startsWith('127.')) {
+              hosts.add(candidate);
+            }
+          }
+        }
+      }
+    }
+  } catch (_) {}
+  for (const h of (process.env.ALLOWED_HOSTS || '').split(',').map(s => s.trim()).filter(Boolean)) hosts.add(h);
+  return Array.from(hosts);
+}
 
 // 共享服务实例（延迟初始化）
 let connectionService: ConnectionService | null = null;
@@ -530,6 +557,9 @@ const config = defineConfig({
         host: process.env.HOST || process.env.AICMD_HOST || '127.0.0.1',
         port: +`${process.env.VITE_PORT}` || 9801,
         cors: false,
+        // 通过 SSH 远程转发从域名访问本机 dev server 时 Host 头会变成连接域名；
+        // 自动从已保存连接推导白名单，新增连接后重启 dev server 即生效。
+        allowedHosts: deriveAllowedHosts(),
     },
 });
 export default config;

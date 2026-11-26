@@ -208,19 +208,19 @@
             </div>
             <div class="row g-2 mt-1">
               <div class="col-md-3">
-                <label class="form-label small mb-1">{{ t('connection.pfListenHost') }}</label>
+                <label class="form-label small mb-1 text-nowrap">{{ pfFieldLabel(rule.direction, 'listenHost') }}</label>
                 <input type="text" class="form-control form-control-sm" v-model="rule.listenHost" placeholder="127.0.0.1">
               </div>
               <div class="col-md-3">
-                <label class="form-label small mb-1">{{ t('connection.pfListenPort') }}</label>
+                <label class="form-label small mb-1 text-nowrap">{{ pfFieldLabel(rule.direction, 'listenPort') }}</label>
                 <input type="number" class="form-control form-control-sm" v-model.number="rule.listenPort" min="1" max="65535">
               </div>
               <div class="col-md-3">
-                <label class="form-label small mb-1">{{ t('connection.pfTargetHost') }}</label>
+                <label class="form-label small mb-1 text-nowrap">{{ pfFieldLabel(rule.direction, 'targetHost') }}</label>
                 <input type="text" class="form-control form-control-sm" v-model="rule.targetHost" placeholder="127.0.0.1">
               </div>
               <div class="col-md-3">
-                <label class="form-label small mb-1">{{ t('connection.pfTargetPort') }}</label>
+                <label class="form-label small mb-1 text-nowrap">{{ pfFieldLabel(rule.direction, 'targetPort') }}</label>
                 <input type="number" class="form-control form-control-sm" v-model.number="rule.targetPort" min="1" max="65535">
               </div>
             </div>
@@ -536,6 +536,27 @@ function addPortForward() {
 
 function removePortForward(idx: number) {
   portForwards.value.splice(idx, 1);
+}
+
+type PfField = 'listenHost' | 'listenPort' | 'targetHost' | 'targetPort';
+
+/** -L 是本机监听 / 远端目标，-R 是远端监听 / 本机目标，标签必须随方向变化。 */
+function pfFieldLabel(direction: string, field: PfField): string {
+  const keys: Record<PfField, string> =
+    direction === 'local'
+      ? {
+          listenHost: 'connection.pfLocalListenHost',
+          listenPort: 'connection.pfLocalListenPort',
+          targetHost: 'connection.pfRemoteTargetHost',
+          targetPort: 'connection.pfRemoteTargetPort',
+        }
+      : {
+          listenHost: 'connection.pfRemoteListenHost',
+          listenPort: 'connection.pfRemoteListenPort',
+          targetHost: 'connection.pfLocalTargetHost',
+          targetPort: 'connection.pfLocalTargetPort',
+        };
+  return t(keys[field]);
 }
 
 function syncProxyToForm() {

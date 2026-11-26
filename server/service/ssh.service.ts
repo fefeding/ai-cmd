@@ -498,6 +498,10 @@ export class SSHService {
       const client = new Client();
       const sessionName = name || connection.name || 'SSH';
 
+      // 关闭 Nagle 算法：ssh2 默认不设置，小包交互（终端回显、端口转发的 HTTP 往返）
+      // 会因延迟叠加明显变慢，对隧道场景影响尤其大
+      try { client.setNoDelay(true); } catch (_) {}
+
       log(`正在连接到 ${connection.host}:${connection.port || 22} (用户: ${connection.username})`);
 
       const timeout = setTimeout(() => {
