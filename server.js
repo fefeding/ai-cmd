@@ -54,7 +54,7 @@ const server = http.createServer(app);
 const staticDir = path.join(__dirname, 'dist');
 
 // 解析 JSON 请求体
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 // 检查 server 构建产物
 const serverIndexPath = path.join(__dirname, 'dist/server/index.js');

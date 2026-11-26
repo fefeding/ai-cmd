@@ -19,6 +19,8 @@
 | **Log monitoring** | `tail -f` with anomaly detection and AI-powered analysis |
 | **Batch operations** | Run one command on multiple servers in parallel and aggregate the results |
 | **Jump host & SSH agent forwarding** | Per-connection startup scripts and automatic local SSH agent detection |
+| **Connection grouping & search** | Collapse the connection tree by group / tag and find connections by name, host, username, group or tag; the editor shows required fields only and folds the rest |
+| **Connection backup & sharing** | One-click JSON export / import; secrets are omitted by default for sharing and can be included for personal backups |
 
 ## Quick Start
 
@@ -84,23 +86,25 @@ See [Local Development](#local-development). After compiling, press **F5** in VS
 After activating the extension, an **AICmd** icon appears in the left Activity Bar. Click it to reveal the **Connections** explorer view, which lists:
 
 - **Open Local Shell** — opens a native local shell (`__local__` connection) inside a VSCode WebView tab.
-- **Saved connections** — every connection from `~/.aicmd/connections.json` (shared with the desktop / CLI). SSH connections show a globe icon; **RDP connections show a monitor icon**; local connections show a terminal icon, with the host and username as a description.
+- **Saved connections** — every connection from `~/.aicmd/connections.json` (shared with the desktop / CLI). Connections are collapsed into folder nodes by **group** (switchable to tags); click a group to expand it. SSH connections show a globe icon; **RDP connections show a monitor icon**; local connections show a terminal icon, with the host, username and `#tags` as a description.
 - **No connections yet** hint — appears when the connection list is empty; click the **+** button in the view title to add one.
+- View title icons, left to right: add **+**, refresh **⟳**, sessions, search connections, export JSON, import JSON, grouping mode.
 
 ### Open a connection
 
-You can open a terminal or a remote desktop in three ways:
+You can open a terminal or a remote desktop in four ways:
 
 1. **Command Palette**: press `Ctrl/Cmd + Shift + P`, then run **`AICmd: Open Connection (Terminal / Remote Desktop)`** (command id `aicmd.openTerminal`).
-2. **Activity Bar → Connections view**: click the **Open Local Shell** entry, or click any connection node to open it (SSH → terminal, RDP → graphical desktop).
+2. **Activity Bar → Connections view**: click the **Open Local Shell** entry, or expand a group and click any connection node to open it (SSH → terminal, RDP → graphical desktop).
 3. **Connection node inline action**: hover a connection in the view and click the action icon on the right.
+4. **Search**: run **`AICmd: Search Connections (name / group / tags)`** (`aicmd.searchConnection`), filter by keyword and pick one to open it.
 
 The first launch automatically finds an available port and starts the backend service, then opens the UI in a WebView. Re-opening the same connection appends a number to the tab title (`server 2` / `server 3` …) so multiple sessions stay distinguishable.
 
 ### Windows Remote Desktop (RDP)
 
 1. On the target Windows, enable **Settings → System → Remote Desktop → Enable Remote Desktop** and make sure TCP 3389 is reachable.
-2. In AICmd, click **+** → connection type **Windows Remote Desktop (RDP)** → fill in host, port (default **3389**), username, password, and domain (for domain accounts; leave blank for local accounts). Screen size defaults to 1280×800 and can be adjusted.
+2. In AICmd, click **+** → connection type **Windows Remote Desktop (RDP)** → fill in host, port (default **3389**), username and password. The domain (for domain accounts) and screen size (default 1280×800) are in the collapsed **Advanced Options (optional)** section.
 3. Click the connection: a graphical desktop opens in the WebView with mouse/keyboard input and resolution auto-fit.
 
 > CredSSP is enabled by default. The RDP stack runs entirely in the browser via IronRDP-WASM — no guacd daemon and no local RDP client are needed.
@@ -137,8 +141,12 @@ All connection management reuses the same backend and storage as the desktop / C
 - **Edit connection**: right-click a connection → **Edit**, or run `aicmd.editConnection`. The same editor WebView opens pre-filled. After saving, the tree refreshes automatically and the editor closes.
 - **Delete connection**: right-click a connection → **Delete**, or run `aicmd.deleteConnection`. A confirmation dialog appears; confirming removes the connection via the backend API and refreshes the tree.
 - **Refresh**: click the **⟳** button in the view title bar (or run `aicmd.refresh`) to re-read the connection list from the backend.
+- **Search**: click the magnifier in the view title (or run `aicmd.searchConnection`) to filter by name / group / tag and open a connection directly.
+- **Grouping mode**: click the grouping icon in the view title (or run `aicmd.setGroupMode`) to collapse the tree by connection group or by tag. The choice is persisted in extension state.
+- **Export JSON**: click the download icon in the view title (or run `aicmd.exportConnections`) → choose whether to include secrets → save the `.json` file. Secrets are omitted by default (safe to share with a team); backups containing credentials are for personal use only — store them carefully.
+- **Import JSON**: click the upload icon in the view title (or run `aicmd.importConnections`) → pick a JSON file and confirm. Same-name connections are overwritten, others are kept; a summary reports added / updated / skipped counts. Imported connections get new IDs and secrets are re-encrypted with the local key.
 
-> The connection editor is the same `ConnectionEditor` component used by the desktop app, so startup scripts and SSH agent forwarding for jump-host workflows are fully supported for SSH connections too. The **Proxy Settings** section is available as well: SSH and RDP connections support direct, system, or custom HTTP / HTTPS / SOCKS4 / SOCKS5 proxies (see [Proxy Guide](../../docs/proxy.md)). The extension shares the desktop backend, so the proxy connection is established by the local server and is independent of browser proxy settings.
+> The connection editor is the same `ConnectionEditor` component used by the desktop app. By default it only shows name, type, host / port, username and auth; **Group & Tags, Advanced Options (platform / RDP domain and size), Startup Script, Port Forwards, Keepalive, Terminal Appearance and Proxy Settings** are all collapsible optional sections (already-configured sections auto-expand with a badge when editing). SSH startup scripts / agent forwarding for jump hosts and **Proxy Settings** (direct, system or custom HTTP / HTTPS / SOCKS4 / SOCKS5 for SSH and RDP; see [Proxy Guide](../../docs/proxy.md)) remain fully supported. The extension shares the desktop backend, so the proxy connection is established by the local server and is independent of browser proxy settings.
 
 ### Configure AI
 

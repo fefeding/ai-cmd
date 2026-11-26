@@ -68,7 +68,15 @@
     "onWebviewPanel:aicmd.terminal",
     "onView:aicmd.explorer",
     "onCommand:aicmd.openTerminal",
-    "onCommand:aicmd.refresh"
+    "onCommand:aicmd.connectionClicked",
+    "onCommand:aicmd.refresh",
+    "onCommand:aicmd.runSelection",
+    "onCommand:aicmd.showSessions",
+    "onCommand:aicmd.browseRemote",
+    "onCommand:aicmd.searchConnection",
+    "onCommand:aicmd.exportConnections",
+    "onCommand:aicmd.importConnections",
+    "onCommand:aicmd.setGroupMode"
   ],
   "contributes": {
     "viewsContainers": {
@@ -118,6 +126,60 @@
         "title": "%command.deleteConnection%",
         "category": "AICmd",
         "icon": "$(trash)"
+      },
+      {
+        "command": "aicmd.connectionClicked",
+        "title": "%command.connectionClicked%"
+      },
+      {
+        "command": "aicmd.runSelection",
+        "title": "%command.runSelection%",
+        "category": "AICmd",
+        "icon": "$(run-all)"
+      },
+      {
+        "command": "aicmd.showSessions",
+        "title": "%command.showSessions%",
+        "category": "AICmd",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "aicmd.browseRemote",
+        "title": "%command.browseRemote%",
+        "category": "AICmd",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "aicmd.searchConnection",
+        "title": "%command.searchConnection%",
+        "category": "AICmd",
+        "icon": "$(search)"
+      },
+      {
+        "command": "aicmd.exportConnections",
+        "title": "%command.exportConnections%",
+        "category": "AICmd",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "aicmd.importConnections",
+        "title": "%command.importConnections%",
+        "category": "AICmd",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "aicmd.setGroupMode",
+        "title": "%command.setGroupMode%",
+        "category": "AICmd",
+        "icon": "$(group-by-ref-type)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "aicmd.runSelection",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r",
+        "when": "editorTextFocus"
       }
     ],
     "menus": {
@@ -131,6 +193,43 @@
           "command": "aicmd.refresh",
           "when": "view == aicmd.explorer",
           "group": "navigation@2"
+        },
+        {
+          "command": "aicmd.showSessions",
+          "when": "view == aicmd.explorer",
+          "group": "navigation@3"
+        },
+        {
+          "command": "aicmd.searchConnection",
+          "when": "view == aicmd.explorer",
+          "group": "navigation@4"
+        },
+        {
+          "command": "aicmd.exportConnections",
+          "when": "view == aicmd.explorer",
+          "group": "navigation@5"
+        },
+        {
+          "command": "aicmd.importConnections",
+          "when": "view == aicmd.explorer",
+          "group": "navigation@6"
+        },
+        {
+          "command": "aicmd.setGroupMode",
+          "when": "view == aicmd.explorer",
+          "group": "navigation@7"
+        },
+        {
+          "command": "aicmd.browseRemote",
+          "when": "view == aicmd.explorer",
+          "group": "navigation@8"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "aicmd.runSelection",
+          "when": "editorTextFocus",
+          "group": "navigation@100"
         }
       ],
       "view/item/context": [
@@ -158,11 +257,20 @@
           "command": "aicmd.deleteConnection",
           "when": "view == aicmd.explorer && viewItem == connection",
           "group": "connection@2"
+        },
+        {
+          "command": "aicmd.browseRemote",
+          "when": "view == aicmd.explorer && viewItem == connection",
+          "group": "connection@3"
         }
       ],
       "commandPalette": [
         {
           "command": "aicmd.openTerminal"
+        },
+        {
+          "command": "aicmd.connectionClicked",
+          "when": "false"
         },
         {
           "command": "aicmd.editConnection",

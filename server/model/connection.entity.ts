@@ -15,6 +15,32 @@ export interface ConnectionProxy {
 }
 
 /**
+ * SSH 端口转发规则
+ * - local：本地端口 → 远端目标（ssh -L，常用于访问远程数据库 / 内网服务）
+ * - remote：远端端口 → 本地目标（ssh -R）
+ */
+export interface PortForwardRule {
+  /** 规则 ID */
+  id: string;
+  /** 规则名称（可选） */
+  name?: string;
+  /** 转发方向 */
+  direction: 'local' | 'remote';
+  /** 监听地址（local: 本地监听；remote: 远端监听），默认 127.0.0.1 */
+  listenHost: string;
+  /** 监听端口 */
+  listenPort: number;
+  /** 目标地址（local: 相对 SSH 服务器；remote: 相对本机），默认 127.0.0.1 */
+  targetHost: string;
+  /** 目标端口 */
+  targetPort: number;
+  /** 会话建立后是否自动启动，默认 true */
+  autoStart?: boolean;
+  /** 是否启用 */
+  enabled?: boolean;
+}
+
+/**
  * 连接配置实体
  * 实际数据保存在本地 JSON 文件中（~/.aicmd/connections.json）
  */
@@ -24,6 +50,12 @@ export class ConnectionEntity {
 
   /** 连接名称 */
   name!: string;
+
+  /** 侧栏分组名（空表示未分组） */
+  group?: string;
+
+  /** 侧栏标签，用于搜索与分类 */
+  tags?: string[];
 
   /** 连接类型：ssh / local（本地 shell）/ rdp（Windows 远程桌面） */
   type: 'ssh' | 'local' | 'rdp' = 'ssh';
@@ -66,6 +98,9 @@ export class ConnectionEntity {
 
   /** 是否启用 SSH Agent 转发（用于跳板机密钥认证） */
   forwardAgent?: boolean;
+
+  /** SSH 端口转发规则（本地隧道 / 远程转发） */
+  portForwards?: PortForwardRule[];
 
   /** 终端配置 */
   terminal: {

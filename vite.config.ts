@@ -20,6 +20,8 @@ import { MonitorService } from './server/service/monitor.service';
 import { BatchService } from './server/service/batch.service';
 import { RdpService } from './server/service/rdp.service';
 import { RdpTunnelService } from './server/service/rdp-tunnel.service';
+import { PortForwardService } from './server/service/port-forward.service';
+import { SSHKeyService } from './server/service/ssh-key.service';
 import { validateRdpWsRequest } from './server/utils/rdp-ws';
 import { getAccessToken, getCookieHeader, extractTokenFromHeaders, isValidToken, isAllowedOrigin, requiresToken, normalizeUploadName, maxUploadBytes } from './server/utils/security';
 
@@ -36,6 +38,8 @@ let batchService: BatchService | null = null;
 let aiService: AIService | null = null;
 let rdpService: RdpService | null = null;
 let rdpTunnelService: RdpTunnelService | null = null;
+let portForwardService: PortForwardService | null = null;
+let sshKeyService: SSHKeyService | null = null;
 
 // 初始化服务实例（仅在开发服务器启动时调用）
 function initServices() {
@@ -51,6 +55,10 @@ function initServices() {
   monitorService = new MonitorService(connectionService);
   batchService = new BatchService(sshService, connectionService);
   aiService = new AIService(sshService, skillService, auditService);
+  portForwardService = new PortForwardService(sshService);
+  sshKeyService = new SSHKeyService(connectionService);
+  sshService.onSessionReady((sessionId, connection) => portForwardService!.startAuto(sessionId, connection));
+  sshService.onSessionClose((sessionId) => portForwardService!.stopAll(sessionId));
 }
 
 const defaultInitState = {
@@ -632,7 +640,7 @@ async function serverRoute(req: Connect.IncomingMessage, res: http.ServerRespons
             return true;
         }
         const body = await getRequestBody(req);
-        if (pathname.startsWith('/api/connection/') || pathname.startsWith('/api/terminal/') || pathname.startsWith('/api/ai/') || pathname.startsWith('/api/audit/') || pathname.startsWith('/api/monitor/') || pathname.startsWith('/api/batch/') || pathname.startsWith('/api/file/')) {
+        if (pathname.startsWith('/api/connection/') || pathname.startsWith('/api/terminal/') || pathname.startsWith('/api/ai/') || pathname.startsWith('/api/audit/') || pathname.startsWith('/api/monitor/') || pathname.startsWith('/api/batch/') || pathname.startsWith('/api/file/') || pathname.startsWith('/api/tunnel/') || pathname.startsWith('/api/ssh-key/')) {
             try {
                 const data = await handleRoute(pathname, body);
                 res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -664,7 +672,7 @@ async function serverRoute(req: Connect.IncomingMessage, res: http.ServerRespons
 
 async function handleRoute(pathname: string, body: any) {
   // 确保服务已初始化
-  if (!connectionService || !sshService || !aiService || !skillService || !auditService || !monitorService || !batchService) {
+  if (!connectionService || !sshService || !aiService || !skillService || !auditService || !monitorService || !batchService || !portForwardService || !sshKeyService) {
     throw new Error('Services not initialized');
   }
 
@@ -690,6 +698,12 @@ async function handleRoute(pathname: string, body: any) {
     if (!id) throw new Error('Missing parameter: id');
     await connectionService!.deleteConnection(id);
     return true;
+  }
+  if (pathname === '/api/connection/exportConnections') {
+    return await connectionService!.exportConnections(body?.includeSecrets === true);
+  }
+  if (pathname === '/api/connection/importConnections') {
+    return await connectionService!.importConnections(body?.payload, body?.mode || 'update');
   }
   if (pathname === '/api/connection/testConnection') {
     return await connectionService!.testConnection(body);
@@ -898,6 +912,57 @@ async function handleRoute(pathname: string, body: any) {
     const { sessionId } = body;
     if (!sessionId) throw new Error('Missing parameter: sessionId');
     return await sshService!.getDefaultDirectory(sessionId);
+  }
+
+  // ========== SSH 端口转发 / 隧道 ==========
+  if (pathname === '/api/tunnel/list') {
+    const { sessionId } = body;
+    if (!sessionId) throw new Error('Missing parameter: sessionId');
+    return portForwardService!.list(sessionId);
+  }
+  if (pathname === '/api/tunnel/start') {
+    const { sessionId, rule } = body;
+    if (!sessionId || !rule) throw new Error('Missing parameter: sessionId, rule');
+    await portForwardService!.start(sessionId, rule);
+    return portForwardService!.list(sessionId);
+  }
+  if (pathname === '/api/tunnel/stop') {
+    const { sessionId, ruleId } = body;
+    if (!sessionId || !ruleId) throw new Error('Missing parameter: sessionId, ruleId');
+    portForwardService!.stop(sessionId, ruleId);
+    return portForwardService!.list(sessionId);
+  }
+  if (pathname === '/api/tunnel/stopAll') {
+    const { sessionId } = body;
+    if (!sessionId) throw new Error('Missing parameter: sessionId');
+    portForwardService!.stopAll(sessionId);
+    return true;
+  }
+
+  // ========== SSH 密钥管理 ==========
+  if (pathname === '/api/ssh-key/list') {
+    return sshKeyService!.list();
+  }
+  if (pathname === '/api/ssh-key/generate') {
+    return await sshKeyService!.generate(body);
+  }
+  if (pathname === '/api/ssh-key/import') {
+    return await sshKeyService!.import(body);
+  }
+  if (pathname === '/api/ssh-key/getPrivateKey') {
+    const { id } = body;
+    if (!id) throw new Error('Missing parameter: id');
+    const result = sshKeyService!.getPrivateKey(id);
+    if (!result) throw new Error('密钥不存在');
+    return result;
+  }
+  if (pathname === '/api/ssh-key/delete') {
+    const { id } = body;
+    if (!id) throw new Error('Missing parameter: id');
+    return sshKeyService!.delete(id);
+  }
+  if (pathname === '/api/ssh-key/distribute') {
+    return await sshKeyService!.distribute(body);
   }
 
   throw new Error('API endpoint not found');

@@ -284,6 +284,10 @@ export class SSHService {
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   /** 正在建立中的 SFTP 连接（避免并发重复创建） */
   private sftpPromises: Map<string, Promise<any>> = new Map();
+  /** 会话建立成功后的钩子（端口转发自动启动等） */
+  private sessionReadyHooks: Array<(sessionId: string, connection: ConnectionEntity) => void> = [];
+  /** 会话关闭时的钩子（端口转发清理等） */
+  private sessionCloseHooks: Array<(sessionId: string) => void> = [];
 
   constructor(connectionService: ConnectionService) {
     this.connectionService = connectionService;
@@ -365,6 +369,11 @@ export class SSHService {
       } else {
         console.log(`[SSH] Skipping MOTD capture for jump host session ${sessionId}, will collect on demand`);
       }
+    }
+
+    // 通知会话就绪钩子（端口转发自动启动等）
+    for (const hook of this.sessionReadyHooks) {
+      try { hook(sessionId, connection); } catch (e) { console.error('[SSH] session ready hook failed:', e); }
     }
 
     return session;
@@ -539,10 +548,19 @@ export class SSHService {
           stream.on('data', () => this.scheduleCwdRefresh(sessionId));
 
           stream.on('close', () => {
-            log(`Shell 流已关闭`);
+            // 重连会复用同一个 sessionId：旧 shell 的延迟 close 不能删掉新会话
             const closing = this.sessions.get(sessionId);
-            if (closing?.cwdRefreshTimer) clearTimeout(closing.cwdRefreshTimer);
+            if (closing?.stream !== stream) {
+              log(`Shell 流已关闭（旧实例，忽略）`);
+              return;
+            }
+            log(`Shell 流已关闭`);
+            if (closing.cwdRefreshTimer) clearTimeout(closing.cwdRefreshTimer);
             this.sessions.delete(sessionId);
+            // Shell 流关闭（远端主动断开）同样要清理端口转发
+            for (const hook of this.sessionCloseHooks) {
+              try { hook(sessionId); } catch (e) { console.error('[SSH] session close hook failed:', e); }
+            }
           });
 
           // Execute startup script if configured (e.g. jump host SSH hop)
@@ -1758,6 +1776,21 @@ Write-Output "__DOCKER__: $dockerVer"
       }
       this.sessions.delete(sessionId);
     }
+    // 通知会话关闭钩子（端口转发清理等）
+    for (const hook of this.sessionCloseHooks) {
+      try { hook(sessionId); } catch (e) { console.error('[SSH] session close hook failed:', e); }
+    }
+  }
+
+  /**
+   * 注册会话生命周期钩子
+   */
+  onSessionReady(hook: (sessionId: string, connection: ConnectionEntity) => void): void {
+    this.sessionReadyHooks.push(hook);
+  }
+
+  onSessionClose(hook: (sessionId: string) => void): void {
+    this.sessionCloseHooks.push(hook);
   }
 
   /**

@@ -9,6 +9,14 @@ import { execSync } from 'child_process';
 
 const ENCRYPTED_PREFIX = 'enc:v1:';
 const SECRET_FIELDS: Array<keyof ConnectionEntity> = ['password', 'privateKey', 'passphrase'];
+const EXPORT_FORMAT = 'aicmd-connections';
+const EXPORT_VERSION = 1;
+/** 导入时允许覆盖的字段，避免文件里的任意键污染配置 */
+const IMPORTABLE_FIELDS: Array<keyof ConnectionEntity> = [
+  'name', 'type', 'host', 'port', 'username', 'platform', 'authType',
+  'password', 'privateKey', 'passphrase', 'shell', 'startupScript',
+  'forwardAgent', 'terminal', 'options', 'proxy', 'enabled', 'group', 'tags'
+];
 
 /**
  * SSH 连接管理服务
@@ -156,6 +164,113 @@ export class ConnectionService {
     }
 
     await this.saveConnections(filteredConnections);
+  }
+
+  /**
+   * 导出连接配置为可分享的 JSON。
+   * 默认剔除密码 / 私钥 / 代理密码（适合团队共享）；includeSecrets=true 时用于备份。
+   */
+  async exportConnections(includeSecrets = false): Promise<{
+    format: string;
+    version: number;
+    exportedAt: string;
+    connections: ConnectionEntity[];
+  }> {
+    const connections = await this.getAllConnections();
+    return {
+      format: EXPORT_FORMAT,
+      version: EXPORT_VERSION,
+      exportedAt: new Date().toISOString(),
+      connections: connections.map(conn => this.toExportItem(conn, includeSecrets))
+    };
+  }
+
+  /**
+   * 导入连接配置。按连接名称去重：mode='update' 覆盖同名配置，'skip' 跳过。
+   * 导入的连接一律生成新 ID 和时间戳，敏感字段在落盘时重新加密。
+   */
+  async importConnections(input: any, mode: 'skip' | 'update' = 'update'): Promise<{
+    total: number;
+    added: number;
+    updated: number;
+    skipped: number;
+  }> {
+    if (mode !== 'skip' && mode !== 'update') {
+      throw new Error('Invalid import mode');
+    }
+    const list = Array.isArray(input) ? input : input?.connections;
+    if (!Array.isArray(list)) {
+      throw new Error('连接文件格式无效：缺少 connections 数组');
+    }
+    if (list.length > 1000) {
+      throw new Error('连接数量超过上限（1000）');
+    }
+
+    const existing = await this.getAllConnections();
+    const byName = new Map<string, ConnectionEntity>();
+    for (const conn of existing) {
+      if (conn.name) byName.set(conn.name, conn);
+    }
+
+    const result = { total: list.length, added: 0, updated: 0, skipped: 0 };
+    for (const raw of list) {
+      const conn = this.fromImportItem(raw);
+      if (!conn) {
+        result.skipped++;
+        continue;
+      }
+      const found = byName.get(conn.name!);
+      if (found && mode === 'skip') {
+        result.skipped++;
+        continue;
+      }
+      if (found) {
+        await this.updateConnection(found.id!, conn);
+        result.updated++;
+      } else {
+        const added = await this.addConnection(conn);
+        byName.set(added.name, added);
+        result.added++;
+      }
+    }
+    return result;
+  }
+
+  /** 去掉本地身份/时间戳，按需要剔除敏感字段。 */
+  private toExportItem(connection: ConnectionEntity, includeSecrets: boolean): ConnectionEntity {
+    const item: any = { ...connection };
+    delete item.id;
+    delete item.createdAt;
+    delete item.updatedAt;
+    if (!includeSecrets) {
+      for (const field of SECRET_FIELDS) delete item[field];
+      if (item.proxy) {
+        const { password: _password, ...proxy } = item.proxy;
+        item.proxy = proxy;
+      }
+    }
+    return item as ConnectionEntity;
+  }
+
+  /** 只保留已知字段，并修正 group/tags 类型。无效条目返回 null。 */
+  private fromImportItem(raw: any): ConnectionEntity | null {
+    if (!raw || typeof raw !== 'object' || typeof raw.name !== 'string' || !raw.name.trim()) {
+      return null;
+    }
+    if (typeof raw.host !== 'string' || !raw.host.trim()) return null;
+
+    const conn: any = new ConnectionEntity();
+    for (const field of IMPORTABLE_FIELDS) {
+      if (raw[field] !== undefined && raw[field] !== null) conn[field] = raw[field];
+    }
+    conn.name = conn.name.trim();
+    conn.host = conn.host.trim();
+    conn.group = typeof conn.group === 'string' ? conn.group.trim() : '';
+    conn.tags = Array.isArray(conn.tags)
+      ? conn.tags.filter((tag: any) => typeof tag === 'string' && tag.trim()).map((tag: string) => tag.trim())
+      : [];
+    if (typeof conn.type !== 'string' || !['ssh', 'rdp', 'local'].includes(conn.type)) conn.type = 'ssh';
+    return conn as ConnectionEntity;
   }
 
   /**
@@ -540,6 +655,17 @@ export class ConnectionService {
         }
       }
     }
+  }
+
+  /**
+   * 供同一数据目录下的其它服务（如 SSH 密钥库）复用加密能力
+   */
+  encryptText(value: string): string {
+    return this.encryptSecret(value);
+  }
+
+  decryptText(value: string): string {
+    return this.decryptSecret(value);
   }
 
   private encryptSecret(value: string): string {

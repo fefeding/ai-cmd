@@ -11,10 +11,21 @@ import { t } from './i18n';
 export interface AicmdConnection {
   id: string;
   name?: string;
+  group?: string;
+  tags?: string[];
   type?: 'ssh' | 'local' | 'rdp' | string;
   host?: string;
   port?: string | number;
   username?: string;
+}
+
+/** 会话信息（与后端 /api/terminal/getSessions 的返回字段对齐）。 */
+export interface AicmdSession {
+  sessionId: string;
+  connectionId: string;
+  type: 'ssh' | 'local';
+  name: string;
+  createdAt: string;
 }
 
 /**
@@ -350,9 +361,35 @@ export class ServerLauncher {
     await this.api('/api/connection/deleteConnection', { id });
   }
 
-  /** 简单的内部 POST 请求封装（带超时与业务码校验）。 */
-  private api(pathname: string, body: any): Promise<any> {
-    return new Promise((resolve, reject) => {
+  /** 获取后端会话列表（含面板已关闭但进程仍在运行的会话）。 */
+  async getSessions(): Promise<AicmdSession[]> {
+    const body = await this.api('/api/terminal/getSessions', {});
+    return (Array.isArray(body) ? body : (body?.data ?? [])) as AicmdSession[];
+  }
+
+  /** 重命名会话（同时更新后端持久化的元数据）。 */
+  async renameSession(sessionId: string, name: string): Promise<void> {
+    await this.api('/api/terminal/renameSession', { sessionId, name });
+  }
+
+  /**
+   * 关闭所有会话。后端 closeAllSessions 只终止进程，元数据要等定时清理才消失，
+   * 因此随后按本次列出的 id 逐个 deleteSession，让会话列表立即清空。
+   */
+  async closeAllSessions(sessionIds: string[] = []): Promise<void> {
+    await this.api('/api/terminal/closeAllSessions', {});
+    for (const id of sessionIds) {
+      try {
+        await this.api('/api/terminal/deleteSession', { sessionId: id });
+      } catch {
+        // 单个元数据清理失败不影响已经完成的关闭动作
+      }
+    }
+  }
+
+  /** 内部 POST 请求封装（自动确保服务已启动，带超时与业务码校验）。 */
+  api(pathname: string, body: any): Promise<any> {
+    return this.ensureStarted(this.startPort).then(() => new Promise((resolve, reject) => {
       const payload = JSON.stringify(body || {});
       const req = http.request(
         {
@@ -392,6 +429,78 @@ export class ServerLauncher {
       req.on('error', reject);
       req.write(payload);
       req.end();
+    }));
+  }
+
+  /** 通过 SFTP / 本地文件 API 读取远程文件内容。 */
+  async downloadFile(sessionId: string, remotePath: string): Promise<Buffer> {
+    await this.ensureStarted(this.startPort);
+    const query = `sessionId=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(remotePath)}`;
+    return new Promise<Buffer>((resolve, reject) => {
+      const req = http.get(
+        {
+          host: '127.0.0.1',
+          port: this.port,
+          path: `/api/file/download?${query}`,
+          timeout: 60000
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+          res.on('end', () => {
+            if (res.statusCode !== 200) {
+              const text = Buffer.concat(chunks).toString('utf8');
+              let message = text;
+              try {
+                const json = JSON.parse(text);
+                message = json.error || json.msg || message;
+              } catch { /* ignore */ }
+              return reject(new Error(message || `HTTP ${res.statusCode}`));
+            }
+            resolve(Buffer.concat(chunks));
+          });
+        }
+      );
+      req.on('timeout', () => req.destroy(new Error(t('下载远程文件超时', 'Remote file download timed out'))));
+      req.on('error', reject);
+    });
+  }
+
+  /** 通过已有的 HTTP 上传端点写入远程文件（支持绝对路径）。 */
+  async uploadFile(sessionId: string, remotePath: string, content: Buffer): Promise<void> {
+    await this.ensureStarted(this.startPort);
+    return new Promise<void>((resolve, reject) => {
+      const req = http.request(
+        {
+          host: '127.0.0.1',
+          port: this.port,
+          path: '/api/file-upload',
+          method: 'POST',
+          timeout: 120000,
+          headers: {
+            'X-Session-Id': sessionId,
+            'X-File-Name': remotePath,
+            'Content-Type': 'application/octet-stream',
+            'Content-Length': content.length
+          }
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+          res.on('end', () => {
+            const text = Buffer.concat(chunks).toString('utf8');
+            let json: any = {};
+            try { json = JSON.parse(text); } catch { /* ignore */ }
+            if (res.statusCode !== 200 || json.success === false || (json.ret !== undefined && json.ret !== 0)) {
+              return reject(new Error(json.error || json.msg || `HTTP ${res.statusCode}`));
+            }
+            resolve();
+          });
+        }
+      );
+      req.on('timeout', () => req.destroy(new Error(t('上传远程文件超时', 'Remote file upload timed out'))));
+      req.on('error', reject);
+      req.end(content);
     });
   }
 

@@ -13,6 +13,17 @@
       @toggle-sidebar="store.toggleSidebar()"
       @open-ai-settings="openAISettings"
       @open-batch="openBatchPanel"
+      @open-tunnels="openTunnelPanel"
+      @open-keys="openKeyManager"
+      @export-connections="handleExportConnections"
+      @import-connections="handleImportConnections"
+    />
+    <input
+      ref="importFileInput"
+      type="file"
+      accept=".json,application/json"
+      style="display: none"
+      @change="handleImportFile"
     />
 
     <!-- 主区域 -->
@@ -108,6 +119,12 @@
     <!-- AI 设置 -->
     <AISettings ref="aiSettingsRef" />
 
+    <!-- 端口转发 / 隧道管理 -->
+    <TunnelPanel ref="tunnelPanelRef" />
+
+    <!-- SSH 密钥管理 -->
+    <SshKeyManager ref="keyManagerRef" @use-key="handleUseKey" />
+
     <!-- 批量操作面板 -->
     <div v-if="showBatchPanel" class="batch-modal-overlay" @click.self="showBatchPanel = false">
       <div class="batch-modal">
@@ -162,6 +179,11 @@ import RdpTabComp from '@/components/rdp-tab.vue';
 import ConnectionEditor from '@/components/connection-editor/index.vue';
 import AISettings from '@/components/ai-settings/index.vue';
 import BatchPanel from '@/components/batch-panel/index.vue';
+import TunnelPanel from '@/components/tunnel-panel/index.vue';
+import SshKeyManager from '@/components/ssh-key-manager/index.vue';
+import { ConnectionService } from '@/service/connection';
+import { toast } from '@/utils/toast';
+import { modal } from '@/utils/modal';
 import type { ConnectionEntity, TerminalTab as TerminalTabType } from '@/typings/connection';
 
 const { t } = useI18n();
@@ -171,6 +193,10 @@ const connectionEditorRef = ref<InstanceType<typeof ConnectionEditor>>();
 const aiSettingsRef = ref<InstanceType<typeof AISettings>>();
 const batchPanelRef = ref<InstanceType<typeof BatchPanel>>();
 const showBatchPanel = ref(false);
+const tunnelPanelRef = ref<InstanceType<typeof TunnelPanel>>();
+const keyManagerRef = ref<InstanceType<typeof SshKeyManager>>();
+const connectionService = new ConnectionService();
+const importFileInput = ref<HTMLInputElement | null>(null);
 
 // Tab 重命名状态
 const editingTabId = ref<string | null>(null);
@@ -265,6 +291,52 @@ function handleRefresh() {
   store.loadConnections();
 }
 
+// 导出连接 JSON：默认不含凭据，适合团队共享；确认后包含凭据用于个人备份
+async function handleExportConnections() {
+  const includeSecrets = await modal.confirm(t('sidebar.exportSecretsConfirm'));
+  try {
+    const result: any = await connectionService.exportConnections(includeSecrets);
+    if (result?.ret !== 0) throw new Error(result?.msg || t('sidebar.exportFailed'));
+    const blob = new Blob([JSON.stringify(result.data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `aicmd-connections-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e: any) {
+    toast.error(e.message || t('sidebar.exportFailed'));
+  }
+}
+
+function handleImportConnections() {
+  importFileInput.value?.click();
+}
+
+async function handleImportFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  if (!(await modal.confirm(t('sidebar.importConfirm')))) return;
+  try {
+    const payload = JSON.parse(await file.text());
+    const result: any = await connectionService.importConnections(payload, 'update');
+    if (result?.ret !== 0) throw new Error(result?.msg || t('sidebar.importFailed'));
+    const r = result.data || {};
+    toast.success(t('sidebar.imported', {
+      added: r.added || 0,
+      updated: r.updated || 0,
+      skipped: r.skipped || 0,
+    }));
+    await store.loadConnections();
+  } catch (e: any) {
+    toast.error(e.message || t('sidebar.importFailed'));
+  }
+}
+
 // 关闭 Tab（异步）
 async function handleCloseTab(tabId: string) {
   await store.closeTab(tabId);
@@ -356,6 +428,24 @@ function openAISettings() {
 // 打开批量操作面板
 function openBatchPanel() {
   showBatchPanel.value = true;
+}
+
+// 打开端口转发 / 隧道管理面板
+function openTunnelPanel() {
+  tunnelPanelRef.value?.open();
+}
+
+// 打开 SSH 密钥管理
+function openKeyManager() {
+  keyManagerRef.value?.open();
+}
+
+function handleUseKey(payload: { privateKey: string; name: string }) {
+  connectionEditorRef.value?.open();
+  // open() 会重置表单，等下一帧再回填密钥内容
+  nextTick(() => {
+    connectionEditorRef.value?.applyKey(payload.privateKey, payload.name);
+  });
 }
 
 // 快捷键

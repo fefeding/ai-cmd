@@ -7,6 +7,14 @@
   "command.addConnection": "Add Connection",
   "command.editConnection": "Edit Connection",
   "command.deleteConnection": "Delete Connection",
+  "command.searchConnection": "Search Connections (name / group / tags)",
+  "command.exportConnections": "Export Connections to JSON",
+  "command.importConnections": "Import Connections from JSON",
+  "command.setGroupMode": "Group Connections (by group / by tag)",
+  "command.connectionClicked": "Double-click to Open Connection",
+  "command.runSelection": "Run Selection in AICmd Terminal",
+  "command.showSessions": "Manage AICmd Sessions",
+  "command.browseRemote": "Browse Remote Files…",
   "config.dataDir.description": "Data directory for connections, sessions, AI config and audit logs. Leave empty to share ~/.aicmd with the desktop app / CLI and reuse the same connections.json.",
   "config.startPort.description": "Starting port used when launching the AICmd service inside VS Code. If occupied, the extension scans forward for a free port."
 }

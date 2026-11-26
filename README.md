@@ -60,7 +60,9 @@ An AI-powered web SSH terminal that combines a full-featured terminal emulator w
 - **Adaptive Layout**: Terminal automatically resizes when the AI chat panel is toggled, maintaining proper column count.
 
 ### General
-- **Connection Management**: Visual SSH connection configuration (CRUD) with key-based, password, and auto auth. Supports startup scripts and agent forwarding for jump host workflows.
+- **Connection Management**: Visual SSH / RDP connection configuration (CRUD) with key-based, password, and auto auth. The editor shows only required fields by default; group / tags, platform, startup scripts, port forwards, keepalive, terminal appearance and proxy settings live in collapsible sections and auto-expand when already configured.
+- **Connection Grouping & Search**: The sidebar tree collapses connections by **group** or **tag**; search covers name, host, username, group and tags. Set group / tags in the connection editor.
+- **Connection Backup & Sharing**: Export connections to JSON (secrets omitted by default for team sharing; include passwords / keys explicitly for personal backups). Import overwrites same-name connections and reports added / updated / skipped counts.
 - **Connection Proxy**: Per-connection direct / system / custom proxy (HTTP, HTTPS, SOCKS4, SOCKS5) for SSH and RDP, including automatic OS proxy detection and bypass rules. See [Proxy Guide](./docs/proxy.md).
 - **i18n**: Chinese / English UI with runtime language switching.
 - **Desktop App**: Cross-platform desktop client via Electron (Windows, macOS, Linux).
@@ -201,7 +203,7 @@ cd packages/vscode && npm run watch   # continuous extension rebuild
 
 - **Package**: `pnpm build:vscode && cd packages/vscode && vsce package` produces a `.vsix`.
 - **Key settings**: `aicmd.dataDir` (data directory, default `~/.aicmd`), `aicmd.startPort` (starting port, default `9802`).
-- **Commands**: `AICmd: 打开终端` (open terminal), plus connection add / edit / delete / refresh in the Activity Bar's **AICmd → Terminal** view.
+- **Commands**: `AICmd: 打开终端`, `AICmd: 搜索连接（名称 / 分组 / 标签）`, `AICmd: 连接分组方式（按分组 / 按标签）`, `AICmd: 导出连接 JSON`, `AICmd: 导入连接 JSON`, plus connection add / edit / delete / refresh in the Activity Bar's **AICmd → Connections** view. See the [extension usage guide](./packages/vscode/README.md).
 
 ## AI Usage Examples
 
@@ -318,6 +320,8 @@ All data is stored locally on the server:
 
 Use `AICMD_DATA_DIR` environment variable to override the data directory.
 
+Connection passwords, private keys and proxy passwords are stored encrypted (AES-256-GCM) in `connections.json`. Exported JSON **omits secrets by default** (safe to share with a team); only an explicit "include passwords / private keys" choice writes plaintext credentials — use that only for personal backups and store the file carefully.
+
 ## Safety Mechanisms
 
 The AI agent includes built-in command-level safety protections to reduce the risk of destructive operations:
@@ -359,7 +363,7 @@ In addition to SSH terminals, this tool supports connecting to Windows via a **g
 
 **2. No server-side setup needed.** The WASM module is bundled with the app. In browser / VSCode mode the local AICmd server exposes `/ws/rdp`; in the Electron desktop app a loopback proxy is started automatically. Nothing else to install.
 
-**3. Create a connection**: choose "Windows Remote Desktop (RDP)" as the type, fill in host, port (3389), username, password, and domain (for domain accounts; leave blank for local). Screen size defaults to 1280×800.
+**3. Create a connection**: choose "Windows Remote Desktop (RDP)" as the type, fill in host, port (3389), username and password. The domain (for domain accounts; leave blank for local) and screen size (default 1280×800) are in the collapsed **Advanced Options (optional)** section.
 
 **4. Use it**: mouse click/move, full keyboard input (including modifier keys and function keys), and adaptive resolution are supported. The toolbar provides clipboard, upload, download, reconnect, and **fullscreen** buttons (native fullscreen where permitted; a CSS fallback in restricted hosts, and window-level fullscreen in the VSCode extension). If another connection to the same machine takes over the session, the old tab shows a disconnected overlay with a one-click reconnect button.
 

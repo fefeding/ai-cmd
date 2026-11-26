@@ -2,8 +2,10 @@ import * as vscode from 'vscode';
 import { ServerLauncher, AicmdConnection } from './server-launcher';
 import { t } from './i18n';
 
+type GroupItem = vscode.TreeItem & { groupName: string };
+
 /**
- * 侧边栏树：列出与桌面端 / CLI 共用的连接配置，点击任一节点在 VSCode 内打开终端。
+ * 侧边栏树：列出与桌面端 / CLI 共用的连接配置，按分组折叠，点击连接节点打开终端。
  * 连接列表来自 AICmd 后端（读取 ~/.aicmd/connections.json），即与独立运行的
  * fshell 完全相同的存储位置。
  */
@@ -19,6 +21,7 @@ export class AICmdTreeProvider
   // 避免树反复重绘 / 出现「服务未启动」的错误闪现。
   private connsCache?: any[];
   private connsPromise?: Promise<any[]>;
+  private groupMode: 'group' | 'tag' = 'group';
 
   constructor(
     private readonly launcher: ServerLauncher,
@@ -45,14 +48,45 @@ export class AICmdTreeProvider
     };
   }
 
+  private ungroupedName(): string {
+    return this.groupMode === 'tag'
+      ? t('无标签', 'No tags')
+      : t('未分组', 'Ungrouped');
+  }
+
+  private groupOf(conn: AicmdConnection): string {
+    return conn.group?.trim() || this.ungroupedName();
+  }
+
+  private groupNames(conn: AicmdConnection): string[] {
+    if (this.groupMode === 'tag') {
+      const tags = (conn.tags || []).map((tag) => tag.trim()).filter(Boolean);
+      return tags.length ? tags : [this.ungroupedName()];
+    }
+    return [this.groupOf(conn)];
+  }
+
   getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
     return element;
   }
 
   async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
-    if (element) return [];
-
     const localShell = t('本地 Shell', 'Local Shell');
+
+    // 展开分组节点：只返回该组的连接
+    if (element) {
+      const groupName = (element as GroupItem).groupName;
+      if (groupName === undefined) return [];
+      try {
+        const conns = await this.loadConnections();
+        return conns
+          .filter((c) => this.groupNames(c as AicmdConnection).includes(groupName))
+          .map((c) => this.connectionItem(c as AicmdConnection, localShell));
+      } catch {
+        return [];
+      }
+    }
+
     const openLocalShell = t('打开本地 Shell', 'Open Local Shell');
     const openAll = new vscode.TreeItem(
       openLocalShell,
@@ -70,43 +104,46 @@ export class AICmdTreeProvider
     );
 
     try {
-      const conns = await this.loadConnections();
+      const conns = await this.loadConnections() as AicmdConnection[];
       const items: vscode.TreeItem[] = [openAll];
 
-      for (const c of conns as AicmdConnection[]) {
-        const isLocal = c.type === 'local';
-        const isRdp = c.type === 'rdp';
-        const item = new vscode.TreeItem(
-          c.name || (isLocal ? localShell : c.host) || c.id,
-          vscode.TreeItemCollapsibleState.None
-        );
-        // 给 TreeItem 一个稳定身份，使内联图标 / 右键菜单命令都能正确取到 id
-        // （view/item/context 触发时 VSCode 会把本对象作为首个参数传入）
-        item.id = String(c.id);
-        item.contextValue = 'connection';
-        item.iconPath = this.treeIcon(
-          isLocal ? 'terminal' : isRdp ? 'display' : 'hdd-network'
-        );
-        // 与 Web 端连接列表一致：副标题显示 username@host:port
-        const remoteDetail = `${[c.username, c.host].filter(Boolean).join('@')}${
-          c.port ? `:${c.port}` : ''
-        }`;
-        item.description = isLocal ? localShell : remoteDetail;
-        item.tooltip = `${c.name || ''}\n${
-          isLocal
-            ? localShell
-            : (isRdp ? t('远程桌面 · ', 'Remote Desktop · ') : '') + remoteDetail
-        }`;
-        // 点击连接节点 → 打开 WebView tab（SSH 终端或 RDP 远程桌面）
-        item.command = {
-          command: 'aicmd.openTerminal',
-          title: t('打开', 'Open'),
-          arguments: [c.id, c.name || (isLocal ? localShell : c.host), c.type]
-        };
-        items.push(item);
-      }
+      if (conns.length > 0) {
+        const byGroup = new Map<string, AicmdConnection[]>();
+        for (const conn of conns) {
+          for (const name of this.groupNames(conn)) {
+            if (!byGroup.has(name)) byGroup.set(name, []);
+            byGroup.get(name)!.push(conn);
+          }
+        }
+        const ungrouped = this.ungroupedName();
+        const groups = Array.from(byGroup, ([name, list]) => ({ name, list }))
+          .sort((a, b) => {
+            if (a.name === ungrouped) return 1;
+            if (b.name === ungrouped) return -1;
+            return a.name.localeCompare(b.name);
+          });
 
-      if (conns.length === 0) {
+        for (const { name, list } of groups) {
+          const groupItem = new vscode.TreeItem(
+            name,
+            vscode.TreeItemCollapsibleState.Collapsed
+          ) as GroupItem;
+          groupItem.groupName = name;
+          // 稳定 id：VSCode 会据此记住分组的展开 / 折叠状态
+          groupItem.id = `aicmd-group:${this.groupMode}:${name}`;
+          groupItem.contextValue = 'connection-group';
+          groupItem.iconPath = new vscode.ThemeIcon(
+            name === ungrouped
+              ? 'list-unordered'
+              : this.groupMode === 'tag'
+              ? 'tag'
+              : 'folder'
+          );
+          groupItem.description = String(list.length);
+          groupItem.tooltip = `${name} · ${list.length} ${t('个连接', 'connections')}`;
+          items.push(groupItem);
+        }
+      } else {
         const hint = new vscode.TreeItem(
           t('暂无连接，点击添加', 'No connections yet. Click to add one.'),
           vscode.TreeItemCollapsibleState.None
@@ -142,6 +179,53 @@ export class AICmdTreeProvider
     }
   }
 
+  private connectionItem(
+    c: AicmdConnection,
+    localShell: string
+  ): vscode.TreeItem {
+    const isLocal = c.type === 'local';
+    const isRdp = c.type === 'rdp';
+    const item = new vscode.TreeItem(
+      c.name || (isLocal ? localShell : c.host) || c.id,
+      vscode.TreeItemCollapsibleState.None
+    );
+    // 给 TreeItem 一个稳定身份，使内联图标 / 右键菜单命令都能正确取到 id
+    // （view/item/context 触发时 VSCode 会把本对象作为首个参数传入）
+    item.id = String(c.id);
+    item.contextValue = 'connection';
+    item.iconPath = this.treeIcon(
+      isLocal ? 'terminal' : isRdp ? 'display' : 'hdd-network'
+    );
+    // 与 Web 端连接列表一致：副标题显示 username@host:port，标签以 #tag 追加
+    const remoteDetail = `${[c.username, c.host].filter(Boolean).join('@')}${
+      c.port ? `:${c.port}` : ''
+    }`;
+    const tags = (c.tags || []).map((tag) => `#${tag}`).join(' ');
+    item.description = [isLocal ? localShell : remoteDetail, tags]
+      .filter(Boolean)
+      .join(' ');
+    item.tooltip = [
+      c.name || '',
+      isLocal
+        ? localShell
+        : (isRdp ? t('远程桌面 · ', 'Remote Desktop · ') : '') + remoteDetail,
+      this.groupMode === 'group' && this.groupOf(c) !== this.ungroupedName()
+        ? t('分组：', 'Group: ') + this.groupOf(c)
+        : '',
+      tags,
+    ]
+      .filter(Boolean)
+      .join('\n');
+    // 单击只选中；双击由 aicmd.connectionClicked 做时间窗判定，
+    // 或直接点右侧的 ▶ 按钮打开（避免误触）
+    item.command = {
+      command: 'aicmd.connectionClicked',
+      title: t('双击打开（或点击右侧播放按钮）', 'Double-click to open (or click the play button)'),
+      arguments: [c.id, c.name || (isLocal ? localShell : c.host), c.type]
+    };
+    return item;
+  }
+
   /** 带去重缓存地加载连接列表（多路并发共享同一次请求）。 */
   private loadConnections(): Promise<any[]> {
     if (this.connsCache) return Promise.resolve(this.connsCache);
@@ -160,6 +244,12 @@ export class AICmdTreeProvider
         }
       );
     return this.connsPromise;
+  }
+
+  setGroupMode(mode: 'group' | 'tag'): void {
+    if (this.groupMode === mode) return;
+    this.groupMode = mode;
+    this.refresh();
   }
 
   refresh(): void {

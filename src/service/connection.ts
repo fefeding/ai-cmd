@@ -28,4 +28,14 @@ export class ConnectionService {
   async testConnection(connection: ConnectionEntity) {
     return request('/api/connection/testConnection', connection);
   }
+
+  /** 导出连接 JSON（默认不含密码/私钥，适合团队共享） */
+  async exportConnections(includeSecrets = false) {
+    return request('/api/connection/exportConnections', { includeSecrets });
+  }
+
+  /** 导入连接 JSON；同名连接按 mode 跳过或覆盖 */
+  async importConnections(payload: unknown, mode: 'skip' | 'update' = 'update') {
+    return request('/api/connection/importConnections', { payload, mode });
+  }
 }

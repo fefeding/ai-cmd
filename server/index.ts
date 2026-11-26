@@ -7,6 +7,8 @@ import { MonitorService } from './service/monitor.service';
 import { BatchService } from './service/batch.service';
 import { RdpService } from './service/rdp.service';
 import { RdpTunnelService } from './service/rdp-tunnel.service';
+import { PortForwardService } from './service/port-forward.service';
+import { SSHKeyService } from './service/ssh-key.service';
 
 // server.js 通过 dist/server/index.js 取用统一的 /ws/rdp 鉴权实现
 export { validateRdpWsRequest } from './utils/rdp-ws';
@@ -22,6 +24,12 @@ const auditService = new AuditService();
 const monitorService = new MonitorService(connectionService);
 const batchService = new BatchService(sshService, connectionService);
 const aiService = new AIService(sshService, skillService, auditService);
+const portForwardService = new PortForwardService(sshService);
+const sshKeyService = new SSHKeyService(connectionService);
+
+// 会话生命周期：端口转发随 SSH 会话自动启停
+sshService.onSessionReady((sessionId, connection) => portForwardService.startAuto(sessionId, connection));
+sshService.onSessionClose((sessionId) => portForwardService.stopAll(sessionId));
 
 // 初始化
 console.log('[Server] Initializing services...');
@@ -77,9 +85,82 @@ export async function handleRoutes(pathname: string, body: any) {
       return true;
     }
 
+    // 导出 / 导入连接（JSON 备份与团队共享）
+    if (pathname === '/api/connection/exportConnections') {
+      return await connectionService.exportConnections(body?.includeSecrets === true);
+    }
+    if (pathname === '/api/connection/importConnections') {
+      return await connectionService.importConnections(body?.payload, body?.mode || 'update');
+    }
+
     // 测试连接
     if (pathname === '/api/connection/testConnection') {
       return await connectionService.testConnection(body);
+    }
+
+    // ========== SSH 端口转发 / 隧道 ==========
+
+    // 列出会话的隧道状态
+    if (pathname === '/api/tunnel/list') {
+      const { sessionId } = body;
+      if (!sessionId) throw Error('Missing parameter: sessionId');
+      return portForwardService.list(sessionId);
+    }
+
+    // 启动隧道（rule 来自连接配置）
+    if (pathname === '/api/tunnel/start') {
+      const { sessionId, rule } = body;
+      if (!sessionId || !rule) throw Error('Missing parameter: sessionId, rule');
+      await portForwardService.start(sessionId, rule);
+      return portForwardService.list(sessionId);
+    }
+
+    // 停止单条隧道
+    if (pathname === '/api/tunnel/stop') {
+      const { sessionId, ruleId } = body;
+      if (!sessionId || !ruleId) throw Error('Missing parameter: sessionId, ruleId');
+      portForwardService.stop(sessionId, ruleId);
+      return portForwardService.list(sessionId);
+    }
+
+    // 停止会话的全部隧道
+    if (pathname === '/api/tunnel/stopAll') {
+      const { sessionId } = body;
+      if (!sessionId) throw Error('Missing parameter: sessionId');
+      portForwardService.stopAll(sessionId);
+      return true;
+    }
+
+    // ========== SSH 密钥管理 ==========
+
+    if (pathname === '/api/ssh-key/list') {
+      return sshKeyService.list();
+    }
+
+    if (pathname === '/api/ssh-key/generate') {
+      return await sshKeyService.generate(body);
+    }
+
+    if (pathname === '/api/ssh-key/import') {
+      return await sshKeyService.import(body);
+    }
+
+    if (pathname === '/api/ssh-key/getPrivateKey') {
+      const { id } = body;
+      if (!id) throw Error('Missing parameter: id');
+      const result = sshKeyService.getPrivateKey(id);
+      if (!result) throw Error('密钥不存在');
+      return result;
+    }
+
+    if (pathname === '/api/ssh-key/delete') {
+      const { id } = body;
+      if (!id) throw Error('Missing parameter: id');
+      return sshKeyService.delete(id);
+    }
+
+    if (pathname === '/api/ssh-key/distribute') {
+      return await sshKeyService.distribute(body);
     }
 
     // ========== 终端管理（REST 部分，WebSocket 在 server.js 处理） ==========
@@ -352,4 +433,4 @@ export async function handleRoutes(pathname: string, body: any) {
 }
 
 // 导出服务实例供 WebSocket 使用
-export { connectionService, sshService, rdpService, rdpTunnelService, aiService, skillService, auditService, monitorService, batchService };
+export { connectionService, sshService, rdpService, rdpTunnelService, aiService, skillService, auditService, monitorService, batchService, portForwardService, sshKeyService };

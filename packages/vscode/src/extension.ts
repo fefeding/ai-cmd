@@ -1,20 +1,30 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { ServerLauncher } from './server-launcher';
 import { AICmdTreeProvider } from './tree-provider';
 import { isChinese, t } from './i18n';
+import { TerminalBridge } from './ws-bridge';
+import { AicmdFileSystemProvider } from './remote-fs';
+import { AicmdStatusBar } from './status-bar';
 
 let launcher: ServerLauncher;
 let treeProvider: AICmdTreeProvider;
 let output: vscode.OutputChannel;
 let extContext: vscode.ExtensionContext | undefined;
+let activePanel: vscode.WebviewPanel | undefined;
+let bridge: TerminalBridge | undefined;
+let remoteFs: AicmdFileSystemProvider | undefined;
+let statusBar: AicmdStatusBar | undefined;
 const panels = new Set<vscode.WebviewPanel>();
 let editPanel: vscode.WebviewPanel | undefined;
 // 记录每个面板的基础名与实际 tab 标题，用于同名连接打开多次时追加编号区分
 const panelMeta = new Map<vscode.WebviewPanel, { base: string; title: string }>();
 // 记录每个面板加载的 src（含连接 id），用于窗口重载后恢复
 const panelSrc = new Map<vscode.WebviewPanel, string>();
+// 连接节点单击时间窗，用于把「双击节点」与「单击选中」区分开
+const lastConnectionClick = new Map<string, number>();
 // 窗口全屏是全局状态，扩展侧记住当前值以幂等响应 iframe 的重复请求
 let vscodeFullscreenActive = false;
 
@@ -26,6 +36,32 @@ function toId(arg?: unknown): string | undefined {
   const t = arg as vscode.TreeItem | undefined;
   const id = t && (t as any).id;
   return typeof id === 'string' && id ? id : undefined;
+}
+
+/** 从面板 URL 中取出连接 id（编辑面板没有该参数）。 */
+function connectionIdOfPanel(panel: vscode.WebviewPanel): string | undefined {
+  const src = panelSrc.get(panel);
+  if (!src) return undefined;
+  try {
+    return new URL(src).searchParams.get('connectionId') || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 找到某连接对应的终端面板（优先当前聚焦的面板）。 */
+function findPanelByConnection(connectionId: string): vscode.WebviewPanel | undefined {
+  if (
+    activePanel &&
+    panels.has(activePanel) &&
+    connectionIdOfPanel(activePanel) === connectionId
+  ) {
+    return activePanel;
+  }
+  for (const p of panels) {
+    if (connectionIdOfPanel(p) === connectionId) return p;
+  }
+  return undefined;
 }
 
 /** 为基础名分配一个未被占用的 tab 标题：首个用原名，之后依次「名称 2」「名称 3」… */
@@ -63,10 +99,36 @@ export function activate(context: vscode.ExtensionContext): void {
     output.appendLine(line)
   );
   treeProvider = new AICmdTreeProvider(launcher, context.extensionUri);
+  const savedGroupMode = context.globalState.get<string>('aicmd.groupMode');
+  if (savedGroupMode === 'group' || savedGroupMode === 'tag') {
+    treeProvider.setGroupMode(savedGroupMode);
+  }
 
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider('aicmd.explorer', treeProvider)
   );
+
+  // 远程文件系统：aicmd://<连接 id>/<远程绝对路径>
+  bridge = new TerminalBridge(() => launcher.url);
+  remoteFs = new AicmdFileSystemProvider(launcher, bridge);
+  context.subscriptions.push(
+    vscode.workspace.registerFileSystemProvider('aicmd', remoteFs, {
+      isCaseSensitive: true
+    })
+  );
+  statusBar = new AicmdStatusBar(
+    launcher,
+    startPort,
+    findPanelByConnection,
+    () =>
+      activePanel
+        ? {
+            panel: activePanel,
+            title: panelMeta.get(activePanel)?.title || 'AICmd'
+          }
+        : undefined
+  );
+  context.subscriptions.push(statusBar);
 
   const register = (id: string, handler: (...args: any[]) => any) =>
     context.subscriptions.push(vscode.commands.registerCommand(id, handler));
@@ -77,6 +139,35 @@ export function activate(context: vscode.ExtensionContext): void {
       openTerminal(context, startPort, toId(connectionId), name, connectionType)
   );
   register('aicmd.refresh', () => treeProvider.refresh());
+  // TreeView 没有独立的双击事件：单击只记录时间，时间窗内第二次点击才打开。
+  // 对应节点 command 由 tree-provider 设置；右侧 ▶ 按钮仍直接调 openTerminal。
+  register(
+    'aicmd.connectionClicked',
+    (connectionId?: unknown, name?: string, connectionType?: string) => {
+      const cid = toId(connectionId);
+      if (!cid) return;
+      const now = Date.now();
+      const previous = lastConnectionClick.get(cid) ?? 0;
+      lastConnectionClick.set(cid, now);
+      if (now - previous > 500) return;
+      lastConnectionClick.delete(cid);
+      return openTerminal(context, startPort, cid, name, connectionType);
+    }
+  );
+  register('aicmd.setGroupMode', async () => {
+    const groupLabel = t('按分组折叠', 'Group by connection group');
+    const tagLabel = t('按标签折叠', 'Group by tag');
+    const picked = await vscode.window.showQuickPick([groupLabel, tagLabel], {
+      placeHolder: t('选择连接树的分组方式', 'Choose how to group connections'),
+    });
+    if (!picked) return;
+    const mode = picked === tagLabel ? 'tag' : 'group';
+    treeProvider.setGroupMode(mode);
+    await context.globalState.update('aicmd.groupMode', mode);
+  });
+  register('aicmd.runSelection', () => runSelection(startPort));
+  register('aicmd.showSessions', () => statusBar?.showSessions());
+  register('aicmd.browseRemote', (id?: unknown) => browseRemote(startPort, toId(id)));
 
   // 连接管理：新增 / 编辑打开专用编辑 WebView（复用桌面端 ConnectionEditor 弹窗），
   // 删除直接调 API
@@ -117,6 +208,11 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
   );
+
+  // 连接搜索 / JSON 备份共享
+  register('aicmd.searchConnection', () => searchConnection(context, startPort));
+  register('aicmd.exportConnections', () => exportConnections(startPort));
+  register('aicmd.importConnections', () => importConnections(startPort));
 
   // 后端进程意外退出：通知用户并关闭所有面板（面板已无法正常工作）
   launcher.onUnexpectedExit = () => {
@@ -189,12 +285,16 @@ export function activate(context: vscode.ExtensionContext): void {
   // 扩展停用时关闭后端服务，避免残留进程
   context.subscriptions.push({
     dispose: () => {
+      bridge?.close();
+      remoteFs?.dispose();
       launcher?.stop();
     }
   });
 }
 
 export function deactivate(): void {
+  bridge?.close();
+  remoteFs?.dispose();
   launcher?.stop();
 }
 
@@ -251,6 +351,346 @@ async function openEdit(
   } catch (e: any) {
     vscode.window.showErrorMessage(
       t('启动 AICmd 失败：', 'Failed to start AICmd: ') + (e?.message || String(e))
+    );
+  }
+}
+
+/** 把当前选区（无选区时为当前行）发到活动 SSH 会话执行。 */
+async function runSelection(startPort: number): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    vscode.window.showWarningMessage(t('请先打开一个编辑器。', 'Open an editor first.'));
+    return;
+  }
+  const selection = editor.selection;
+  let text = editor.document.getText(selection).trimEnd();
+  if (!text.trim()) {
+    text = editor.document.lineAt(selection.active.line).text.trim();
+  }
+  if (!text.trim()) {
+    vscode.window.showWarningMessage(t('没有可执行的选中内容。', 'Nothing selected to run.'));
+    return;
+  }
+
+  const panel =
+    activePanel && panels.has(activePanel)
+      ? activePanel
+      : panels.size === 1
+      ? [...panels][0]
+      : undefined;
+  if (!panel) {
+    vscode.window.showWarningMessage(
+      t('请先聚焦一个 AICmd SSH 终端面板。', 'Focus an AICmd SSH terminal panel first.')
+    );
+    return;
+  }
+  const connectionId = connectionIdOfPanel(panel);
+  if (!connectionId) {
+    vscode.window.showWarningMessage(
+      t('当前面板不是 SSH 终端（RDP / 连接编辑不支持执行命令）。',
+        'The active panel is not an SSH terminal (RDP / connection editor cannot run commands).')
+    );
+    return;
+  }
+
+  try {
+    await launcher.ensureStarted(startPort);
+    const result = await launcher.api('/api/terminal/getSessions', {});
+    const list: any[] = Array.isArray(result) ? result : [];
+    const candidates = list
+      .filter((s) => s.connectionId === connectionId && (s.type === 'ssh' || s.type === 'local'))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    if (!candidates.length) {
+      vscode.window.showWarningMessage(
+        t('该连接没有活动的 SSH 会话，请先打开终端。',
+          'No active SSH session for this connection. Open a terminal first.')
+      );
+      return;
+    }
+    await bridge!.writeToSession(
+      candidates[0].sessionId,
+      text.endsWith('\n') ? text : text + '\n'
+    );
+    panel.reveal();
+  } catch (e: any) {
+    vscode.window.showErrorMessage(
+      t('发送命令失败：', 'Failed to send command: ') + (e?.message || String(e))
+    );
+  }
+}
+
+async function pickRemoteConnection(startPort: number): Promise<string | undefined> {
+  await launcher.ensureStarted(startPort);
+  const connections = await launcher.getConnections();
+  const candidates = connections.filter((c) => c.type !== 'rdp');
+  if (!candidates.length) {
+    vscode.window.showInformationMessage(
+      t('没有可用的 SSH / 本地连接。', 'No SSH / local connections available.')
+    );
+    return undefined;
+  }
+  const picked = await vscode.window.showQuickPick(
+    candidates.map((c) => ({
+      label: c.name || c.host || String(c.id),
+      description: [c.username, c.host].filter(Boolean).join('@') || String(c.id),
+      id: String(c.id)
+    })),
+    { placeHolder: t('选择远程连接', 'Select a remote connection') }
+  );
+  return picked?.id;
+}
+
+async function assertNotRdp(connectionId: string): Promise<boolean> {
+  const connections = await launcher.getConnections();
+  const conn = connections.find((c) => String(c.id) === connectionId);
+  if (conn?.type === 'rdp') {
+    vscode.window.showWarningMessage(
+      t('RDP 连接不支持远程文件系统，请改用 SSH / 本地连接。',
+        'RDP connections do not support the remote file system. Use SSH / local connections.')
+    );
+    return false;
+  }
+  return true;
+}
+
+type RemotePickItem = vscode.QuickPickItem & {
+  action: 'up' | 'dir' | 'file' | 'cancel';
+  name?: string;
+};
+
+/**
+ * 用 QuickPick 逐级浏览远程目录。相比 showOpenDialog，这里可以明确放一个
+ * 「取消」项，Esc 也能直接退出；选中的文件在编辑器打开，Ctrl+S 保存回远程。
+ */
+async function browseRemoteFiles(connectionId: string): Promise<void> {
+  let dir = await remoteFs!.rootUri(connectionId);
+  while (true) {
+    let entries: [string, vscode.FileType][];
+    try {
+      entries = await vscode.workspace.fs.readDirectory(dir);
+    } catch (e: any) {
+      vscode.window.showErrorMessage(
+        t('读取远程目录失败：', 'Failed to read remote directory: ') + (e?.message || String(e))
+      );
+      return;
+    }
+    entries.sort((a, b) => {
+      const aDir = (a[1] & vscode.FileType.Directory) !== 0 ? 0 : 1;
+      const bDir = (b[1] & vscode.FileType.Directory) !== 0 ? 0 : 1;
+      return aDir - bDir || a[0].localeCompare(b[0]);
+    });
+
+    const parent = path.posix.dirname(dir.path);
+    const items: RemotePickItem[] = [];
+    if (parent !== dir.path) {
+      items.push({
+        label: '$(arrow-up) ..',
+        description: t('返回上级目录', 'Go to parent directory'),
+        action: 'up'
+      });
+    }
+    for (const [name, fileType] of entries) {
+      const isDir = (fileType & vscode.FileType.Directory) !== 0;
+      items.push({
+        label: isDir ? `$(folder) ${name}` : `$(file) ${name}`,
+        description: t('远程目录', 'Remote directory') + ': ' + dir.path,
+        action: isDir ? 'dir' : 'file',
+        name
+      });
+    }
+    items.push({
+      label: `$(close) ${t('取消', 'Cancel')}`,
+      action: 'cancel'
+    });
+
+    const picked = await vscode.window.showQuickPick(items, {
+      placeHolder: t('浏览远程目录：', 'Browse remote directory: ') + dir.path,
+      matchOnDescription: false,
+      ignoreFocusOut: false
+    });
+    if (!picked || picked.action === 'cancel') return;
+    if (picked.action === 'up') {
+      dir = dir.with({ path: parent });
+      continue;
+    }
+
+    const child = vscode.Uri.from({
+      scheme: 'aicmd',
+      authority: dir.authority,
+      path: path.posix.join(dir.path, picked.name || '')
+    });
+    if (picked.action === 'dir') {
+      dir = child;
+      continue;
+    }
+    try {
+      const doc = await vscode.workspace.openTextDocument(child);
+      await vscode.window.showTextDocument(doc, { preview: false });
+    } catch (e: any) {
+      vscode.window.showErrorMessage(
+        t('打开远程文件失败：', 'Failed to open remote file: ') + (e?.message || String(e))
+      );
+    }
+    return;
+  }
+}
+
+/** 浏览远程文件（唯一入口）。 */
+async function browseRemote(startPort: number, connectionId?: string): Promise<void> {
+  try {
+    const cid = connectionId || (await pickRemoteConnection(startPort));
+    if (!cid || !(await assertNotRdp(cid))) return;
+    await browseRemoteFiles(cid);
+  } catch (e: any) {
+    vscode.window.showErrorMessage(
+      t('浏览远程文件失败：', 'Failed to browse remote files: ') + (e?.message || String(e))
+    );
+  }
+}
+
+/** 快速搜索连接（名称 / 分组 / 标签），选中即打开终端。 */
+async function searchConnection(
+  context: vscode.ExtensionContext,
+  startPort: number
+): Promise<void> {
+  try {
+    await launcher.ensureStarted(startPort);
+    const conns = await launcher.getConnections();
+    const localShell = t('本地 Shell', 'Local Shell');
+    const ungrouped = t('未分组', 'Ungrouped');
+    type PickItem = vscode.QuickPickItem & {
+      connectionId?: string;
+      name: string;
+      type?: string;
+    };
+    const items: PickItem[] = [
+      {
+        label: localShell,
+        description: t('打开本地 Shell', 'Open Local Shell'),
+        name: localShell,
+      },
+      ...conns.map((c) => ({
+        label: c.name || c.host || String(c.id),
+        description: [
+          c.group?.trim() || ungrouped,
+          ...(c.tags || []).map((tag) => `#${tag}`),
+          [c.username, c.host].filter(Boolean).join('@'),
+        ]
+          .filter(Boolean)
+          .join(' · '),
+        name: c.name || c.host || String(c.id),
+        connectionId: String(c.id),
+        type: c.type,
+      })),
+    ];
+    const picked = await vscode.window.showQuickPick(items, {
+      placeHolder: t('搜索连接（名称 / 分组 / 标签）', 'Search connections (name / group / tags)'),
+      matchOnDescription: true,
+    });
+    if (!picked) return;
+    await openTerminal(context, startPort, picked.connectionId, picked.name, picked.type);
+  } catch (e: any) {
+    vscode.window.showErrorMessage(
+      t('搜索连接失败：', 'Failed to search connections: ') + (e?.message || String(e))
+    );
+  }
+}
+
+/** 导出连接 JSON；凭据默认剔除，仅个人备份时包含。 */
+async function exportConnections(startPort: number): Promise<void> {
+  const omitLabel = t('不包含凭据（团队共享）', 'Omit secrets (team sharing)');
+  const includeLabel = t('包含密码 / 私钥（个人备份）', 'Include secrets (personal backup)');
+  const choice = await vscode.window.showQuickPick([omitLabel, includeLabel], {
+    placeHolder: t('选择导出方式', 'Choose export mode'),
+  });
+  if (!choice) return;
+
+  try {
+    const data = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: t('正在导出连接…', 'Exporting connections…'),
+      },
+      async () => {
+        await launcher.ensureStarted(startPort);
+        return launcher.api('/api/connection/exportConnections', {
+          includeSecrets: choice === includeLabel,
+        });
+      }
+    );
+    const workspaceDir =
+      vscode.workspace.workspaceFolders?.[0]?.uri || vscode.Uri.file(os.homedir());
+    const target = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.joinPath(
+        workspaceDir,
+        `aicmd-connections-${new Date().toISOString().slice(0, 10)}.json`
+      ),
+      filters: { JSON: ['json'] },
+      saveLabel: t('导出', 'Export'),
+    });
+    if (!target) return;
+    await vscode.workspace.fs.writeFile(
+      target,
+      Buffer.from(JSON.stringify(data, null, 2), 'utf8')
+    );
+    vscode.window.showInformationMessage(
+      t('连接已导出：', 'Connections exported: ') + target.fsPath
+    );
+  } catch (e: any) {
+    vscode.window.showErrorMessage(
+      t('导出连接失败：', 'Failed to export connections: ') + (e?.message || String(e))
+    );
+  }
+}
+
+/** 导入连接 JSON；按名称覆盖同名配置，保留其余连接。 */
+async function importConnections(startPort: number): Promise<void> {
+  const picked = await vscode.window.showOpenDialog({
+    canSelectFiles: true,
+    canSelectFolders: false,
+    canSelectMany: false,
+    filters: { JSON: ['json'] },
+    openLabel: t('选择 JSON 文件', 'Select JSON file'),
+  });
+  if (!picked?.length) return;
+  const importLabel = t('导入', 'Import');
+  const answer = await vscode.window.showWarningMessage(
+    t('导入连接 JSON？同名连接将被覆盖，其余连接保持不变。',
+      'Import connections? Same-name connections will be overwritten; others stay unchanged.'),
+    { modal: true },
+    importLabel
+  );
+  if (answer !== importLabel) return;
+
+  try {
+    const text = Buffer.from(await vscode.workspace.fs.readFile(picked[0])).toString('utf8');
+    const payload = JSON.parse(text);
+    const result = await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: t('正在导入连接…', 'Importing connections…'),
+      },
+      async () => {
+        await launcher.ensureStarted(startPort);
+        return launcher.api('/api/connection/importConnections', {
+          payload,
+          mode: 'update',
+        });
+      }
+    );
+    treeProvider.refresh();
+    const r = result || {};
+    vscode.window.showInformationMessage(
+      t('导入完成：新增 ', 'Imported: ') +
+        (r.added || 0) +
+        t('，覆盖 ', ', ') +
+        (r.updated || 0) +
+        t('，跳过 ', ', ') +
+        (r.skipped || 0)
+    );
+  } catch (e: any) {
+    vscode.window.showErrorMessage(
+      t('导入连接失败：', 'Failed to import connections: ') + (e?.message || String(e))
     );
   }
 }
@@ -317,6 +757,13 @@ function wirePanel(
   panel.webview.html = buildHtml(src, actualTitle);
   panelMeta.set(panel, { base, title: actualTitle });
   panelSrc.set(panel, src);
+
+  panel.onDidChangeViewState(() => {
+    if (panel.active && panels.has(panel)) {
+      activePanel = panel;
+      statusBar?.refresh();
+    }
+  });
 
   // iframe 通过 postMessage 与扩展宿主通信：编辑 / 新增连接保存成功后，
   // 刷新树并关闭编辑面板
@@ -392,6 +839,8 @@ function wirePanel(
       panelMeta.delete(panel); // 释放编号，后续同名 tab 可复用
       panelSrc.delete(panel);
       if (panel === editPanel) editPanel = undefined;
+      if (activePanel === panel) activePanel = undefined;
+      statusBar?.refresh();
       // 仅当所有面板都关闭时才关闭后端服务
       if (panels.size === 0) launcher.stop();
     },

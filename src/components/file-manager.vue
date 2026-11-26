@@ -1,5 +1,5 @@
 <template>
-  <div class="fm-panel">
+  <div ref="panelRef" class="fm-panel" :class="{ 'fm-compact': compact, 'fm-tiny': tiny }">
       <div class="fm-header">
         <div class="fm-title">
           <span class="fm-icon">🗂</span> {{ t('fileManager.title') }}
@@ -23,7 +23,7 @@
       <div class="fm-breadcrumbs">
         <span class="fm-crumb" @click="navigateTo(0)">/</span>
         <template v-for="(seg, i) in breadcrumbSegments" :key="i">
-          <span class="fm-sep">/</span>
+          <span v-if="i > 0" class="fm-sep">/</span>
           <span class="fm-crumb" @click="navigateTo(i + 1)">{{ seg.name }}</span>
         </template>
       </div>
@@ -58,16 +58,22 @@
                 <span class="fm-file-name">{{ item.name }}</span>
               </td>
               <td class="fm-col-size">{{ item.isDirectory ? '—' : formatSize(item.size) }}</td>
-              <td class="fm-col-time">{{ formatTime(item.mtime) }}</td>
+              <td class="fm-col-time">{{ formatTime(item.mtime, compact) }}</td>
               <td class="fm-col-perm">{{ item.permissions }}</td>
               <td class="fm-col-actions">
-                <button v-if="!item.isDirectory" class="fm-link" @click.stop="downloadItem(item)">{{ t('fileManager.download') }}</button>
-                <button class="fm-link" @click.stop="requestRename(item)">{{ t('fileManager.rename') }}</button>
-                <button class="fm-link fm-link-danger" @click.stop="removeItem(item)">{{ t('fileManager.delete') }}</button>
+                <button v-if="!item.isDirectory" class="fm-link" :title="t('fileManager.download')" @click.stop="downloadItem(item)">
+                  <span class="fm-act-text">{{ t('fileManager.download') }}</span><span class="fm-act-icon">⬇</span>
+                </button>
+                <button class="fm-link" :title="t('fileManager.rename')" @click.stop="requestRename(item)">
+                  <span class="fm-act-text">{{ t('fileManager.rename') }}</span><span class="fm-act-icon">✎</span>
+                </button>
+                <button class="fm-link fm-link-danger" :title="t('fileManager.delete')" @click.stop="removeItem(item)">
+                  <span class="fm-act-text">{{ t('fileManager.delete') }}</span><span class="fm-act-icon">🗑</span>
+                </button>
               </td>
             </tr>
             <tr v-if="!loading && !items.length">
-              <td colspan="6" class="fm-empty">{{ t('fileManager.empty') }}</td>
+              <td :colspan="tiny ? 3 : compact ? 4 : 6" class="fm-empty">{{ t('fileManager.empty') }}</td>
             </tr>
           </tbody>
         </table>
@@ -124,6 +130,11 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'close'): void }>();
 
 const { t } = useI18n();
+
+const panelRef = ref<HTMLElement | null>(null);
+const compact = ref(false);
+const tiny = ref(false);
+let resizeObserver: ResizeObserver | undefined;
 
 const currentPath = ref('');
 const items = ref<RemoteFileInfo[]>([]);
@@ -355,11 +366,13 @@ function formatSize(bytes: number): string {
   return `${size.toFixed(1)} ${units[i]}`;
 }
 
-function formatTime(ms: number): string {
+function formatTime(ms: number, short = false): string {
   if (!ms) return '—';
   const d = new Date(ms);
   if (isNaN(d.getTime())) return '—';
-  return d.toLocaleString();
+  if (!short) return d.toLocaleString();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function iconFor(item: RemoteFileInfo): string {
@@ -377,6 +390,16 @@ function onKey(e: KeyboardEvent) {
 
 onMounted(async () => {
   window.addEventListener('keydown', onKey);
+  if (panelRef.value && typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      if (width > 0) {
+        compact.value = width < 720;
+        tiny.value = width < 420;
+      }
+    });
+    resizeObserver.observe(panelRef.value);
+  }
   selectedItems.value = [];
   if (props.initialPath) {
     currentPath.value = props.initialPath;
@@ -394,6 +417,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey);
+  resizeObserver?.disconnect();
 });
 </script>
 
@@ -493,15 +517,20 @@ onBeforeUnmount(() => {
 }
 .fm-table {
   width: 100%;
+  min-width: 260px;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 13px;
 }
 .fm-table th,
 .fm-table td {
   text-align: left;
-  padding: 6px 10px;
+  padding: 5px 6px;
   border-bottom: 1px solid var(--border-color);
   color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .fm-table thead th {
   position: sticky;
@@ -511,13 +540,20 @@ onBeforeUnmount(() => {
   z-index: 1;
 }
 .fm-col-check {
-  width: 32px;
+  width: 30px;
   text-align: center;
 }
-.fm-col-size,
-.fm-col-time,
+.fm-col-name {
+  width: auto;
+}
+.fm-col-size {
+  width: 72px;
+}
+.fm-col-time {
+  width: 145px;
+}
 .fm-col-perm {
-  width: 120px;
+  width: 104px;
 }
 .fm-col-actions {
   width: 170px;
@@ -534,20 +570,50 @@ onBeforeUnmount(() => {
 .fm-file-icon {
   margin-right: 6px;
 }
+.fm-file-name {
+  vertical-align: bottom;
+}
 .fm-link {
   background: none;
   border: none;
   color: var(--accent);
   cursor: pointer;
   font-size: 12px;
-  margin-right: 8px;
+  margin-right: 7px;
   padding: 0;
+  white-space: nowrap;
 }
 .fm-link:hover {
   text-decoration: underline;
 }
 .fm-link-danger {
   color: var(--danger);
+}
+.fm-act-icon {
+  display: none;
+}
+.fm-compact .fm-col-size,
+.fm-compact .fm-col-perm,
+.fm-tiny .fm-col-time {
+  display: none;
+}
+.fm-compact .fm-col-time {
+  width: 108px;
+}
+.fm-compact .fm-col-actions {
+  width: 80px;
+}
+.fm-compact .fm-act-text {
+  display: none;
+}
+.fm-compact .fm-act-icon {
+  display: inline;
+}
+.fm-compact .fm-link {
+  margin-right: 5px;
+}
+.fm-compact .fm-link:last-child {
+  margin-right: 0;
 }
 .fm-empty,
 .fm-loading {
