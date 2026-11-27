@@ -163,13 +163,18 @@ code --install-extension aicmd-terminal-*.vsix
 
 1. 选中的终端文本（没有选中时取最近 200 行输出）作为 `@Terminal` 上下文插入输入框，**不会自动发送**。
 2. 当前终端被独占绑定到这次对话，VSCode 状态栏出现终端指示器，点击即可解除绑定。
-3. AI 获得 AICmd 工具。现在可以直接问“查看这台机器的 nginx 配置”，AI 会先确认机器，再读取屏幕、执行命令并汇总结果。
+3. 当前终端的通道信息以 `[channel]`（会话 / 连接 / 机器）、`[bridge]`（一次性桥接命令）、`[tools]`、`[valid]` 形式随引用一起带入对话。**不会写用户级 MCP 配置**，插件禁用或解除绑定后不会留下任何注入。
+4. AI 获得 AICmd 工具。现在可以直接问“查看这台机器的 nginx 配置”，AI 会先确认机器，再读取屏幕、执行命令并汇总结果。
 
-**VSCode / Copilot 原生工具**：`aicmd_sessionInfo`、`aicmd_sessionRead`、`aicmd_sessionExec`、`aicmd_sessionOutput`、`aicmd_sessionInterrupt`、`aicmd_sessionDetach`，可在输入框用 `#aicmdExec` 引用。输出过长时 `aicmd_sessionExec` 会返回 `outputId`，再用 `aicmd_sessionOutput` 分段读取，不需要重跑命令。
+**工具选择**：优先使用宿主已注册的工具——原生 VSCode 为 `aicmd_sessionInfo`、`aicmd_sessionRead`、`aicmd_sessionExec`、`aicmd_sessionOutput`、`aicmd_sessionInterrupt`、`aicmd_sessionDetach`（输入框可用 `#aicmdExec` 引用）；其它编辑器为 `session_info`、`session_read`、`session_exec`、`session_output`、`session_interrupt`、`session_detach`。输出过长时分段读取，不需要重跑命令。
 
-**CodeBuddy MCP 工具**：`session_info`、`session_read`、`session_exec`、`session_output`、`session_interrupt`、`session_detach`，由扩展自动注册。
+**一次性桥接**：若当前 Agent 看不到上述工具（例如 CodeBuddy IDE 的 Agent 会过滤扩展工具），直接按引用中的 `[bridge]` 执行，例如：
 
-**其它编辑器**：MCP 配置会复制到剪贴板，首次粘贴到编辑器的 MCP 设置后即可启用命令执行。
+```bash
+node "<扩展目录>/dist/mcp.js" --call session_exec '{"command":"uptime"}'
+```
+
+它只作用于当前绑定的终端，解除绑定后返回 `NO_BINDING`；无需改 MCP 配置，也不要手写 HTTP 请求。
 
 - Trae：通过 `workbench.action.chat.icube.open` 把 terminalPayload 附加到 Cascade。
 - 原生 VSCode 1.105+：把已绑定终端作为以连接名命名的单个文件引用加入输入框，没有额外话述、不自动发送；旧版本退回工具引用或文本快照。
@@ -177,9 +182,9 @@ code --install-extension aicmd-terminal-*.vsix
 - Cline、Continue、Roo Code：聚焦插件输入框并粘贴快照，不会自动发送。
 - 原生 VSCode 只有在上述 AI 对话插件处于激活状态时才显示菜单；插件后启动也会自动出现，无需重开终端。
 - 快照在点击菜单时抓取，再次点击即可刷新。
-- Web 终端右上角和右键菜单里的 `?` 可随时打开同样的 AI / MCP 使用说明。
+- 通义灵码：在智能体模式下使用引用中的工具名或 `[bridge]` 命令；其 MCP 服务上限为 10 个，本插件只占一个临时入口、不写配置文件。
 
-**安全边界**：一次只绑定一个终端；命令写入用户可见的交互式 shell 并记入审计；危险命令会被拦截；工具不接收会话 / 连接 id。可以随时在终端按 Ctrl+C 中断，或点击状态栏终端指示器解除绑定。
+**安全边界**：一次只绑定一个终端；命令写入用户可见的交互式 shell 并记入审计；危险命令会被拦截；工具本身不接收会话 / 连接 id，通道信息只随本次引用带入且解绑即失效。可以随时在终端按 Ctrl+C 中断，或点击状态栏终端指示器解除绑定。
 
 ### 文件下载（sz / ZMODEM）
 

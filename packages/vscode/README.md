@@ -161,13 +161,18 @@ In a connected AICmd terminal, right-click and choose **Add to AI Chat**:
 
 1. Selected terminal text (or the most recent 200 lines when nothing is selected) is inserted into the chat input as an `@Terminal` context chip; nothing is sent automatically.
 2. That terminal is exclusively bound to this conversation. A terminal indicator appears in the VSCode status bar; click it to detach.
-3. The AI gets AICmd tools. You can now ask something like "show me the nginx site config" — the AI checks the machine, reads the screen, runs commands, and summarizes the result.
+3. The bound terminal's channel info travels with the reference as `[channel]` (session / connection / machine), `[bridge]` (one-shot command), `[tools]`, and `[valid]`. **No user-level MCP config is written**; disabling the extension or detaching leaves nothing behind.
+4. The AI gets AICmd tools. You can now ask something like "show me the nginx site config" — the AI checks the machine, reads the screen, runs commands, and summarizes the result.
 
-**Native VSCode / Copilot tools**: `aicmd_sessionInfo`, `aicmd_sessionRead`, `aicmd_sessionExec`, `aicmd_sessionOutput`, `aicmd_sessionInterrupt`, `aicmd_sessionDetach`. Reference them with `#aicmdExec`. When output is truncated, `aicmd_sessionExec` returns an `outputId`; use `aicmd_sessionOutput` to read the rest instead of rerunning the command.
+**Tool choice**: prefer tools registered by the host — native VSCode uses `aicmd_sessionInfo`, `aicmd_sessionRead`, `aicmd_sessionExec`, `aicmd_sessionOutput`, `aicmd_sessionInterrupt`, `aicmd_sessionDetach` (reference with `#aicmdExec`); other editors use `session_info`, `session_read`, `session_exec`, `session_output`, `session_interrupt`, `session_detach`. Read truncated output in chunks instead of rerunning the command.
 
-**CodeBuddy MCP tools**: `session_info`, `session_read`, `session_exec`, `session_output`, `session_interrupt`, `session_detach`, auto-registered by the extension.
+**One-shot bridge**: if the current agent cannot see those tools (for example, the CodeBuddy IDE agent filters extension tools), use the `[bridge]` command from the reference:
 
-**Other editors**: the MCP config is copied to the clipboard; paste it into the editor's MCP settings once to enable command execution.
+```bash
+node "<extension-dir>/dist/mcp.js" --call session_exec '{"command":"uptime"}'
+```
+
+It only targets the currently bound terminal and returns `NO_BINDING` after detach. No MCP config edit and no hand-written HTTP requests are needed.
 
 - Trae: attaches a terminal payload to Cascade through `workbench.action.chat.icube.open`.
 - Stock VSCode 1.105+: adds the bound terminal as a single file reference named after the connection, with no extra prompt text; older versions fall back to a tool reference or the text snapshot.
@@ -175,9 +180,9 @@ In a connected AICmd terminal, right-click and choose **Add to AI Chat**:
 - Cline, Continue and Roo Code: focus the plugin's chat input and paste the snapshot; nothing is sent automatically.
 - In stock VSCode the menu appears only after one of those AI chat extensions is active. If the plugin is started later, the menu appears without reloading the terminal.
 - The snapshot is captured when you click the menu item; choose the action again to refresh it.
-- The `?` button in the Web terminal toolbar and context menu opens the same AI / MCP guide at any time.
+- Tongyi Lingma: use the tool names or the `[bridge]` command in the reference while in agent mode. Its MCP limit is 10 servers; this plugin occupies only a temporary entry and writes no config file.
 
-**Safety boundaries**: only one terminal is bound at a time; commands are typed into your visible interactive shell and audited; dangerous commands are blocked; no session/connection id is exposed to tools. Press Ctrl+C in the terminal or click the status bar terminal indicator to detach at any time.
+**Safety boundaries**: only one terminal is bound at a time; commands are typed into your visible interactive shell and audited; dangerous commands are blocked; tools themselves receive no session/connection id — channel info is only carried by this reference and becomes invalid on detach. Press Ctrl+C in the terminal or click the status bar terminal indicator to detach at any time.
 
 ### File download (sz / ZMODEM)
 
