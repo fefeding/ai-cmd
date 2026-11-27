@@ -18,6 +18,8 @@ type LogFn = (msg: string) => void;
  * Node 18.13+ 的 Happy Eyeballs 在全部候选地址失败时会抛 AggregateError，
  * 它的 message 可能是空串（例如 .local 的 mDNS 记录里混着 link-local IPv6），
  * 直接取 err.message 会让日志只剩「连接 xxx: 「而看不出 errno。
+ * AggregateError 的子错误按「错误码@地址」逐个列出，不去重：
+ * 同一个 EHOSTUNREACH，IPv4 失败和只有 IPv6 候选失败，排查方向完全不同。
  */
 export function describeSocketError(err: unknown): string {
   if (!(err instanceof Error)) return String(err);
@@ -27,10 +29,101 @@ export function describeSocketError(err: unknown): string {
   if (code) parts.push(code);
   const errors = (err as Error & { errors?: unknown[] }).errors;
   if (Array.isArray(errors) && errors.length) {
-    const codes = Array.from(new Set(errors.map((e: any) => e?.code || e?.message || '?')));
-    parts.push(`[${codes.join(', ')}]`);
+    const items = errors.map((e: any) => {
+      const itemCode = e?.code || e?.message || '?';
+      let address: string | undefined = e?.address;
+      if (typeof address !== 'string' || !address) return itemCode;
+      if (address.includes(':')) address = `[${address}]`;
+      return `${itemCode}@${address}${e?.port != null ? `:${e.port}` : ''}`;
+    });
+    parts.push(`[${items.join(', ')}]`);
+  }
+  if (!parts.length && (err as Error & { cause?: unknown }).cause instanceof Error) {
+    parts.push(`caused by: ${describeSocketError((err as Error & { cause?: unknown }).cause)}`);
   }
   return parts.join(' ') || err.name;
+}
+
+/** 沿 cause 链和 AggregateError.errors 收集全部 errno 代码（保持出现顺序，去重） */
+export function collectErrorCodes(err: unknown): string[] {
+  const codes: string[] = [];
+  const seen = new Set<unknown>();
+  const walk = (current: unknown): void => {
+    if (!current || typeof current !== 'object' || seen.has(current)) return;
+    seen.add(current);
+    const code = (current as NodeJS.ErrnoException).code;
+    if (typeof code === 'string' && code && !codes.includes(code)) codes.push(code);
+    const errors = (current as Error & { errors?: unknown[] }).errors;
+    if (Array.isArray(errors)) errors.forEach(walk);
+    walk((current as Error & { cause?: unknown }).cause);
+  };
+  walk(err);
+  return codes;
+}
+
+/**
+ * 连接阶段失败。phase 区分失败发生在哪一步，上层据此决定是否重试、如何向客户端归类：
+ * - tcp-connect：还没连上目标（或代理），瞬时网络错误值得自动重试一次
+ * - handshake：TCP 已连上，X.224 / 代理握手阶段出错或超时
+ * - tls：TLS 握手失败
+ */
+export class SocketPhaseError extends Error {
+  readonly phase: 'tcp-connect' | 'handshake' | 'tls';
+  readonly cause?: unknown;
+
+  constructor(phase: 'tcp-connect' | 'handshake' | 'tls', message: string, cause?: unknown) {
+    super(message);
+    this.name = 'SocketPhaseError';
+    this.phase = phase;
+    this.cause = cause;
+  }
+}
+
+/** 值得自动重试一次的瞬时错误：本机/链路瞬断、ARP/mDNS 抖动、对端临时不可达 */
+const TRANSIENT_CONNECT_CODES = new Set([
+  'EHOSTUNREACH', 'EHOSTDOWN', 'ENETUNREACH', 'ENETDOWN', 'ENETRESET',
+  'ETIMEDOUT', 'ECONNRESET', 'ECONNABORTED',
+  // mDNS（.local）解析偶发失败：ENOTFOUND / EAI_AGAIN 过一会儿再查通常能成功
+  'ENOTFOUND', 'EAI_AGAIN', 'EAI_NODATA',
+]);
+
+export function isTransientConnectError(err: unknown): boolean {
+  const current = err instanceof Error ? (err as SocketPhaseError) : undefined;
+  if (!current || current.phase !== 'tcp-connect') return false;
+  return collectErrorCodes(current).some((code) => TRANSIENT_CONNECT_CODES.has(code));
+}
+
+/** POSIX errno / getaddrinfo 错误 → Windows Sockets 错误码（Win32 上 libuv 本来就是反向映射） */
+const ERRNO_TO_WSA: Record<string, number> = {
+  ECONNREFUSED: 10061,
+  ECONNRESET: 10054,
+  ECONNABORTED: 10053,
+  ETIMEDOUT: 10060,
+  ENETDOWN: 10050,
+  ENETUNREACH: 10051,
+  EHOSTDOWN: 10064,
+  EHOSTUNREACH: 10065,
+  EACCES: 10013,
+  EPERM: 10013,
+  EAI_AGAIN: 11002,
+  EAI_NODATA: 11004,
+  ENOTFOUND: 11001,
+  EAI_NONAME: 11001,
+  EAI_FAIL: 11003,
+};
+
+/** 取错误链里第一个能映射的 WSA 错误码；映射不了返回 undefined */
+export function errnoToWsa(err: unknown): number | undefined {
+  for (const code of collectErrorCodes(err)) {
+    const wsa = ERRNO_TO_WSA[code];
+    if (wsa != null) return wsa;
+  }
+  return undefined;
+}
+
+/** 失败原因是否为域名解析（区别于「地址已知但连不上」） */
+export function isDnsResolutionError(err: unknown): boolean {
+  return collectErrorCodes(err).some((code) => code.startsWith('EAI_') || code === 'ENOTFOUND');
 }
 
 export interface ResolvedProxy {
@@ -316,8 +409,10 @@ function waitForConnect(
       socket.removeListener(waitEvent, onConnect);
       socket.setTimeout(0);
     };
-    const onError = (err: Error) => { cleanup(); safeDestroy(socket); reject(new Error(`${label}: ${describeSocketError(err)}`)); };
-    const onTimeout = () => { cleanup(); safeDestroy(socket); reject(new Error(`${label} 超时 (${timeout}ms)`)); };
+    // 超时不带 errno：等满一个连接超时再重试会让离线主机的报错时间翻倍，
+    // 瞬时故障（EHOSTUNREACH / ENOTFOUND 等）都是秒级返回的，只重试那些
+    const onError = (err: Error) => { cleanup(); safeDestroy(socket); reject(new SocketPhaseError('tcp-connect', `${label}: ${describeSocketError(err)}`, err)); };
+    const onTimeout = () => { cleanup(); safeDestroy(socket); reject(new SocketPhaseError('tcp-connect', `${label} 超时 (${timeout}ms)`)); };
     const onConnect = () => { cleanup(); resolve(socket); };
     socket.once('error', onError);
     socket.once('timeout', onTimeout);

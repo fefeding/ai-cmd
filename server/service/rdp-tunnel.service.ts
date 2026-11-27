@@ -2,7 +2,10 @@ import * as net from 'net';
 import * as tls from 'tls';
 import type { WebSocket } from 'ws';
 import { ConnectionService } from './connection.service';
-import { connectWithProxy, describeSocketError } from '../utils/proxy';
+import {
+  connectWithProxy, describeSocketError, errnoToWsa, isDnsResolutionError,
+  isTransientConnectError, SocketPhaseError,
+} from '../utils/proxy';
 
 /**
  * RDCleanPath WebSocket 代理。
@@ -183,9 +186,63 @@ function buildRDCleanPathResponse(serverAddr: string, x224Response: Buffer, cert
   return derWrap(TAG_SEQUENCE, Buffer.concat(parts));
 }
 
-function buildRDCleanPathError(errorCode: number, httpStatusCode?: number): Buffer {
-  const errParts: Buffer[] = [derWrapContext(0, derEncodeInteger(errorCode))];
-  if (httpStatusCode != null) errParts.push(derWrapContext(1, derEncodeInteger(httpStatusCode)));
+/**
+ * RDCleanPath 标准原因码（ironrdp-rdcleanpath）：1 通用错误、103 目标不可达、
+ * 104 目标域名解析失败、105 代理到目标的 TLS 握手失败。旧客户端不认识的码
+ * 一律按通用错误处理，不影响解码。
+ */
+const RDP_ERROR_GENERAL = 1;
+const RDP_ERROR_TARGET_UNREACHABLE = 103;
+const RDP_ERROR_DNS_RESOLUTION_FAILED = 104;
+const RDP_ERROR_TLS_HANDSHAKE_FAILED = 105;
+
+/** TCP 瞬时失败（EHOSTUNREACH / ENOTFOUND 等）后的重试间隔 */
+const TCP_RETRY_DELAY_MS = 400;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 握手失败 → RDCleanPath 错误明细。
+ * 只发 code=1 + http=502 的话，客户端只能显示「502 bad gateway」，看不出是
+ * 域名解析失败、网络不可达还是 TLS 握手失败；这些都不是 HTTP 错误，不再伪造 502。
+ */
+function toRdpErrorDetail(err: unknown): RdpErrorDetail {
+  const phase = err instanceof SocketPhaseError ? err.phase : undefined;
+  if (phase === 'tls') return { errorCode: RDP_ERROR_TLS_HANDSHAKE_FAILED };
+  if (phase === 'tcp-connect') {
+    return {
+      errorCode: isDnsResolutionError(err) ? RDP_ERROR_DNS_RESOLUTION_FAILED : RDP_ERROR_TARGET_UNREACHABLE,
+      wsaErrorCode: errnoToWsa(err),
+    };
+  }
+  if (phase === 'handshake') return { errorCode: RDP_ERROR_GENERAL, wsaErrorCode: errnoToWsa(err) };
+  return { errorCode: RDP_ERROR_GENERAL };
+}
+
+interface RdpErrorDetail {
+  errorCode: number;
+  httpStatusCode?: number;
+  wsaErrorCode?: number;
+  tlsAlertCode?: number;
+}
+
+/**
+ * 编码 RDCleanPathErr。字段是 EXPLICIT 标签且必须按 tag 升序、可整体省略：
+ *   [0] error_code  [1] http_status_code  [2] wsa_last_error  [3] tls_alert_code
+ * 中间缺字段没问题，但顺序不能乱（DER 解码器按顺序匹配）。
+ */
+function buildRDCleanPathError(detail: RdpErrorDetail): Buffer {
+  const fields: Array<[number, number | undefined]> = [
+    [0, detail.errorCode],
+    [1, detail.httpStatusCode],
+    [2, detail.wsaErrorCode],
+    [3, detail.tlsAlertCode],
+  ];
+  const errParts = fields
+    .filter(([, value]) => value != null)
+    .map(([tag, value]) => derWrapContext(tag, derEncodeInteger(value as number)));
   const parts = [
     derWrapContext(0, derEncodeInteger(VERSION_1)),
     derWrapContext(1, derWrap(TAG_SEQUENCE, Buffer.concat(errParts))),
@@ -246,11 +303,11 @@ function connectRdpTls(
       tcpSocket.write(x224ConnectionRequest, () => {
         log(`session ${sessionId}: sent X.224 Connection Request (${x224ConnectionRequest.length} bytes)`);
       });
-      tcpSocket.once('error', (err) => done(() => reject(new Error(`TCP 连接失败: ${describeSocketError(err)}`))));
+      tcpSocket.once('error', (err) => done(() => reject(new SocketPhaseError('handshake', `TCP 连接失败: ${describeSocketError(err)}`, err))));
       tcpSocket.once('data', (x224Response: Buffer) => {
         log(`session ${sessionId}: received X.224 Connection Confirm (${x224Response.length} bytes)`);
         if (x224Response.length === 0) {
-          done(() => { tcpSocket.destroy(); reject(new Error('RDP 服务器关闭连接且未返回 X.224 响应')); });
+          done(() => { tcpSocket.destroy(); reject(new SocketPhaseError('handshake', 'RDP 服务器关闭连接且未返回 X.224 响应')); });
           return;
         }
         tcpSocket.removeAllListeners('error');
@@ -276,13 +333,18 @@ function connectRdpTls(
         tlsSocket.once('error', (err) => done(() => {
           tlsSocket.destroy();
           tcpSocket.destroy();
-          reject(new Error(`TLS 握手失败: ${describeSocketError(err)}`));
+          reject(new SocketPhaseError('tls', `TLS 握手失败: ${describeSocketError(err)}`, err));
         }));
       });
       tcpSocket.setTimeout(15000, () => {
-        done(() => { tcpSocket.destroy(); reject(new Error('RDP 握手超时')); });
+        done(() => { tcpSocket.destroy(); reject(new SocketPhaseError('handshake', 'RDP 握手超时')); });
       });
-    }).catch((err: any) => done(() => reject(new Error(`TCP 连接失败: ${err.message}`))));
+    }).catch((err: any) => done(() => {
+      // connectWithProxy 已抛 SocketPhaseError（保留 cause）；兜底包装一层以免丢失阶段
+      reject(err instanceof SocketPhaseError
+        ? err
+        : new SocketPhaseError('tcp-connect', `TCP 连接失败: ${describeSocketError(err)}`, err));
+    }));
   });
 }
 
@@ -336,7 +398,7 @@ export class RdpTunnelService {
       log(`session ${sessionId} failed: ${message}`);
       if (activeTlsSocket && !activeTlsSocket.destroyed) activeTlsSocket.destroy();
       try {
-        if (ws.readyState === 1) ws.send(buildRDCleanPathError(1, 502));
+        if (ws.readyState === 1) ws.send(buildRDCleanPathError(toRdpErrorDetail(err)));
       } catch { /* ignore */ }
       try { if (ws.readyState === 1) ws.close(); } catch { /* ignore */ }
     };
@@ -362,7 +424,17 @@ export class RdpTunnelService {
 
         let handshake: RdpHandshakeResult | null = null;
         try {
-          handshake = await connectRdpTls(host, port, request.x224ConnectionRequest, sessionId, log, {}, createSocket);
+          try {
+            handshake = await connectRdpTls(host, port, request.x224ConnectionRequest, sessionId, log, {}, createSocket);
+          } catch (err) {
+            // 局域网抖动 / mDNS 偶发解析失败通常下一次就好了：秒级失败的瞬时错误自动重试一次，
+            // 用户不必手动再点；超时类错误不重试（见 waitForConnect 处说明）
+            if (!isTransientConnectError(err)) throw err;
+            log(`session ${sessionId}: TCP 连接瞬时失败（${describeSocketError(err)}），${TCP_RETRY_DELAY_MS}ms 后重试一次`);
+            await delay(TCP_RETRY_DELAY_MS);
+            if (ws.readyState !== 1) { log(`session ${sessionId}: 客户端已断开，取消重试`); return; }
+            handshake = await connectRdpTls(host, port, request.x224ConnectionRequest, sessionId, log, {}, createSocket);
+          }
         } catch (err) {
           const message = describeSocketError(err);
           log(`session ${sessionId}: 首次 TLS 握手失败: ${message}`);

@@ -136,6 +136,50 @@ const IRON_ERROR_KIND: Record<number, string> = {
   6: '协议协商失败',
 };
 
+/** 隧道服务端回的 RDCleanPath 标准原因码（ironrdp-rdcleanpath），与 server/service/rdp-tunnel.service.ts 对应 */
+const RDP_TUNNEL_REASON: Record<number, string> = {
+  1: '连接 RDP 服务器失败',
+  100: '隧道凭证已过期',
+  103: '无法连接到 RDP 服务器',
+  104: 'RDP 服务器域名解析失败',
+  105: '与 RDP 服务器 TLS 握手失败',
+};
+
+/** Windows Sockets 错误码文案；服务端在 macOS/Linux 上由 errno 反向映射得到同一套码 */
+const WSA_ERROR_TEXT: Record<number, string> = {
+  10013: '权限不足',
+  10050: '网络已断开',
+  10051: '网络不可达',
+  10053: '连接被中止',
+  10054: '连接被重置',
+  10060: '连接超时',
+  10061: '连接被拒绝（端口未监听或被防火墙拦截）',
+  10064: '主机已宕机',
+  10065: '无路由到主机',
+  11001: '主机名解析失败',
+  11002: '域名解析暂时失败',
+  11003: '域名解析失败',
+  11004: '域名没有可用地址',
+};
+
+/** 把隧道错误明细翻成用户能据此行动的一句话；没有明细时返回 null */
+function describeTunnelError(detail: any): string | null {
+  const code = typeof detail.errorCode === 'number' ? detail.errorCode : undefined;
+  const wsa = typeof detail.wsaErrorCode === 'number' ? detail.wsaErrorCode : undefined;
+  const reason = code != null ? RDP_TUNNEL_REASON[code] : undefined;
+  const wsaText = wsa != null ? WSA_ERROR_TEXT[wsa] : undefined;
+  if (reason && wsaText) {
+    // 同一局域网内的主机秒级返回「无路由」，而 ping / telnet 又能通时，通常是运行后端进程的
+    // 应用没有「本地网络」访问权（macOS 隐私设置），或被代理 / 防火墙软件按进程拦截
+    const hint = wsa === 10065 ? '（若目标就在同一局域网，请检查运行本插件的 IDE 是否被允许访问「本地网络」，以及代理 / 防火墙软件的拦截记录）' : '';
+    return `${reason}：${wsaText}${hint}`;
+  }
+  if (reason) {
+    return code === 103 ? `${reason}（请检查主机地址、网络和目标机是否在线）` : reason;
+  }
+  return wsaText || null;
+}
+
 /** IronError 是 wasm_bindgen 包装对象，没有 message，需主动调用它的方法取信息 */
 function formatIronError(e: any): string | null {
   if (!e || typeof e !== 'object') return null;
@@ -175,6 +219,9 @@ function formatIronError(e: any): string | null {
         add(detail.tlsAlertCode, 'tls');
         add(detail.wsaErrorCode, 'wsa');
         if (bits.length) parts.push(`RDCleanPath(${bits.join(', ')})`);
+        // 原因文案放在最前：wasm 自带的 backtrace 只有「general error (code 1)」这类泛化描述
+        const reason = describeTunnelError(detail);
+        if (reason) parts.splice(1, 0, reason);
       }
     }
   } catch { /* 忽略 */ }
