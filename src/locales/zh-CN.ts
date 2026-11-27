@@ -426,6 +426,7 @@ export default {
     copyAll: '复制全部输出',
     clear: '清屏',
     reconnect: '重新连接',
+    addToAiChat: '添加到 AI 对话',
   },
   snippet: {
     title: '命令片段',

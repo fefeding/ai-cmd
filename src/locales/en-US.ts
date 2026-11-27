@@ -426,6 +426,7 @@ export default {
     copyAll: 'Copy All Output',
     clear: 'Clear',
     reconnect: 'Reconnect',
+    addToAiChat: 'Add to AI Chat',
   },
   snippet: {
     title: 'Snippets',

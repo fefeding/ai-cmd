@@ -155,6 +155,20 @@ All connection management reuses the same backend and storage as the desktop / C
 3. Choose a model (default: `gpt-4o-mini`) and save.
 4. You can now chat with the AI Agent in natural language — it observes terminal output, runs commands, and iterates until the task is done.
 
+### Add a terminal to your editor's AI chat
+
+In a connected AICmd terminal, right-click and choose **Add to AI Chat**. The extension inserts an `@Terminal` context item into the AI chat input, like adding a file to chat. It uses the selected terminal text, or the most recent terminal output when nothing is selected.
+
+The action also binds that session to the AI chat and enables AICmd's MCP tools (`session_info`, `session_read`, `session_exec`, `session_interrupt`, `session_detach`). The AI can then run commands in the attached terminal; commands are typed into the user's visible shell and audited. No session/connection id is exposed to the tools.
+
+- CodeBuddy: auto-registers the bundled MCP server and inserts a real `@Terminal` context chip through the built-in chat code action.
+- Other editors: the MCP config is copied to the clipboard; paste it into the editor's MCP settings once to enable command execution.
+- Trae: attaches a terminal payload to Cascade through `workbench.action.chat.icube.open`.
+- Cursor, Windsurf and stock VSCode Copilot Chat: prefill the chat input with `workbench.action.chat.open`; nothing is sent automatically.
+- Cline, Continue and Roo Code: focus the plugin's chat input and paste the snapshot; nothing is sent automatically.
+- In stock VSCode the menu appears only after one of those AI chat extensions is active. If the plugin is started later, the menu appears without reloading the terminal.
+- The snapshot is captured when you click the menu item; choose the action again to refresh it.
+
 ### File download (sz / ZMODEM)
 
 When a terminal session triggers a file download (e.g. `sz file`), the WebView posts a save request to the extension host. VSCode shows a native **Save As** dialog; choose a destination and the file is written to disk.

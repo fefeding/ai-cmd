@@ -8,6 +8,7 @@ import { isChinese, t } from './i18n';
 import { TerminalBridge } from './ws-bridge';
 import { AicmdFileSystemProvider } from './remote-fs';
 import { AicmdStatusBar } from './status-bar';
+import { ChatContextBridge, McpToolBridge } from './mcp-bridge';
 
 let launcher: ServerLauncher;
 let treeProvider: AICmdTreeProvider;
@@ -17,6 +18,9 @@ let activePanel: vscode.WebviewPanel | undefined;
 let bridge: TerminalBridge | undefined;
 let remoteFs: AicmdFileSystemProvider | undefined;
 let statusBar: AicmdStatusBar | undefined;
+let chatBridge: ChatContextBridge | undefined;
+let toolBridge: McpToolBridge | undefined;
+let broadcastChatCapability: (() => Promise<void>) | undefined;
 const panels = new Set<vscode.WebviewPanel>();
 let editPanel: vscode.WebviewPanel | undefined;
 // 记录每个面板的基础名与实际 tab 标题，用于同名连接打开多次时追加编号区分
@@ -130,8 +134,41 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   context.subscriptions.push(statusBar);
 
+  // 多编辑器对话上下文桥接：把终端输出快照塞进对话输入框
+  chatBridge = new ChatContextBridge();
+  context.subscriptions.push(chatBridge);
+
+  // MCP 工具桥接：把会话绑定给 AI 对话，让 AI 能通过工具操作该终端
+  toolBridge = new McpToolBridge(launcher);
+  context.subscriptions.push(toolBridge);
+  broadcastChatCapability = async () => {
+    if (!chatBridge) return;
+    const capability = await chatBridge.capability();
+    for (const panel of panels) {
+      try {
+        panel.webview.postMessage({
+          type: 'aicmd-chat-context-capability',
+          ...capability,
+        });
+      } catch {
+        /* 面板已关闭 */
+      }
+    }
+  };
+  // AI 插件激活 / 停用后刷新菜单可见性（原生 VSCode 依赖此动态更新）
+  context.subscriptions.push(
+    vscode.extensions.onDidChange(() => {
+      broadcastChatCapability?.().catch(() => {
+        /* ignore */
+      });
+    })
+  );
+
   const register = (id: string, handler: (...args: any[]) => any) =>
     context.subscriptions.push(vscode.commands.registerCommand(id, handler));
+
+  register('aicmd.copyMcpConfig', () => toolBridge?.copyConfig(context.extensionPath));
+  register('aicmd.detachMcp', () => toolBridge?.unbind());
 
   register(
     'aicmd.openTerminal',
@@ -241,6 +278,7 @@ export function activate(context: vscode.ExtensionContext): void {
           /* ignore */
         }
       }
+      toolBridge?.reset();
     } catch (e: any) {
       // 子进程 exit 事件里的异常不能冒泡到扩展宿主
       console.error('[aicmd] onUnexpectedExit error:', e);
@@ -806,6 +844,63 @@ function wirePanel(
   // 刷新树并关闭编辑面板
   panel.webview.onDidReceiveMessage(async (msg: any) => {
     if (!msg) return;
+    if (msg.type === 'aicmd-chat-context-request') {
+      broadcastChatCapability?.().catch(() => {
+        /* ignore */
+      });
+      return;
+    }
+    // 终端右键「添加到 AI 对话」：绑定会话 + 注册 MCP 工具 + 塞入 @Terminal 上下文
+    if (msg.type === 'aicmd-attach-chat') {
+      const sessionId = typeof msg.sessionId === 'string' ? msg.sessionId : '';
+      if (!sessionId) return;
+      try {
+        const result = await toolBridge!.attach(sessionId, extContext!.extensionPath);
+        const toolHint =
+          result.registration === 'registered' || (vscode as any).lm?.registerTool
+            ? t(
+                '[AICmd] 已绑定该终端。优先使用 VSCode 原生工具：aicmd_sessionInfo（看机器）、aicmd_sessionRead（看屏幕）、aicmd_sessionExec（执行命令）、aicmd_sessionOutput（读截断输出）、aicmd_sessionInterrupt / aicmd_sessionDetach。CodeBuddy MCP 对应 session_info / session_read / session_exec / session_output / session_interrupt / session_detach。无需读取发现文件或手写 curl。',
+                '[AICmd] Terminal bound. Prefer native VSCode tools: aicmd_sessionInfo, aicmd_sessionRead, aicmd_sessionExec, aicmd_sessionOutput, aicmd_sessionInterrupt / aicmd_sessionDetach. CodeBuddy MCP equivalents: session_info, session_read, session_exec, session_output, session_interrupt, session_detach. No discovery file or hand-written curl needed.'
+              )
+            : result.registration === 'clipboard'
+              ? t(
+                  '[AICmd] 已绑定终端，但 MCP 配置只复制到了剪贴板。请粘贴到 AI 编辑器的 MCP 设置后使用 session_info / session_read / session_exec / session_output / session_interrupt / session_detach。',
+                  '[AICmd] Terminal bound, but the MCP config was only copied to the clipboard. Paste it into your AI editor MCP settings, then use session_info / session_read / session_exec / session_output / session_interrupt / session_detach.'
+                )
+              : t(
+                  '[AICmd] 终端已绑定，但当前宿主既没有原生 LM 工具能力，也找不到 MCP 入口，命令执行不可用。',
+                  '[AICmd] Terminal bound, but this host has neither native LM tools nor an MCP entry; command execution is unavailable.'
+                );
+        const attached =
+          (await chatBridge?.attachToChat({
+            sessionId,
+            sessionName: typeof msg.sessionName === 'string' ? msg.sessionName : undefined,
+            connectionId: typeof msg.connectionId === 'string' ? msg.connectionId : undefined,
+            connectionType: typeof msg.connectionType === 'string' ? msg.connectionType : undefined,
+            host: typeof msg.host === 'string' ? msg.host : undefined,
+            username: typeof msg.username === 'string' ? msg.username : undefined,
+            snapshot: typeof msg.snapshot === 'string' ? msg.snapshot : '',
+            toolHint,
+          })) ?? false;
+        const suffix =
+          result.registration === 'registered'
+            ? t('，AI 已可通过 MCP 工具操作该终端。', ', the AI can now operate this terminal via MCP tools.')
+            : result.registration === 'clipboard'
+              ? t('，MCP 配置已复制到剪贴板（请粘贴到 AI 编辑器的 MCP 设置以启用命令执行）。', ', MCP config copied to the clipboard (paste it into your AI editor MCP settings to enable command execution).')
+              : t('，但未找到 MCP 入口，命令执行未启用。', ', but the MCP entry was not found, so command execution is unavailable.');
+        vscode.window.showInformationMessage(
+          (attached
+            ? t('终端已放入 AI 对话输入框（@Terminal）', 'Terminal added to the AI chat input (@Terminal)')
+            : t('终端已绑定 AI 对话', 'Terminal attached to AI chat')) + suffix
+        );
+      } catch (e: any) {
+        vscode.window.showErrorMessage(
+          t('添加到 AI 对话失败：', 'Failed to add terminal to AI chat: ') +
+            (e?.message || String(e))
+        );
+      }
+      return;
+    }
     if (msg.type === 'aicmd-edit-saved') {
       treeProvider.refresh();
       editPanel?.dispose();
@@ -878,8 +973,11 @@ function wirePanel(
       if (panel === editPanel) editPanel = undefined;
       if (activePanel === panel) activePanel = undefined;
       statusBar?.refresh();
-      // 仅当所有面板都关闭时才关闭后端服务
-      if (panels.size === 0) launcher.stop();
+      // 仅当所有面板都关闭时才关闭后端服务，并解除 AI 对话绑定
+      if (panels.size === 0) {
+        toolBridge?.reset();
+        launcher.stop();
+      }
     },
     undefined,
     extContext?.subscriptions
@@ -1086,6 +1184,22 @@ function buildHtml(url: string, title: string): string {
     // 剪贴板桥接：iframe 内的 navigator.clipboard 跨源不可用，
     // 请求转发给扩展宿主（其用 vscode.env.clipboard 处理）
     if (d.__aicmd_clipboard && (d.type === 'aicmd-clipboard-read-request' || d.type === 'aicmd-clipboard-write-request')) {
+      vscode.postMessage(d);
+      return;
+    }
+    // 对话上下文能力探测：iframe 请求 → 宿主；宿主结果 → iframe
+    if (d.type === 'aicmd-chat-context-request') {
+      vscode.postMessage(d);
+      return;
+    }
+    if (d.type === 'aicmd-chat-context-capability') {
+      try {
+        if (frame && frame.contentWindow) frame.contentWindow.postMessage(d, '*');
+      } catch (err) {}
+      return;
+    }
+    // 终端右键「添加到 AI 对话」：把输出快照从 iframe 转给扩展宿主
+    if (d.type === 'aicmd-attach-chat') {
       vscode.postMessage(d);
       return;
     }

@@ -114,6 +114,7 @@
     <!-- 终端右键上下文菜单 -->
     <div 
       v-if="contextMenuVisible" 
+      ref="contextMenuRef"
       class="terminal-context-menu"
       :style="{ left: contextMenuX + 'px', top: contextMenuY + 'px' }"
       @click.stop
@@ -132,6 +133,10 @@
       </div>
       <div class="context-menu-item" @click="handleContextClear">
         <i class="bi bi-eraser"></i>{{ t('context.clear') || 'Clear' }}
+      </div>
+      <!-- 仅 VSCode 扩展 WebView：把当前终端输出作为 @Terminal 上下文项塞进 AI 对话输入框 -->
+      <div v-if="chatSupported" class="context-menu-item" @click="handleContextAddToChat">
+        <i class="bi bi-chat-square-text"></i>{{ t('context.addToAiChat') }}
       </div>
       <div class="context-menu-item" @click="handleContextReconnect">
         <i class="bi bi-arrow-repeat"></i>{{ t('context.reconnect') || 'Reconnect' }}
@@ -164,6 +169,12 @@ import {
   writeClipboard,
   readClipboard,
 } from '@/utils/vscode-clipboard';
+import {
+  isChatContextAvailable,
+  onChatContextAvailability,
+  initChatContextBridge,
+  attachTerminalToChat,
+} from '@/utils/vscode-mcp';
 
 const { t } = useI18n();
 
@@ -274,6 +285,9 @@ let sentry: any = null;
 let zmodemSession: any = null;
 let zmodemRole: string | null = null; // 'send' | 'receive'
 let offVscodeTheme: (() => void) | null = null; // VSCode 主题变化订阅
+// 是否支持「添加到 AI 对话」：由扩展宿主按编辑器 / 已激活 AI 插件动态下发
+const chatSupported = ref(isChatContextAvailable());
+let offChatAvailability: (() => void) | null = null;
 let fileUploadResultCallback: ((msg: WSMessage) => void) | null = null;
 
 /**
@@ -1121,6 +1135,12 @@ onMounted(() => {
   // 全局点击关闭右键菜单
   document.addEventListener('click', onDocumentClick);
 
+  // AI 对话能力由扩展宿主下发：AI 插件后启动也能动态显示菜单
+  offChatAvailability = onChatContextAvailability((cap) => {
+    chatSupported.value = cap.available;
+  });
+  initChatContextBridge();
+
   // ResizeObserver 监听容器大小变化（监听 terminal-container，因为 flex 布局下它会随 AI 面板开合而变化）
   if (terminalContainer.value) {
     resizeObserver = new ResizeObserver(() => {
@@ -1138,6 +1158,7 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   document.removeEventListener('click', onDocumentClick);
   offVscodeTheme?.();
+  offChatAvailability?.();
   ws?.close();
   ipcCleanup?.();
   terminal?.dispose();
@@ -1215,13 +1236,24 @@ function handleAISend(msg: any) {
 const contextMenuVisible = ref(false);
 const contextMenuX = ref(0);
 const contextMenuY = ref(0);
+const contextMenuRef = ref<HTMLElement | null>(null);
 
 function showTerminalContextMenu(event: MouseEvent) {
   event.preventDefault();
   event.stopPropagation();
-  contextMenuX.value = event.clientX;
-  contextMenuY.value = event.clientY;
+  const x = event.clientX;
+  const y = event.clientY;
+  contextMenuX.value = x;
+  contextMenuY.value = y;
   contextMenuVisible.value = true;
+  // 菜单渲染后按实际尺寸夹进可视区域，避免靠边/靠底时被截断
+  nextTick(() => {
+    if (!contextMenuVisible.value || !contextMenuRef.value) return;
+    const { offsetWidth, offsetHeight } = contextMenuRef.value;
+    const margin = 8;
+    contextMenuX.value = Math.max(margin, Math.min(x, window.innerWidth - offsetWidth - margin));
+    contextMenuY.value = Math.max(margin, Math.min(y, window.innerHeight - offsetHeight - margin));
+  });
 }
 
 function hideTerminalContextMenu() {
@@ -1287,6 +1319,36 @@ function handleContextReconnect() {
   hideTerminalContextMenu();
   reconnectAttempts = 0; // 手动重连重置计数，允许在自动重连耗尽后恢复
   reconnect();
+}
+
+/** 取最近 200 行终端输出；若有选中文本优先使用选中内容。 */
+function getTerminalSnapshot(): string {
+  if (!terminal) return '';
+  const selection = terminal.getSelection();
+  if (selection?.trim()) return selection.trim();
+  const buffer = terminal.buffer.active;
+  const lines: string[] = [];
+  for (let i = Math.max(0, buffer.length - 200); i < buffer.length; i++) {
+    const line = buffer.getLine(i)?.translateToString(true);
+    if (line !== undefined) lines.push(line);
+  }
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  return lines.join('\n');
+}
+
+/** 把当前终端输出作为 @Terminal 上下文项塞进 AI 对话输入框（扩展侧，不经后端） */
+function handleContextAddToChat() {
+  hideTerminalContextMenu();
+  if (!sessionId || status.value !== 'connected') return;
+  attachTerminalToChat({
+    sessionId,
+    sessionName: props.connection.name || props.tabId,
+    connectionId: String(props.connection.id ?? ''),
+    connectionType: String((props.connection as any).type || ''),
+    host: props.connection.host,
+    username: props.connection.username,
+    snapshot: getTerminalSnapshot(),
+  });
 }
 
 /** AI 回复代码块的「插入终端 / 执行」处理（execute=true 时复用 handleExecuteCommand 自动回车执行） */
@@ -1553,6 +1615,10 @@ function onDocumentClick(e: MouseEvent) {
   position: fixed;
   z-index: 1000;
   min-width: 160px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  box-sizing: border-box;
   background: var(--bg-menu);
   border: 1px solid var(--border-strong);
   border-radius: 8px;

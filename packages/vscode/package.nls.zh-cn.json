@@ -11,6 +11,7 @@
   "command.exportConnections": "导出连接 JSON",
   "command.importConnections": "导入连接 JSON",
   "command.setGroupMode": "连接分组方式（按分组 / 按标签）",
+  "command.copyMcpConfig": "复制 MCP 配置（让 AI 对话操作已添加的终端）",
   "command.connectionClicked": "双击打开连接",
   "command.runSelection": "在 AICmd 终端执行选中内容",
   "command.showSessions": "管理 AICmd 会话",

@@ -9,6 +9,7 @@ import { RdpService } from './service/rdp.service';
 import { RdpTunnelService } from './service/rdp-tunnel.service';
 import { PortForwardService } from './service/port-forward.service';
 import { SSHKeyService } from './service/ssh-key.service';
+import { McpBridgeService } from './service/mcp-bridge.service';
 
 // server.js 通过 dist/server/index.js 取用统一的 /ws/rdp 鉴权实现
 export { validateRdpWsRequest } from './utils/rdp-ws';
@@ -26,6 +27,8 @@ const batchService = new BatchService(sshService, connectionService);
 const aiService = new AIService(sshService, skillService, auditService);
 const portForwardService = new PortForwardService(sshService);
 const sshKeyService = new SSHKeyService(connectionService);
+// MCP 会话桥接：让 AI 编辑器的对话只操作用户显式添加的那一个终端会话
+const mcpBridgeService = new McpBridgeService(sshService, connectionService, auditService);
 
 // 会话生命周期：端口转发随 SSH 会话自动启停
 sshService.onSessionReady((sessionId, connection) => portForwardService.startAuto(sessionId, connection));
@@ -420,6 +423,50 @@ export async function handleRoutes(pathname: string, body: any) {
       return await sshService.getDefaultDirectory(sessionId);
     }
 
+    // ========== MCP 会话桥接（供 aicmd mcp 进程调用） ==========
+    // 所有端点只作用于「当前绑定的会话」，不接受 sessionId 参数，
+    // 因此外部进程无法借道这些端点操作其它连接。
+
+    // 绑定会话（覆盖此前的绑定）
+    if (pathname === '/api/mcp/bind') {
+      const { sessionId } = body;
+      return await mcpBridgeService.bind(sessionId);
+    }
+
+    // 解除绑定
+    if (pathname === '/api/mcp/unbind') {
+      mcpBridgeService.unbind();
+      return true;
+    }
+
+    // 当前绑定的会话（未绑定或会话已关闭时为 null）
+    if (pathname === '/api/mcp/status') {
+      return mcpBridgeService.status();
+    }
+
+    // 在绑定会话中执行命令
+    if (pathname === '/api/mcp/exec') {
+      const { command, timeoutMs } = body;
+      if (!command) throw Error('Missing parameter: command');
+      return await mcpBridgeService.exec(command, timeoutMs);
+    }
+
+    // 读取绑定会话最近的终端输出
+    if (pathname === '/api/mcp/read') {
+      return mcpBridgeService.read(body?.lines);
+    }
+
+    // 分段读取最近一次 exec 的完整输出（避免截断后重跑命令）
+    if (pathname === '/api/mcp/output') {
+      return mcpBridgeService.readOutput(body?.offset, body?.length);
+    }
+
+    // 中断绑定会话中正在运行的前台命令
+    if (pathname === '/api/mcp/interrupt') {
+      mcpBridgeService.interrupt();
+      return true;
+    }
+
     // RDP: 会话状态（IronRDP-WASM 隧道，不再依赖 guacd）
     if (pathname === '/api/rdp/getSessions') {
       return rdpTunnelService.getSessions();
@@ -433,4 +480,4 @@ export async function handleRoutes(pathname: string, body: any) {
 }
 
 // 导出服务实例供 WebSocket 使用
-export { connectionService, sshService, rdpService, rdpTunnelService, aiService, skillService, auditService, monitorService, batchService, portForwardService, sshKeyService };
+export { connectionService, sshService, rdpService, rdpTunnelService, aiService, skillService, auditService, monitorService, batchService, portForwardService, sshKeyService, mcpBridgeService };

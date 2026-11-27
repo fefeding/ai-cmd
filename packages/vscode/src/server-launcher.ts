@@ -45,6 +45,8 @@ export class ServerLauncher {
   private startPort = 9802;
   private spawnError?: string;
   private lastStderr = '';
+  /** 实际成功启动后端的 node 可执行文件（供诊断 / 外部复用） */
+  private nodeBin = '';
   // 防止并发调用重复启动：多路 ensureStarted 共享同一次启动过程
   private startPromise?: Promise<string>;
   // 是否为本扩展主动停止（用于区分「意外崩溃」）
@@ -74,6 +76,25 @@ export class ServerLauncher {
 
   get isStarted(): boolean {
     return this.started;
+  }
+
+  /** 扩展实际使用的数据目录。 */
+  get dataDirectory(): string {
+    return this.dataDir;
+  }
+
+  /**
+   * 供外部独立进程使用的 node 可执行文件。
+   * 优先返回实际启动了后端的那个（已知可用）；否则取候选列表里第一个存在的；
+   * 都找不到时回落到 PATH 中的 `node`。
+   */
+  get nodeBinary(): string {
+    const used = this.nodeBin;
+    if (used) return used;
+    for (const candidate of this.resolveNodeCandidates()) {
+      if (candidate !== 'node' && fs.existsSync(candidate)) return candidate;
+    }
+    return 'node';
   }
 
   /** 同时写入 OutputChannel（若有）与控制台。 */
@@ -153,6 +174,7 @@ export class ServerLauncher {
       const err = await this.tryStart(nodeBin, serverJs);
       if (!err) {
         this.started = true;
+        this.nodeBin = nodeBin;
         this.log(`[aicmd-server] ready at ${this.url} (node: ${nodeBin})`);
         return this.url;
       }

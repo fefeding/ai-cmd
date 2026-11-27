@@ -773,6 +773,16 @@ export class SSHService {
     return this.sessions.get(sessionId);
   }
 
+  /**
+   * 会话 shell 类型（只读取已探测/已配置的提示，不注入探测命令）。
+   * MCP 执行器据此在命令后追加不同语法的完成标记。
+   */
+  getShellKind(sessionId: string): 'unix' | 'windows' {
+    const session = this.sessions.get(sessionId);
+    if (!session) return 'unix';
+    return session.os ?? (session.osHint === 'windows' ? 'windows' : 'unix');
+  }
+
   // ========== Session 元数据持久化 ==========
 
   /**

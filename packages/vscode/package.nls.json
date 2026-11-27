@@ -11,6 +11,7 @@
   "command.exportConnections": "Export Connections to JSON",
   "command.importConnections": "Import Connections from JSON",
   "command.setGroupMode": "Group Connections (by group / by tag)",
+  "command.copyMcpConfig": "Copy MCP Config (let AI chat operate the attached terminal)",
   "command.connectionClicked": "Double-click to Open Connection",
   "command.runSelection": "Run Selection in AICmd Terminal",
   "command.showSessions": "Manage AICmd Sessions",

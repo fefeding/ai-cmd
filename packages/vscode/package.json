@@ -2,7 +2,7 @@
   "name": "vscode-aicmd",
   "displayName": "%displayName%",
   "description": "%description%",
-  "version": "0.1.34",
+  "version": "0.1.35",
   "publisher": "fefeding",
   "license": "MIT",
   "repository": {
@@ -65,18 +65,7 @@
   "icon": "resources/activity-icon.png",
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onWebviewPanel:aicmd.terminal",
-    "onView:aicmd.explorer",
-    "onCommand:aicmd.openTerminal",
-    "onCommand:aicmd.connectionClicked",
-    "onCommand:aicmd.refresh",
-    "onCommand:aicmd.runSelection",
-    "onCommand:aicmd.showSessions",
-    "onCommand:aicmd.browseRemote",
-    "onCommand:aicmd.searchConnection",
-    "onCommand:aicmd.exportConnections",
-    "onCommand:aicmd.importConnections",
-    "onCommand:aicmd.setGroupMode"
+    "onWebviewPanel:aicmd.terminal"
   ],
   "contributes": {
     "viewsContainers": {
@@ -92,7 +81,8 @@
       "aicmd": [
         {
           "id": "aicmd.explorer",
-          "name": "%view.connections%"
+          "name": "%view.connections%",
+          "icon": "resources/activity-icon.svg"
         }
       ]
     },
@@ -172,6 +162,95 @@
         "title": "%command.setGroupMode%",
         "category": "AICmd",
         "icon": "$(group-by-ref-type)"
+      },
+      {
+        "command": "aicmd.copyMcpConfig",
+        "title": "%command.copyMcpConfig%",
+        "category": "AICmd",
+        "icon": "$(clippy)"
+      }
+    ],
+    "languageModelTools": [
+      {
+        "name": "aicmd_sessionInfo",
+        "displayName": "AICmd: attached terminal info",
+        "modelDescription": "Get info about the single AICmd terminal attached to this conversation: name, type, host and user. Call this first. No side effects.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "aicmdInfo",
+        "icon": "$(terminal)",
+        "when": "aicmd.mcpBound",
+        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+      },
+      {
+        "name": "aicmd_sessionRead",
+        "displayName": "AICmd: read terminal screen",
+        "modelDescription": "Read the recent screen output of the attached AICmd terminal WITHOUT running anything. Use before acting or after a command produced no visible output.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "aicmdRead",
+        "icon": "$(terminal)",
+        "when": "aicmd.mcpBound",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "lines": { "type": "integer", "minimum": 10, "maximum": 400, "description": "How many trailing lines to return. Default 100." }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "aicmd_sessionExec",
+        "displayName": "AICmd: execute in terminal",
+        "modelDescription": "Run a shell command in the attached AICmd terminal. The command is typed into the user's visible interactive shell and audited. Returns output and exit code. Use aicmd_sessionOutput if output is truncated.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "aicmdExec",
+        "icon": "$(terminal)",
+        "when": "aicmd.mcpBound",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "command": { "type": "string", "description": "The shell command to run." },
+            "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 300000, "description": "Max wait in milliseconds. Default 20000." }
+          },
+          "required": ["command"],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "aicmd_sessionOutput",
+        "displayName": "AICmd: read remaining output",
+        "modelDescription": "Read the next chunk of FULL output from the most recent aicmd_sessionExec. Use this instead of rerunning a command when output was truncated.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "aicmdOutput",
+        "icon": "$(terminal)",
+        "when": "aicmd.mcpBound",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "offset": { "type": "integer", "minimum": 0, "description": "Character offset. Use the nextOffset from the previous chunk." },
+            "length": { "type": "integer", "minimum": 1000, "maximum": 200000, "description": "Maximum characters to return. Default 20000." }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "aicmd_sessionInterrupt",
+        "displayName": "AICmd: interrupt terminal",
+        "modelDescription": "Send Ctrl+C to the attached AICmd terminal to stop the foreground command. Use when a command timed out or a prompt is stuck.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "aicmdInterrupt",
+        "icon": "$(debug-stop)",
+        "when": "aicmd.mcpBound",
+        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+      },
+      {
+        "name": "aicmd_sessionDetach",
+        "displayName": "AICmd: detach terminal",
+        "modelDescription": "Detach the AICmd terminal from this conversation once the task is finished, so no further commands can run on it.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "aicmdDetach",
+        "icon": "$(close)",
+        "when": "aicmd.mcpBound",
+        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
       }
     ],
     "keybindings": [

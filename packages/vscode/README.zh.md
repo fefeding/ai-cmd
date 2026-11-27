@@ -157,6 +157,20 @@ code --install-extension aicmd-terminal-*.vsix
 3. 选择模型（默认 `gpt-4o-mini`）并保存。
 4. 现在可以用自然语言与 AI Agent 对话——它观察终端输出、执行命令并迭代直到任务完成。
 
+### 把终端添加到编辑器的 AI 对话
+
+在已连接的 AICmd 终端里右键选择**「添加到 AI 对话」**，扩展会把一个 `@Terminal` 上下文项塞进 AI 对话输入框，和「添加文件到对话」的体验一致。内容优先使用选中的终端文本；没有选中内容时取最近 200 行终端输出。
+
+该操作同时把这个会话绑定到 AI 对话，并启用 AICmd 的 MCP 工具（`session_info`、`session_read`、`session_exec`、`session_interrupt`、`session_detach`）。AI 随后可以在已添加的终端里执行命令；命令会输入到用户可见的 shell 中并写入审计日志，工具不接收会话 / 连接 id。
+
+- CodeBuddy：自动注册内置的 MCP server，并通过 chat code action 插入真正的 `@Terminal` 上下文项。
+- 其它编辑器：MCP 配置会复制到剪贴板，首次粘贴到编辑器的 MCP 设置即可启用命令执行。
+- Trae：通过 `workbench.action.chat.icube.open` 把 terminalPayload 附加到 Cascade。
+- Cursor、Windsurf、原生 VSCode Copilot Chat：通过 `workbench.action.chat.open` 预填输入框，不会自动发送。
+- Cline、Continue、Roo Code：聚焦插件输入框并粘贴快照，不会自动发送。
+- 原生 VSCode 只有在上述 AI 对话插件处于激活状态时才显示菜单；插件后启动也会自动出现，无需重开终端。
+- 快照在点击菜单时抓取，再次点击即可刷新。
+
 ### 文件下载（sz / ZMODEM）
 
 当终端会话触发文件下载（例如 `sz file`）时，WebView 向扩展宿主发送保存请求。VS Code 显示原生**另存为**对话框，选择目标位置后文件写入磁盘。

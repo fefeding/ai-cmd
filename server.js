@@ -766,6 +766,18 @@ for (let i = 0; i < process.argv.length; i++) {
 const PORT = portFromArgs || process.env.PORT || 9802;
 const HOST = process.env.HOST || process.env.AICMD_HOST || '127.0.0.1';
 
+// MCP 会话桥接：绑定后需要把本服务的回环地址写入发现文件，供 `aicmd mcp` 进程连回。
+// 监听在通配地址时回环地址取 127.0.0.1。
+try {
+  const mcpBridge = require('./dist/server/index.js').mcpBridgeService;
+  if (mcpBridge) {
+    const anyAddress = !HOST || HOST === '0.0.0.0' || HOST === '::' || HOST === '[::]';
+    mcpBridge.setBaseUrl(`http://${anyAddress ? '127.0.0.1' : HOST}:${PORT}`);
+  }
+} catch (e) {
+  console.error('[MCP] Failed to set MCP base URL:', e.message);
+}
+
 // PID 文件路径：按端口区分，避免多实例（桌面端 / CLI / 多个 VSCode 窗口）互相覆盖
 // （多个进程监听不同端口，共用同一数据目录时，同名 PID 文件会导致 stop 杀错对象）
 const pidFilePath = getDataPath('aicmd.server.' + PORT + '.pid');
@@ -781,8 +793,17 @@ server.listen(PORT, HOST, () => {
   console.log(`http://localhost:${PORT}/?token=${accessToken}`);
 });
 
-// 进程退出处理
-process.on('exit', () => { cleanupPid(); logStream.end(); });
+// 进程退出处理：清理 PID 文件与 MCP 服务发现文件
+process.on('exit', () => {
+  cleanupPid();
+  try { require('./dist/server/index.js').mcpBridgeService?.dispose(); } catch (e) {}
+  logStream.end();
+});
+// 显式安装信号处理器，保证被 stop / kill 终止时上面的退出清理一定会执行
+// （默认处理器直接终止进程，不一定触发 'exit'）。退出码沿用惯例 128 + 信号编号。
+for (const [signal, code] of [['SIGTERM', 143], ['SIGINT', 130]]) {
+  process.once(signal, () => process.exit(code));
+}
 process.on('SIGTERM', () => { cleanupPid(); process.exit(0); });
 process.on('SIGINT', () => { cleanupPid(); process.exit(0); });
 process.on('uncaughtException', (err) => {

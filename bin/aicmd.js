@@ -98,6 +98,7 @@ switch (command) {
   case 'start': startProject(); break;
   case 'stop': stopProject(); break;
   case 'restart': restartProject(); break;
+  case 'mcp': startMcpServer(); break;
   case '-v':
   case '--version': showVersion(); break;
   default: showHelp(); break;
@@ -263,6 +264,14 @@ function showVersion() {
   console.log(pkg.version);
 }
 
+/**
+ * 启动 MCP server（stdio），供 AI 编辑器的对话操作「用户显式添加到对话」的终端会话。
+ * 该进程由 AI 编辑器拉起并独占 stdin/stdout，这条路径上不得有任何其它输出写到 stdout。
+ */
+function startMcpServer() {
+  require(path.join(projectRoot, 'dist', 'server', 'mcp-server.js'));
+}
+
 function showHelp() {
   console.log('aicmd - AI-powered SSH Terminal');
   console.log('');
@@ -270,6 +279,7 @@ function showHelp() {
   console.log('  aicmd start    Start the server');
   console.log('  aicmd stop     Stop the server');
   console.log('  aicmd restart  Restart the server');
+  console.log('  aicmd mcp      Start the MCP server (stdio) for AI editors');
   console.log('  aicmd -v       Show version');
   console.log('');
 }

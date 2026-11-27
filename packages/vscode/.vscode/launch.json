@@ -9,6 +9,16 @@
         "--extensionDevelopmentPath=${workspaceFolder}/packages/vscode"
       ],
       "preLaunchTask": "build-vscode"
+    },
+    {
+      "name": "Run Extension (CodeBuddy, no debug)",
+      "type": "extensionHost",
+      "request": "launch",
+      "noDebug": true,
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/packages/vscode"
+      ],
+      "preLaunchTask": "build-vscode"
     }
   ]
 }

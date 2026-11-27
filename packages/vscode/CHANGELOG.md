@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.35
+
+- 新增 **终端会话添加到 AI 对话并允许 AI 操作机器**：终端右键菜单把当前输出作为 `@Terminal` 上下文塞进对话输入框，同时把会话绑定给 AICmd MCP 工具。AI 可通过 `session_exec` 等在用户可见的终端里执行命令、读取输出和中断；CodeBuddy 自动注册 MCP server，其它编辑器复制 MCP 配置。适配 CodeBuddy、Trae、Cursor、Windsurf，以及原生 VSCode 中激活的 Copilot Chat / Cline / Continue / Roo Code；原生 VSCode 未启动 AI 对话插件时不显示该菜单。
+
 ## 0.1.31
 
 - 新增 **SSH 端口转发 / 隧道**：支持本地隧道（`-L`，本机端口 → 远程内网服务，如数据库）与远程转发（`-R`，让公网访问本机服务），连接编辑器可配置多条规则并单独启停、自动启动；隧道面板实时展示状态与活跃连接数。
