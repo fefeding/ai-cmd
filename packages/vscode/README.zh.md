@@ -159,18 +159,27 @@ code --install-extension aicmd-terminal-*.vsix
 
 ### 把终端添加到编辑器的 AI 对话
 
-在已连接的 AICmd 终端里右键选择**「添加到 AI 对话」**，扩展会把一个 `@Terminal` 上下文项塞进 AI 对话输入框，和「添加文件到对话」的体验一致。内容优先使用选中的终端文本；没有选中内容时取最近 200 行终端输出。
+在已连接的 AICmd 终端里右键选择**「添加到 AI 对话」**：
 
-该操作同时把这个会话绑定到 AI 对话，并启用 AICmd 的 MCP 工具（`session_info`、`session_read`、`session_exec`、`session_interrupt`、`session_detach`）。AI 随后可以在已添加的终端里执行命令；命令会输入到用户可见的 shell 中并写入审计日志，工具不接收会话 / 连接 id。
+1. 选中的终端文本（没有选中时取最近 200 行输出）作为 `@Terminal` 上下文插入输入框，**不会自动发送**。
+2. 当前终端被独占绑定到这次对话，VSCode 状态栏出现终端指示器，点击即可解除绑定。
+3. AI 获得 AICmd 工具。现在可以直接问“查看这台机器的 nginx 配置”，AI 会先确认机器，再读取屏幕、执行命令并汇总结果。
 
-- CodeBuddy：自动注册内置的 MCP server，并通过 chat code action 插入真正的 `@Terminal` 上下文项。
-- 其它编辑器：MCP 配置会复制到剪贴板，首次粘贴到编辑器的 MCP 设置即可启用命令执行。
+**VSCode / Copilot 原生工具**：`aicmd_sessionInfo`、`aicmd_sessionRead`、`aicmd_sessionExec`、`aicmd_sessionOutput`、`aicmd_sessionInterrupt`、`aicmd_sessionDetach`，可在输入框用 `#aicmdExec` 引用。输出过长时 `aicmd_sessionExec` 会返回 `outputId`，再用 `aicmd_sessionOutput` 分段读取，不需要重跑命令。
+
+**CodeBuddy MCP 工具**：`session_info`、`session_read`、`session_exec`、`session_output`、`session_interrupt`、`session_detach`，由扩展自动注册。
+
+**其它编辑器**：MCP 配置会复制到剪贴板，首次粘贴到编辑器的 MCP 设置后即可启用命令执行。
+
 - Trae：通过 `workbench.action.chat.icube.open` 把 terminalPayload 附加到 Cascade。
-- 原生 VSCode 1.105+：把已绑定终端作为以连接名命名的单个文件引用加入输入框，没有额外话述、不自动发送；AI 可按需通过 AICmd 工具查看屏幕或执行命令。旧版本退回工具引用或文本快照。
+- 原生 VSCode 1.105+：把已绑定终端作为以连接名命名的单个文件引用加入输入框，没有额外话述、不自动发送；旧版本退回工具引用或文本快照。
 - Cursor、Windsurf：`workbench.action.chat.open` 预填输入框，不会自动发送。
 - Cline、Continue、Roo Code：聚焦插件输入框并粘贴快照，不会自动发送。
 - 原生 VSCode 只有在上述 AI 对话插件处于激活状态时才显示菜单；插件后启动也会自动出现，无需重开终端。
 - 快照在点击菜单时抓取，再次点击即可刷新。
+- Web 终端右上角和右键菜单里的 `?` 可随时打开同样的 AI / MCP 使用说明。
+
+**安全边界**：一次只绑定一个终端；命令写入用户可见的交互式 shell 并记入审计；危险命令会被拦截；工具不接收会话 / 连接 id。可以随时在终端按 Ctrl+C 中断，或点击状态栏终端指示器解除绑定。
 
 ### 文件下载（sz / ZMODEM）
 

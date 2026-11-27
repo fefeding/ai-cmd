@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- 新增 **AI / MCP 使用说明**：Web 终端工具栏和右键菜单增加 `?` 入口，说明内置 AI 助手与编辑器 AI 对话的区别、原生 VSCode 工具与 MCP 工具名、长输出分页、安全边界和解除绑定方式；插件 README 同步补充完整使用步骤。
+
 ## 0.1.35
 
 - 新增 **终端会话添加到 AI 对话并允许 AI 操作机器**：终端右键菜单把当前输出作为 `@Terminal` 上下文塞进对话输入框，同时把会话绑定给 AICmd MCP 工具。AI 可通过 `session_exec` 等在用户可见的终端里执行命令、读取输出和中断；CodeBuddy 自动注册 MCP server，其它编辑器复制 MCP 配置。适配 CodeBuddy、Trae、Cursor、Windsurf，以及原生 VSCode 中激活的 Copilot Chat / Cline / Continue / Roo Code；原生 VSCode 未启动 AI 对话插件时不显示该菜单。

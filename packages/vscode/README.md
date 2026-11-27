@@ -157,18 +157,27 @@ All connection management reuses the same backend and storage as the desktop / C
 
 ### Add a terminal to your editor's AI chat
 
-In a connected AICmd terminal, right-click and choose **Add to AI Chat**. The extension inserts an `@Terminal` context item into the AI chat input, like adding a file to chat. It uses the selected terminal text, or the most recent terminal output when nothing is selected.
+In a connected AICmd terminal, right-click and choose **Add to AI Chat**:
 
-The action also binds that session to the AI chat and enables AICmd's MCP tools (`session_info`, `session_read`, `session_exec`, `session_interrupt`, `session_detach`). The AI can then run commands in the attached terminal; commands are typed into the user's visible shell and audited. No session/connection id is exposed to the tools.
+1. Selected terminal text (or the most recent 200 lines when nothing is selected) is inserted into the chat input as an `@Terminal` context chip; nothing is sent automatically.
+2. That terminal is exclusively bound to this conversation. A terminal indicator appears in the VSCode status bar; click it to detach.
+3. The AI gets AICmd tools. You can now ask something like "show me the nginx site config" — the AI checks the machine, reads the screen, runs commands, and summarizes the result.
 
-- CodeBuddy: auto-registers the bundled MCP server and inserts a real `@Terminal` context chip through the built-in chat code action.
-- Other editors: the MCP config is copied to the clipboard; paste it into the editor's MCP settings once to enable command execution.
+**Native VSCode / Copilot tools**: `aicmd_sessionInfo`, `aicmd_sessionRead`, `aicmd_sessionExec`, `aicmd_sessionOutput`, `aicmd_sessionInterrupt`, `aicmd_sessionDetach`. Reference them with `#aicmdExec`. When output is truncated, `aicmd_sessionExec` returns an `outputId`; use `aicmd_sessionOutput` to read the rest instead of rerunning the command.
+
+**CodeBuddy MCP tools**: `session_info`, `session_read`, `session_exec`, `session_output`, `session_interrupt`, `session_detach`, auto-registered by the extension.
+
+**Other editors**: the MCP config is copied to the clipboard; paste it into the editor's MCP settings once to enable command execution.
+
 - Trae: attaches a terminal payload to Cascade through `workbench.action.chat.icube.open`.
-- Stock VSCode 1.105+: adds the bound terminal as a single file reference named after the connection, with no extra prompt text and nothing sent automatically. The AI can read the screen or run commands through the AICmd tools on demand. Older versions fall back to a tool reference or the text snapshot.
+- Stock VSCode 1.105+: adds the bound terminal as a single file reference named after the connection, with no extra prompt text; older versions fall back to a tool reference or the text snapshot.
 - Cursor and Windsurf: prefill the chat input with `workbench.action.chat.open`; nothing is sent automatically.
 - Cline, Continue and Roo Code: focus the plugin's chat input and paste the snapshot; nothing is sent automatically.
 - In stock VSCode the menu appears only after one of those AI chat extensions is active. If the plugin is started later, the menu appears without reloading the terminal.
 - The snapshot is captured when you click the menu item; choose the action again to refresh it.
+- The `?` button in the Web terminal toolbar and context menu opens the same AI / MCP guide at any time.
+
+**Safety boundaries**: only one terminal is bound at a time; commands are typed into your visible interactive shell and audited; dangerous commands are blocked; no session/connection id is exposed to tools. Press Ctrl+C in the terminal or click the status bar terminal indicator to detach at any time.
 
 ### File download (sz / ZMODEM)
 
