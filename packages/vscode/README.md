@@ -164,7 +164,8 @@ The action also binds that session to the AI chat and enables AICmd's MCP tools 
 - CodeBuddy: auto-registers the bundled MCP server and inserts a real `@Terminal` context chip through the built-in chat code action.
 - Other editors: the MCP config is copied to the clipboard; paste it into the editor's MCP settings once to enable command execution.
 - Trae: attaches a terminal payload to Cascade through `workbench.action.chat.icube.open`.
-- Cursor, Windsurf and stock VSCode Copilot Chat: prefill the chat input with `workbench.action.chat.open`; nothing is sent automatically.
+- Stock VSCode 1.105+: adds the bound terminal as a single file reference named after the connection, with no extra prompt text and nothing sent automatically. The AI can read the screen or run commands through the AICmd tools on demand. Older versions fall back to a tool reference or the text snapshot.
+- Cursor and Windsurf: prefill the chat input with `workbench.action.chat.open`; nothing is sent automatically.
 - Cline, Continue and Roo Code: focus the plugin's chat input and paste the snapshot; nothing is sent automatically.
 - In stock VSCode the menu appears only after one of those AI chat extensions is active. If the plugin is started later, the menu appears without reloading the terminal.
 - The snapshot is captured when you click the menu item; choose the action again to refresh it.

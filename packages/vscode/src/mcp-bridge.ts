@@ -16,6 +16,8 @@ export interface TerminalChatContext {
   snapshot: string;
   /** 「添加到 AI 对话」时由 MCP 桥接给出的工具使用提示 */
   toolHint?: string;
+  /** 宿主支持 vscode.lm.registerTool，原生工具已经注册 */
+  nativeTools?: boolean;
 }
 
 export type ChatAdapter =
@@ -39,6 +41,51 @@ const COMMANDS = {
   workbenchChat: 'workbench.action.chat.open',
   paste: 'editor.action.clipboardPasteAction',
 };
+
+/** 原生 VSCode 中代表「已绑定终端」的单个工具引用（package.json 中声明）。 */
+const NATIVE_TOOL_REFERENCE_ID = 'aicmd_sessionInfo';
+
+function vsCodeAtLeast(major: number, minor: number): boolean {
+  const [currentMajor, currentMinor] = vscode.version.split('.').map(Number);
+  return currentMajor > major || (currentMajor === major && currentMinor >= minor);
+}
+
+/** 用连接名生成一个上下文文件，作为原生 VSCode 对话中的引用 chip。 */
+function terminalReferenceFile(name: string, target: string): vscode.Uri {
+  const safeName = name.replace(/[^\p{L}\p{N}._@-]+/gu, '_').slice(0, 80) || 'AICmd';
+  const dir = path.join(os.tmpdir(), 'aicmd-chat');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, safeName);
+  const lines = isChinese
+    ? [
+        `# AICmd 终端：${name}`,
+        target ? `- 目标：${target}` : '',
+        '- 状态：已绑定到当前对话，工具无需会话 id。',
+        '',
+        '操作方式：使用对话中已启用的 AICmd 工具。',
+        '- aicmd_sessionInfo：查看终端信息',
+        '- aicmd_sessionRead：读取当前屏幕',
+        '- aicmd_sessionExec：在用户可见终端执行命令（带审计）',
+        '- aicmd_sessionOutput：读取被截断的剩余输出',
+        '- aicmd_sessionInterrupt：中断命令',
+        '- aicmd_sessionDetach：解除绑定',
+      ]
+    : [
+        `# AICmd terminal: ${name}`,
+        target ? `- Target: ${target}` : '',
+        '- Status: bound to this conversation; tools need no session id.',
+        '',
+        'Operate it with the AICmd tools enabled in this conversation:',
+        '- aicmd_sessionInfo: terminal info',
+        '- aicmd_sessionRead: read the current screen',
+        '- aicmd_sessionExec: run a command in the visible terminal (audited)',
+        '- aicmd_sessionOutput: read remaining truncated output',
+        '- aicmd_sessionInterrupt: interrupt the running command',
+        '- aicmd_sessionDetach: detach the terminal',
+      ];
+  fs.writeFileSync(file, lines.filter(Boolean).join('\n'), 'utf8');
+  return vscode.Uri.file(file);
+}
 
 /** 原生 VSCode 下，只有这些 AI 对话插件激活时才开放入口。 */
 const AI_CHAT_EXTENSION_IDS = [
@@ -108,8 +155,10 @@ function activeAiChatExtensions(): string[] {
  *
  * - CodeBuddy：codeAction + terminal mention，形成真正的 `@Terminal` 上下文项；
  * - Trae：workbench.action.chat.icube.open + terminalPayload；
- * - Cursor / Windsurf / 原生 VSCode Copilot Chat：workbench.action.chat.open，
- *   以 isPartialQuery 把文本留在输入框，不自动发送；
+ * - 原生 VSCode 1.105+：workbench.action.chat.open + attachFiles，把以连接名
+ *   命名的上下文文件作为单个引用加入输入框，不自动发送；1.99–1.104 退回工具引用，
+ *   更早版本退回预填文本；
+ * - Cursor / Windsurf：workbench.action.chat.open，以 isPartialQuery 把文本留在输入框；
  * - Cline / Continue / Roo Code：聚焦各自输入框后粘贴快照，不自动发送。
  *
  * 原生 VSCode 必须有常用 AI 对话插件处于激活状态才开放；桌面 Electron / 浏览器
@@ -150,6 +199,14 @@ const NATIVE_NO_BINDING =
 export class McpToolBridge implements vscode.Disposable {
   onChange: ((bound: BoundSessionInfo | null) => void) | undefined;
 
+  /** 官方 VSCode + vscode.lm：工具由扩展直接注册，无需 MCP 配置或剪贴板。 */
+  get nativeTools(): boolean {
+    return (
+      typeof (vscode as any).lm?.registerTool === 'function' &&
+      isOfficialVsCode(hostName())
+    );
+  }
+
   private bound: BoundSessionInfo | null = null;
   private registered = false;
   private pollTimer: NodeJS.Timeout | undefined;
@@ -171,7 +228,7 @@ export class McpToolBridge implements vscode.Disposable {
   async attach(sessionId: string, extensionPath: string): Promise<ToolAttachResult> {
     const bound = (await this.launcher.api('/api/mcp/bind', { sessionId })) as BoundSessionInfo;
     this.apply(bound);
-    const registration = await this.ensureTool(extensionPath);
+    const registration = this.nativeTools ? 'registered' : await this.ensureTool(extensionPath);
     return { bound, registration };
   }
 
@@ -555,10 +612,29 @@ export class ChatContextBridge implements vscode.Disposable {
           return true;
 
         case 'workbench-chat':
-          await vscode.commands.executeCommand(COMMANDS.workbenchChat, {
-            query: text,
-            isPartialQuery: true,
-          });
+          if (context.nativeTools && vsCodeAtLeast(1, 105)) {
+            // 以连接名命名的上下文文件 = 对话里的引用 chip；输入框只留空白，不发送。
+            const reference = terminalReferenceFile(name, target);
+            await vscode.commands.executeCommand(COMMANDS.workbenchChat, {
+              query: ' ',
+              isPartialQuery: true,
+              attachFiles: [reference],
+            });
+          } else if (context.nativeTools && vsCodeAtLeast(1, 99)) {
+            // 1.99–1.104 没有 attachFiles，退而使用工具引用。
+            await vscode.commands.executeCommand(COMMANDS.workbenchChat, {
+              query: isChinese
+                ? `[AICmd] 终端「${name}」${target ? `(${target})` : ''}已绑定，可直接使用下方 AICmd 引用查看屏幕或执行命令。`
+                : `[AICmd] Terminal "${name}"${target ? ` (${target})` : ''} is attached; use the AICmd reference below to read the screen or run commands.`,
+              isPartialQuery: true,
+              toolIds: [NATIVE_TOOL_REFERENCE_ID],
+            });
+          } else {
+            await vscode.commands.executeCommand(COMMANDS.workbenchChat, {
+              query: text,
+              isPartialQuery: true,
+            });
+          }
           return true;
 
         case 'clipboard-focus':

@@ -173,8 +173,8 @@
     "languageModelTools": [
       {
         "name": "aicmd_sessionInfo",
-        "displayName": "AICmd: attached terminal info",
-        "modelDescription": "Get info about the single AICmd terminal attached to this conversation: name, type, host and user. Call this first. No side effects.",
+        "displayName": "AICmd: attached terminal",
+        "modelDescription": "Reference to the single AICmd terminal attached to this conversation: name, type, host and user. Call this first. Then use aicmd_sessionRead / aicmd_sessionExec / aicmd_sessionOutput / aicmd_sessionInterrupt / aicmd_sessionDetach to operate it. No session id needed. No side effects.",
         "canBeReferencedInPrompt": true,
         "toolReferenceName": "aicmdInfo",
         "icon": "$(terminal)",

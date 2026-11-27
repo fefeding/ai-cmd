@@ -856,8 +856,9 @@ function wirePanel(
       if (!sessionId) return;
       try {
         const result = await toolBridge!.attach(sessionId, extContext!.extensionPath);
+        const nativeTools = toolBridge!.nativeTools;
         const toolHint =
-          result.registration === 'registered' || (vscode as any).lm?.registerTool
+          result.registration === 'registered' || nativeTools
             ? t(
                 '[AICmd] 已绑定该终端。优先使用 VSCode 原生工具：aicmd_sessionInfo（看机器）、aicmd_sessionRead（看屏幕）、aicmd_sessionExec（执行命令）、aicmd_sessionOutput（读截断输出）、aicmd_sessionInterrupt / aicmd_sessionDetach。CodeBuddy MCP 对应 session_info / session_read / session_exec / session_output / session_interrupt / session_detach。无需读取发现文件或手写 curl。',
                 '[AICmd] Terminal bound. Prefer native VSCode tools: aicmd_sessionInfo, aicmd_sessionRead, aicmd_sessionExec, aicmd_sessionOutput, aicmd_sessionInterrupt / aicmd_sessionDetach. CodeBuddy MCP equivalents: session_info, session_read, session_exec, session_output, session_interrupt, session_detach. No discovery file or hand-written curl needed.'
@@ -881,16 +882,20 @@ function wirePanel(
             username: typeof msg.username === 'string' ? msg.username : undefined,
             snapshot: typeof msg.snapshot === 'string' ? msg.snapshot : '',
             toolHint,
+            nativeTools,
           })) ?? false;
-        const suffix =
-          result.registration === 'registered'
+        const suffix = nativeTools
+          ? t('，AI 可通过已附着的 AICmd 工具操作该终端。', ', the AI can now operate this terminal via the attached AICmd tools.')
+          : result.registration === 'registered'
             ? t('，AI 已可通过 MCP 工具操作该终端。', ', the AI can now operate this terminal via MCP tools.')
             : result.registration === 'clipboard'
               ? t('，MCP 配置已复制到剪贴板（请粘贴到 AI 编辑器的 MCP 设置以启用命令执行）。', ', MCP config copied to the clipboard (paste it into your AI editor MCP settings to enable command execution).')
               : t('，但未找到 MCP 入口，命令执行未启用。', ', but the MCP entry was not found, so command execution is unavailable.');
         vscode.window.showInformationMessage(
           (attached
-            ? t('终端已放入 AI 对话输入框（@Terminal）', 'Terminal added to the AI chat input (@Terminal)')
+            ? nativeTools
+              ? t('终端已作为工具引用加入 AI 对话', 'Terminal added to the AI chat as a tool reference')
+              : t('终端已放入 AI 对话输入框（@Terminal）', 'Terminal added to the AI chat input (@Terminal)')
             : t('终端已绑定 AI 对话', 'Terminal attached to AI chat')) + suffix
         );
       } catch (e: any) {

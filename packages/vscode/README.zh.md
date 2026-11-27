@@ -166,7 +166,8 @@ code --install-extension aicmd-terminal-*.vsix
 - CodeBuddy：自动注册内置的 MCP server，并通过 chat code action 插入真正的 `@Terminal` 上下文项。
 - 其它编辑器：MCP 配置会复制到剪贴板，首次粘贴到编辑器的 MCP 设置即可启用命令执行。
 - Trae：通过 `workbench.action.chat.icube.open` 把 terminalPayload 附加到 Cascade。
-- Cursor、Windsurf、原生 VSCode Copilot Chat：通过 `workbench.action.chat.open` 预填输入框，不会自动发送。
+- 原生 VSCode 1.105+：把已绑定终端作为以连接名命名的单个文件引用加入输入框，没有额外话述、不自动发送；AI 可按需通过 AICmd 工具查看屏幕或执行命令。旧版本退回工具引用或文本快照。
+- Cursor、Windsurf：`workbench.action.chat.open` 预填输入框，不会自动发送。
 - Cline、Continue、Roo Code：聚焦插件输入框并粘贴快照，不会自动发送。
 - 原生 VSCode 只有在上述 AI 对话插件处于激活状态时才显示菜单；插件后启动也会自动出现，无需重开终端。
 - 快照在点击菜单时抓取，再次点击即可刷新。
