@@ -78,7 +78,7 @@ VSCode 扩展宿主
 
 ```bash
 # 先构建安装包（见下方打包说明），然后安装：
-code --install-extension aicmd-terminal-*.vsix
+code --install-extension aicmd.vsix
 ```
 
 ### 从源码安装（开发）

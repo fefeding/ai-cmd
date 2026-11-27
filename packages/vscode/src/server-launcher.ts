@@ -246,7 +246,9 @@ export class ServerLauncher {
       'all_proxy',
       'no_proxy',
       'SSL_CERT_FILE',
-      'NODE_EXTRA_CA_CERTS'
+      'NODE_EXTRA_CA_CERTS',
+      // README 声明支持：禁用本地令牌认证（极少数场景需要，默认不传）
+      'AICMD_AUTH_DISABLED'
     ]) {
       if (process.env[key] !== undefined) env[key] = process.env[key];
     }

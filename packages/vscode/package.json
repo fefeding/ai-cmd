@@ -64,6 +64,7 @@
   "qna": "marketplace",
   "icon": "resources/activity-icon.png",
   "main": "./dist/extension.js",
+  "extensionKind": ["ui"],
   "activationEvents": [
     "onWebviewPanel:aicmd.terminal"
   ],

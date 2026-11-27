@@ -76,7 +76,7 @@ VSCode Extension Host
 
 ```bash
 # Build the package first (see Packaging below), then install:
-code --install-extension aicmd-terminal-*.vsix
+code --install-extension aicmd.vsix
 ```
 
 ### From source (development)

@@ -27,10 +27,26 @@ let editPanel: vscode.WebviewPanel | undefined;
 const panelMeta = new Map<vscode.WebviewPanel, { base: string; title: string }>();
 // 记录每个面板加载的 src（含连接 id），用于窗口重载后恢复
 const panelSrc = new Map<vscode.WebviewPanel, string>();
+// 每个面板当前活动的终端会话 id（由 iframe 上报），用于 runSelection 精确写入
+const panelSessionId = new Map<vscode.WebviewPanel, string>();
 // 连接节点单击时间窗，用于把「双击节点」与「单击选中」区分开
 const lastConnectionClick = new Map<string, number>();
-// 窗口全屏是全局状态，扩展侧记住当前值以幂等响应 iframe 的重复请求
+// 全屏是按面板记录的期望状态：VSCode 窗口全屏是全局的，多个 RDP 面板同时请求
+// 时不能各自 toggle，否则第二个面板会把窗口切回非全屏。按面板记录、只在汇总
+// 状态真的变化时执行一次 toggle；面板关闭时也移除记录，避免全屏状态残留。
+const panelFullscreen = new Map<vscode.WebviewPanel, boolean>();
 let vscodeFullscreenActive = false;
+
+/** 汇总各面板的全屏期望，必要时切换 VSCode 窗口全屏。 */
+function syncFullscreen(): void {
+  const shouldBeFullscreen = Array.from(panelFullscreen.values()).some(Boolean);
+  if (shouldBeFullscreen === vscodeFullscreenActive) return;
+  vscodeFullscreenActive = shouldBeFullscreen;
+  vscode.commands.executeCommand('workbench.action.toggleFullScreen').then(
+    () => undefined,
+    () => undefined
+  );
+}
 
 /** 把树菜单命令的参数归一化为连接 id。
  *  view/item/context 触发时 VSCode 会把 TreeItem 对象作为第一个参数传入，
@@ -482,8 +498,14 @@ async function runSelection(startPort: number): Promise<void> {
       );
       return;
     }
+    // 同一连接开多个标签时，按面板自身上报的 sessionId 精确命中当前终端；
+    // 面板尚未上报（刚打开 / 重连中）时退回原来的「最新会话」策略。
+    const activeSessionId = panelSessionId.get(panel);
+    const target =
+      (activeSessionId && candidates.find((s) => s.sessionId === activeSessionId)) ||
+      candidates[0];
     await bridge!.writeToSession(
-      candidates[0].sessionId,
+      target.sessionId,
       text.endsWith('\n') ? text : text + '\n'
     );
     panel.reveal();
@@ -844,6 +866,13 @@ function wirePanel(
   // 刷新树并关闭编辑面板
   panel.webview.onDidReceiveMessage(async (msg: any) => {
     if (!msg) return;
+    // 终端 iframe 上报它实际连接到的会话 id，供 runSelection 精确写入
+    if (msg.type === 'aicmd-session-active') {
+      const sid = typeof msg.sessionId === 'string' ? msg.sessionId : '';
+      if (sid) panelSessionId.set(panel, sid);
+      else panelSessionId.delete(panel);
+      return;
+    }
     if (msg.type === 'aicmd-chat-context-request') {
       broadcastChatCapability?.().catch(() => {
         /* ignore */
@@ -979,15 +1008,11 @@ function wirePanel(
       return;
     }
     // 远程桌面全屏：webview 内的 iframe 受权限策略限制无法真正进入系统全屏，
-    // 由扩展宿主切换 VSCode 窗口全屏，使远程桌面画面最大化。
+    // 由扩展宿主切换 VSCode 窗口全屏。按面板记录期望，只在汇总状态变化时 toggle，
+    // 避免多个 RDP 面板同时请求全屏时相互抵消。
     if (msg.type === 'aicmd-fullscreen-request') {
-      const active = !!msg.active;
-      if (active !== vscodeFullscreenActive) {
-        vscodeFullscreenActive = active;
-        try {
-          await vscode.commands.executeCommand('workbench.action.toggleFullScreen');
-        } catch { /* ignore */ }
-      }
+      panelFullscreen.set(panel, !!msg.active);
+      syncFullscreen();
       return;
     }
   });
@@ -997,6 +1022,10 @@ function wirePanel(
       panels.delete(panel);
       panelMeta.delete(panel); // 释放编号，后续同名 tab 可复用
       panelSrc.delete(panel);
+      panelSessionId.delete(panel);
+      // 面板关闭时撤销它的全屏期望；若已无其它面板请求全屏则退出窗口全屏
+      panelFullscreen.delete(panel);
+      syncFullscreen();
       if (panel === editPanel) editPanel = undefined;
       if (activePanel === panel) activePanel = undefined;
       statusBar?.refresh();
@@ -1205,6 +1234,11 @@ function buildHtml(url: string, title: string): string {
     }
     // 远程桌面全屏：iframe 无法直接调用扩展 API，转发请求给宿主执行窗口全屏
     if (d.type === 'aicmd-fullscreen-request') {
+      vscode.postMessage(d);
+      return;
+    }
+    // 终端会话 id：iframe → 宿主，供「在终端执行选中内容」精确定位
+    if (d.type === 'aicmd-session-active') {
       vscode.postMessage(d);
       return;
     }

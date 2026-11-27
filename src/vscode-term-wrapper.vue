@@ -12,6 +12,7 @@
       :connection="connection"
       :active="true"
       @open-ai-settings="aiSettingsRef?.open()"
+      @status-change="onStatusChange"
     />
     <AISettings ref="aiSettingsRef" />
   </div>
@@ -26,4 +27,13 @@ import AISettings from '@/components/ai-settings/index.vue';
 defineProps<{ tabId: string; connection: any }>();
 
 const aiSettingsRef = ref<InstanceType<typeof AISettings>>();
+
+// 把本标签实际连接的会话 id 上报给扩展宿主：「在终端执行选中内容」需要精确命中
+// 当前面板的会话，同一连接开多个标签时不能只按 connectionId 取最新会话。
+function onStatusChange(status: string, sessionId?: string): void {
+  const sid = status === 'connected' && sessionId ? sessionId : '';
+  try {
+    window.parent?.postMessage({ type: 'aicmd-session-active', sessionId: sid }, '*');
+  } catch { /* ignore */ }
+}
 </script>

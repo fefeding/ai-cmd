@@ -2,7 +2,7 @@ import * as net from 'net';
 import * as tls from 'tls';
 import type { WebSocket } from 'ws';
 import { ConnectionService } from './connection.service';
-import { connectWithProxy } from '../utils/proxy';
+import { connectWithProxy, describeSocketError } from '../utils/proxy';
 
 /**
  * RDCleanPath WebSocket 代理。
@@ -246,7 +246,7 @@ function connectRdpTls(
       tcpSocket.write(x224ConnectionRequest, () => {
         log(`session ${sessionId}: sent X.224 Connection Request (${x224ConnectionRequest.length} bytes)`);
       });
-      tcpSocket.once('error', (err) => done(() => reject(new Error(`TCP 连接失败: ${err.message}`))));
+      tcpSocket.once('error', (err) => done(() => reject(new Error(`TCP 连接失败: ${describeSocketError(err)}`))));
       tcpSocket.once('data', (x224Response: Buffer) => {
         log(`session ${sessionId}: received X.224 Connection Confirm (${x224Response.length} bytes)`);
         if (x224Response.length === 0) {
@@ -276,7 +276,7 @@ function connectRdpTls(
         tlsSocket.once('error', (err) => done(() => {
           tlsSocket.destroy();
           tcpSocket.destroy();
-          reject(new Error(`TLS 握手失败: ${err.message}`));
+          reject(new Error(`TLS 握手失败: ${describeSocketError(err)}`));
         }));
       });
       tcpSocket.setTimeout(15000, () => {
@@ -332,7 +332,7 @@ export class RdpTunnelService {
     let activeTlsSocket: tls.TLSSocket | null = null;
 
     const fail = (err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = describeSocketError(err);
       log(`session ${sessionId} failed: ${message}`);
       if (activeTlsSocket && !activeTlsSocket.destroyed) activeTlsSocket.destroy();
       try {
@@ -364,7 +364,7 @@ export class RdpTunnelService {
         try {
           handshake = await connectRdpTls(host, port, request.x224ConnectionRequest, sessionId, log, {}, createSocket);
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = describeSocketError(err);
           log(`session ${sessionId}: 首次 TLS 握手失败: ${message}`);
           // Electron 宿主用 BoringSSL（KEY_USAGE_BIT_INCORRECT），纯 Node 用 OpenSSL
           // （ee key too small / handshake failure 等），两种文案都要能触发降级

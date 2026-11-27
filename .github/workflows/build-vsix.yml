@@ -66,9 +66,34 @@ jobs:
           pnpm build-only
           node scripts/prepare-vscode-runtime.mjs
 
+      - name: Type-check extension host
+        working-directory: packages/vscode
+        run: ../../node_modules/.bin/tsc --noEmit -p tsconfig.json
+
       - name: Package VSIX
         working-directory: packages/vscode
         run: ../../node_modules/.bin/vsce package --out aicmd.vsix
+
+      - name: Verify VSIX contents
+        run: |
+          set -e
+          VSIX=packages/vscode/aicmd.vsix
+          unzip -Z1 "$VSIX" > /tmp/aicmd-vsix-files.txt
+          for f in \
+            extension/dist/extension.js \
+            extension/dist/mcp.js \
+            extension/runtime/server.js \
+            extension/runtime/dist/public/rdp_client_bg.wasm; do
+            grep -qx "$f" /tmp/aicmd-vsix-files.txt || {
+              echo "::error::missing $f in VSIX"; exit 1;
+            }
+          done
+          # 通用 vsix 必须带齐六平台 node-pty 预编译，否则非构建平台本地 Shell 会降级
+          for p in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-arm64 win32-x64; do
+            grep -q "^extension/runtime/node_modules/node-pty/prebuilds/$p/" /tmp/aicmd-vsix-files.txt || {
+              echo "::error::missing node-pty prebuild for $p in VSIX"; exit 1;
+            }
+          done
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4

@@ -14,6 +14,25 @@ import { ConnectionEntity } from '../model/connection.entity';
 
 type LogFn = (msg: string) => void;
 
+/**
+ * Node 18.13+ 的 Happy Eyeballs 在全部候选地址失败时会抛 AggregateError，
+ * 它的 message 可能是空串（例如 .local 的 mDNS 记录里混着 link-local IPv6），
+ * 直接取 err.message 会让日志只剩「连接 xxx: 「而看不出 errno。
+ */
+export function describeSocketError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const parts: string[] = [];
+  if (err.message) parts.push(err.message);
+  const code = (err as NodeJS.ErrnoException).code;
+  if (code) parts.push(code);
+  const errors = (err as AggregateError).errors;
+  if (Array.isArray(errors) && errors.length) {
+    const codes = Array.from(new Set(errors.map((e: any) => e?.code || e?.message || '?')));
+    parts.push(`[${codes.join(', ')}]`);
+  }
+  return parts.join(' ') || err.name;
+}
+
 export interface ResolvedProxy {
   type: 'http' | 'https' | 'socks4' | 'socks5';
   host: string;
@@ -297,7 +316,7 @@ function waitForConnect(
       socket.removeListener(waitEvent, onConnect);
       socket.setTimeout(0);
     };
-    const onError = (err: Error) => { cleanup(); safeDestroy(socket); reject(new Error(`${label}: ${err.message}`)); };
+    const onError = (err: Error) => { cleanup(); safeDestroy(socket); reject(new Error(`${label}: ${describeSocketError(err)}`)); };
     const onTimeout = () => { cleanup(); safeDestroy(socket); reject(new Error(`${label} 超时 (${timeout}ms)`)); };
     const onConnect = () => { cleanup(); resolve(socket); };
     socket.once('error', onError);
@@ -322,7 +341,7 @@ function readExactly(socket: net.Socket, length: number, timeout: number): Promi
     };
     const onError = (err: Error) => {
       if (settled) return;
-      settled = true; cleanup(); safeDestroy(socket); reject(new Error(`代理读取失败: ${err.message}`));
+      settled = true; cleanup(); safeDestroy(socket); reject(new Error(`代理读取失败: ${describeSocketError(err)}`));
     };
     const onTimeout = () => {
       if (settled) return;
@@ -367,7 +386,7 @@ function sendConnect(socket: net.Socket, proxy: ResolvedProxy, host: string, por
     };
     const onError = (err: Error) => {
       if (settled) return;
-      settled = true; cleanup(); reject(new Error(`代理连接失败: ${err.message}`));
+      settled = true; cleanup(); reject(new Error(`代理连接失败: ${describeSocketError(err)}`));
     };
     const onTimeout = () => {
       if (settled) return;
