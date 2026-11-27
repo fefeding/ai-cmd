@@ -71,13 +71,7 @@ An AI-powered web SSH terminal that combines a full-featured terminal emulator w
 
 ## Screenshot
 
-**VSCode Extension**
-
-![AICmd Terminal in VSCode](./docs/images/vscode-extension.png)
-
-**Desktop / Web**
-
-![AICmd Screenshot](./screenshot.jpeg)
+![AICmd Example](https://github.com/fefeding/ai-cmd/blob/main/docs/images/screen.png?raw=true)
 
 ## Tech Stack
 

@@ -6,6 +6,10 @@
 
 > 扩展详情页默认展示英文文档；本文件是独立的中文版。扩展内 WebView 界面默认跟随 VS Code / CodeBuddy 的界面语言，也可在侧边栏手动点击「中 / EN」切换。
 
+## 截图
+
+![AICmd 插件示例界面](https://github.com/fefeding/ai-cmd/blob/main/docs/images/screen.png?raw=true)
+
 ## 功能特性
 
 | | |

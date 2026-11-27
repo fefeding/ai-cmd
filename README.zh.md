@@ -71,7 +71,7 @@
 
 ## 截图
 
-![AICmd Screenshot](./screenshot.jpeg)
+![AICmd 示例界面](https://github.com/fefeding/ai-cmd/blob/main/docs/images/screen.png?raw=true)
 
 ## 技术栈
 

@@ -6,6 +6,10 @@
 
 > The extension marketplace only renders this README. The Chinese version is a separate file: [README.zh.md](./README.zh.md). The WebView UI follows the VS Code / CodeBuddy display language and can also be switched with the 中 / EN button in the sidebar.
 
+## Screenshot
+
+![AICmd in VS Code](https://github.com/fefeding/ai-cmd/blob/main/docs/images/screen.png?raw=true)
+
 ## Features
 
 | | |
