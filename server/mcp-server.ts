@@ -453,6 +453,38 @@ async function handleLine(line: string): Promise<void> {
 // 启动
 // ---------------------------------------------------------------------------
 
+/**
+ * 一次性调用模式：`node mcp.js --call session_exec '{"command":"uptime"}'`
+ * 供 AI 对话引用里的 [bridge] 使用：不启动 stdio server、不改全局 MCP 配置，
+ * 仍然只作用于后端当前绑定的那个终端；解绑后 dispatch 返回 NO_BINDING。
+ */
+async function runOnce(): Promise<void> {
+  const [name, rawArgs] = process.argv.slice(3);
+  if (!name) {
+    process.stderr.write('Usage: mcp.js --call <tool> [json-arguments]\n');
+    process.exitCode = 2;
+    return;
+  }
+  let args: unknown = {};
+  if (rawArgs) {
+    try {
+      args = JSON.parse(rawArgs);
+    } catch {
+      process.stderr.write('Invalid JSON arguments\n');
+      process.exitCode = 2;
+      return;
+    }
+  }
+  try {
+    const result = await dispatch({ name, arguments: args });
+    for (const item of result.content) process.stdout.write(`${item.text}\n`);
+    if (result.isError) process.exitCode = 1;
+  } catch (e: any) {
+    process.stderr.write(`[aicmd-mcp] ${e?.message || e}\n`);
+    process.exitCode = 1;
+  }
+}
+
 function main(): void {
   let buffer = '';
   process.stdin.setEncoding('utf8');
@@ -473,4 +505,8 @@ function main(): void {
   process.stderr.write(`[aicmd-mcp] server started (data dir: ${dataDir()})\n`);
 }
 
-main();
+if (process.argv[2] === '--call') {
+  runOnce();
+} else {
+  main();
+}

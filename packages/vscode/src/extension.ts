@@ -857,21 +857,40 @@ function wirePanel(
       try {
         const result = await toolBridge!.attach(sessionId, extContext!.extensionPath);
         const nativeTools = toolBridge!.nativeTools;
-        const toolHint =
-          result.registration === 'registered' || nativeTools
+        const channel = result.channel;
+        const quote = (value: string) => JSON.stringify(value);
+        const envPrefix = channel?.bridge.env
+          ? Object.entries(channel.bridge.env)
+              .map(([key, value]) => `${key}=${quote(value)}`)
+              .join(' ') + ' '
+          : '';
+        const bridgeCall = channel
+          ? `${envPrefix}${quote(channel.bridge.command)} ${channel.bridge.args.map(quote).join(' ')} --call session_exec ${quote('{"command":"uptime"}')}`
+          : '';
+        const channelInfo = channel
+          ? [
+              `[channel] session=${channel.sessionId} name=${channel.sessionName} type=${channel.type} conn=${channel.connectionId}${channel.host ? ` target=${channel.username ? channel.username + '@' : ''}${channel.host}` : ''}`,
+              `[bridge] ${bridgeCall}`,
+              `[tools] ${channel.bridge.tools.join(' ')}`,
+              isChinese
+                ? '[valid] 仅在当前终端绑定期间有效；解除绑定后自动失效，不写入任何 MCP 配置文件。'
+                : '[valid] Only valid while this terminal is attached; detached sessions are rejected. No MCP config file is written.',
+            ].join('\n')
+          : undefined;
+        const toolHint = channel
+          ? t(
+              '[AICmd] 已绑定该终端，通道信息见下方 [channel]/[bridge]/[tools]。优先使用宿主已注册的工具（aicmd_session* 或 session_*）；若当前 Agent 工具列表里没有，直接用 [bridge] 的一次性命令操作该通道，不要改 MCP 配置、也不要手写 HTTP 请求。',
+              '[AICmd] Terminal bound; see [channel]/[bridge]/[tools] below. Prefer registered tools (aicmd_session* or session_*); if none are exposed to this agent, use the [bridge] one-shot command. Do not edit MCP configs or hand-write HTTP requests.'
+            )
+          : result.registration === 'clipboard'
             ? t(
-                '[AICmd] 已绑定该终端。优先使用 VSCode 原生工具：aicmd_sessionInfo（看机器）、aicmd_sessionRead（看屏幕）、aicmd_sessionExec（执行命令）、aicmd_sessionOutput（读截断输出）、aicmd_sessionInterrupt / aicmd_sessionDetach。CodeBuddy MCP 对应 session_info / session_read / session_exec / session_output / session_interrupt / session_detach。无需读取发现文件或手写 curl。',
-                '[AICmd] Terminal bound. Prefer native VSCode tools: aicmd_sessionInfo, aicmd_sessionRead, aicmd_sessionExec, aicmd_sessionOutput, aicmd_sessionInterrupt / aicmd_sessionDetach. CodeBuddy MCP equivalents: session_info, session_read, session_exec, session_output, session_interrupt, session_detach. No discovery file or hand-written curl needed.'
+                '[AICmd] 已绑定终端，但 MCP 配置只复制到了剪贴板。请粘贴到 AI 编辑器的 MCP 设置后使用 session_info / session_read / session_exec / session_output / session_interrupt / session_detach。',
+                '[AICmd] Terminal bound, but the MCP config was only copied to the clipboard. Paste it into your AI editor MCP settings, then use session_info / session_read / session_exec / session_output / session_interrupt / session_detach.'
               )
-            : result.registration === 'clipboard'
-              ? t(
-                  '[AICmd] 已绑定终端，但 MCP 配置只复制到了剪贴板。请粘贴到 AI 编辑器的 MCP 设置后使用 session_info / session_read / session_exec / session_output / session_interrupt / session_detach。',
-                  '[AICmd] Terminal bound, but the MCP config was only copied to the clipboard. Paste it into your AI editor MCP settings, then use session_info / session_read / session_exec / session_output / session_interrupt / session_detach.'
-                )
-              : t(
-                  '[AICmd] 终端已绑定，但当前宿主既没有原生 LM 工具能力，也找不到 MCP 入口，命令执行不可用。',
-                  '[AICmd] Terminal bound, but this host has neither native LM tools nor an MCP entry; command execution is unavailable.'
-                );
+            : t(
+                '[AICmd] 终端已绑定，但当前宿主既没有原生 LM 工具能力，也找不到 MCP 入口，命令执行不可用。',
+                '[AICmd] Terminal bound, but this host has neither native LM tools nor an MCP entry; command execution is unavailable.'
+              );
         const attached =
           (await chatBridge?.attachToChat({
             sessionId,
@@ -882,15 +901,18 @@ function wirePanel(
             username: typeof msg.username === 'string' ? msg.username : undefined,
             snapshot: typeof msg.snapshot === 'string' ? msg.snapshot : '',
             toolHint,
+            channelInfo,
             nativeTools,
           })) ?? false;
-        const suffix = nativeTools
-          ? t('，AI 可通过已附着的 AICmd 工具操作该终端。', ', the AI can now operate this terminal via the attached AICmd tools.')
-          : result.registration === 'registered'
-            ? t('，AI 已可通过 MCP 工具操作该终端。', ', the AI can now operate this terminal via MCP tools.')
-            : result.registration === 'clipboard'
-              ? t('，MCP 配置已复制到剪贴板（请粘贴到 AI 编辑器的 MCP 设置以启用命令执行）。', ', MCP config copied to the clipboard (paste it into your AI editor MCP settings to enable command execution).')
-              : t('，但未找到 MCP 入口，命令执行未启用。', ', but the MCP entry was not found, so command execution is unavailable.');
+        const suffix = channel
+          ? t('，通道信息已随引用带入（不写全局 MCP 配置）。', ', channel info attached to the reference (no global MCP config written).')
+          : nativeTools
+            ? t('，AI 可通过已附着的 AICmd 工具操作该终端。', ', the AI can now operate this terminal via the attached AICmd tools.')
+            : result.registration === 'registered'
+              ? t('，AI 已可通过 MCP 工具操作该终端。', ', the AI can now operate this terminal via MCP tools.')
+              : result.registration === 'clipboard'
+                ? t('，MCP 配置已复制到剪贴板（请粘贴到 AI 编辑器的 MCP 设置以启用命令执行）。', ', MCP config copied to the clipboard (paste it into your AI editor MCP settings to enable command execution).')
+                : t('，但未找到 MCP 入口，命令执行未启用。', ', but the MCP entry was not found, so command execution is unavailable.');
         vscode.window.showInformationMessage(
           (attached
             ? nativeTools

@@ -26,16 +26,6 @@
       <i class="bi bi-robot"></i>
     </button>
 
-    <!-- AI / MCP 使用说明 -->
-    <button
-      class="ai-toggle-btn ai-help-btn"
-      :style="showAIChat ? { right: (aiChatWidth + 172) + 'px' } : { right: '172px' }"
-      @click="showAiHelp = true"
-      :title="t('context.aiHelp')"
-    >
-      <i class="bi bi-question-circle"></i>
-    </button>
-
     <!-- 文件管理器按钮 -->
     <button
       v-if="status === 'connected'"
@@ -153,53 +143,8 @@
       >
         <i class="bi bi-chat-square-text"></i>{{ t('context.addToAiChat') }}
       </div>
-      <div class="context-menu-item" @click="openAiHelp">
-        <i class="bi bi-question-circle"></i>{{ t('context.aiHelp') }}
-      </div>
       <div class="context-menu-item" @click="handleContextReconnect">
         <i class="bi bi-arrow-repeat"></i>{{ t('context.reconnect') || 'Reconnect' }}
-      </div>
-    </div>
-
-    <!-- AI / MCP 使用说明弹窗 -->
-    <div v-if="showAiHelp" class="ai-help-backdrop" @click.self="showAiHelp = false">
-      <div class="ai-help-modal" role="dialog" aria-modal="true">
-        <div class="ai-help-header">
-          <div>
-            <h3>{{ t('aiHelp.title') }}</h3>
-            <p>{{ t('aiHelp.subtitle') }}</p>
-          </div>
-          <button class="ai-help-close" :title="t('common.close')" @click="showAiHelp = false">
-            <i class="bi bi-x-lg"></i>
-          </button>
-        </div>
-        <div class="ai-help-body">
-          <section>
-            <h4>{{ t('aiHelp.webTitle') }}</h4>
-            <p>{{ t('aiHelp.webBody') }}</p>
-          </section>
-          <section>
-            <h4>{{ t('aiHelp.editorTitle') }}</h4>
-            <p>{{ t('aiHelp.editorBody') }}</p>
-          </section>
-          <section>
-            <h4>{{ t('aiHelp.toolsTitle') }}</h4>
-            <p>{{ t('aiHelp.toolsBody') }}</p>
-            <p class="ai-help-code">VSCode: aicmd_sessionInfo / aicmd_sessionRead / aicmd_sessionExec / aicmd_sessionOutput / aicmd_sessionInterrupt / aicmd_sessionDetach</p>
-            <p class="ai-help-code">CodeBuddy MCP: session_info / session_read / session_exec / session_output / session_interrupt / session_detach</p>
-          </section>
-          <section>
-            <h4>{{ t('aiHelp.safetyTitle') }}</h4>
-            <p>{{ t('aiHelp.safetyBody') }}</p>
-          </section>
-          <section>
-            <h4>{{ t('aiHelp.mcpTitle') }}</h4>
-            <p>{{ t('aiHelp.mcpBody') }}</p>
-          </section>
-        </div>
-        <div class="ai-help-footer">
-          <button class="ai-help-confirm" @click="showAiHelp = false">{{ t('aiHelp.gotIt') }}</button>
-        </div>
       </div>
     </div>
   </div>
@@ -347,8 +292,6 @@ let zmodemRole: string | null = null; // 'send' | 'receive'
 let offVscodeTheme: (() => void) | null = null; // VSCode 主题变化订阅
 // 是否支持「添加到 AI 对话」：由扩展宿主按编辑器 / 已激活 AI 插件动态下发
 const chatSupported = ref(isChatContextAvailable());
-/** AI / MCP 使用说明弹窗 */
-const showAiHelp = ref(false);
 let offChatAvailability: (() => void) | null = null;
 let fileUploadResultCallback: ((msg: WSMessage) => void) | null = null;
 
@@ -1398,12 +1341,6 @@ function getTerminalSnapshot(): string {
   return lines.join('\n');
 }
 
-/** 打开 AI / MCP 使用说明（同时关闭右键菜单） */
-function openAiHelp() {
-  hideTerminalContextMenu();
-  showAiHelp.value = true;
-}
-
 /** 把当前终端输出作为 @Terminal 上下文项塞进 AI 对话输入框（扩展侧，不经后端） */
 function handleContextAddToChat() {
   hideTerminalContextMenu();
@@ -1717,113 +1654,4 @@ function onDocumentClick(e: MouseEvent) {
   text-align: center;
 }
 
-/* AI / MCP 使用说明 */
-.ai-help-btn {
-  color: var(--text-secondary, var(--text-primary));
-}
-
-.ai-help-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1200;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  background: rgba(0, 0, 0, 0.55);
-}
-
-.ai-help-modal {
-  width: min(720px, 100%);
-  max-height: min(80vh, 720px);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--bg-menu);
-  color: var(--text-primary);
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
-}
-
-.ai-help-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 18px 20px 12px;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.ai-help-header h3 {
-  margin: 0 0 4px;
-  font-size: 16px;
-}
-
-.ai-help-header p {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-secondary, var(--text-primary));
-}
-
-.ai-help-close {
-  border: 0;
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 6px;
-}
-
-.ai-help-close:hover {
-  background: var(--border-strong);
-}
-
-.ai-help-body {
-  padding: 4px 20px 16px;
-  overflow-y: auto;
-}
-
-.ai-help-body section {
-  margin-top: 14px;
-}
-
-.ai-help-body h4 {
-  margin: 0 0 6px;
-  font-size: 13px;
-  color: var(--accent, #89b4fa);
-}
-
-.ai-help-body p {
-  margin: 0 0 6px;
-  font-size: 12.5px;
-  line-height: 1.6;
-  color: var(--text-primary);
-}
-
-.ai-help-code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11.5px !important;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--border-strong);
-  word-break: break-all;
-}
-
-.ai-help-footer {
-  display: flex;
-  justify-content: flex-end;
-  padding: 12px 20px 16px;
-  border-top: 1px solid var(--border-color);
-}
-
-.ai-help-confirm {
-  border: 1px solid var(--accent, #89b4fa);
-  background: var(--accent, #89b4fa);
-  color: #111;
-  border-radius: 6px;
-  padding: 6px 16px;
-  cursor: pointer;
-  font-size: 13px;
-}
 </style>

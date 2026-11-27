@@ -16,6 +16,8 @@ export interface TerminalChatContext {
   snapshot: string;
   /** 「添加到 AI 对话」时由 MCP 桥接给出的工具使用提示 */
   toolHint?: string;
+  /** 随引用一起带入的通道信息（含一次性桥接命令），不改任何全局配置 */
+  channelInfo?: string;
   /** 宿主支持 vscode.lm.registerTool，原生工具已经注册 */
   nativeTools?: boolean;
 }
@@ -178,9 +180,27 @@ export interface BoundSessionInfo {
 
 export type ToolRegistration = 'registered' | 'clipboard' | 'unavailable';
 
+/** 随「添加到 AI 对话」带入的会话通道信息，仅在当前绑定期间有效。 */
+export interface ChannelDescriptor {
+  sessionId: string;
+  sessionName: string;
+  host?: string;
+  username?: string;
+  connectionId: string;
+  type: string;
+  /** 一次性桥接入口：不写全局 MCP 配置，解绑后自动失效 */
+  bridge: {
+    command: string;
+    args: string[];
+    env?: Record<string, string>;
+    tools: string[];
+  };
+}
+
 export interface ToolAttachResult {
   bound: BoundSessionInfo;
   registration: ToolRegistration;
+  channel?: ChannelDescriptor;
 }
 
 /**
@@ -229,7 +249,7 @@ export class McpToolBridge implements vscode.Disposable {
     const bound = (await this.launcher.api('/api/mcp/bind', { sessionId })) as BoundSessionInfo;
     this.apply(bound);
     const registration = this.nativeTools ? 'registered' : await this.ensureTool(extensionPath);
-    return { bound, registration };
+    return { bound, registration, channel: this.channelDescriptor(bound, extensionPath) };
   }
 
   async unbind(): Promise<void> {
@@ -378,6 +398,36 @@ export class McpToolBridge implements vscode.Disposable {
   }
 
   // ========== 内部方法 ==========
+
+  /**
+   * 把「当前绑定的是哪个终端 + 如何调用它」做成随引用走的通道信息。
+   * 不写用户级 MCP 配置：禁用插件 / 解绑后不会留下任何注入。
+   */
+  private channelDescriptor(bound: BoundSessionInfo, extensionPath: string): ChannelDescriptor | undefined {
+    const server = this.serverConfig(extensionPath);
+    if (!server) return undefined;
+    return {
+      sessionId: bound.sessionId,
+      sessionName: bound.sessionName,
+      host: bound.host,
+      username: bound.username,
+      connectionId: bound.connectionId,
+      type: bound.type,
+      bridge: {
+        command: server.command,
+        args: server.args,
+        env: server.env,
+        tools: [
+          'session_info',
+          'session_read',
+          'session_exec',
+          'session_output',
+          'session_interrupt',
+          'session_detach',
+        ],
+      },
+    };
+  }
 
   private async ensureTool(extensionPath: string): Promise<ToolRegistration> {
     const server = this.serverConfig(extensionPath);
@@ -566,6 +616,7 @@ export class ChatContextBridge implements vscode.Disposable {
           : `[AICmd] Output snapshot of terminal "${name}"${target ? ` (${target})` : ''}:`,
         '',
         ...(context.toolHint ? [context.toolHint, ''] : []),
+        ...(context.channelInfo ? [context.channelInfo, ''] : []),
         snapshot,
       ].join('\n');
       const lines = text.split('\n');
