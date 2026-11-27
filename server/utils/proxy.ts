@@ -25,7 +25,7 @@ export function describeSocketError(err: unknown): string {
   if (err.message) parts.push(err.message);
   const code = (err as NodeJS.ErrnoException).code;
   if (code) parts.push(code);
-  const errors = (err as AggregateError).errors;
+  const errors = (err as Error & { errors?: unknown[] }).errors;
   if (Array.isArray(errors) && errors.length) {
     const codes = Array.from(new Set(errors.map((e: any) => e?.code || e?.message || '?')));
     parts.push(`[${codes.join(', ')}]`);
